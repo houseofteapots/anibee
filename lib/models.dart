@@ -23,6 +23,9 @@ class Anime {
     this.currentEpisode,
     this.minutesLeft,
     this.isSaved = false,
+    this.nextEpisode,
+    this.nextEpisodeIn,
+    this.nextEpisodeAt,
   });
 
   final String id;
@@ -40,12 +43,25 @@ class Anime {
   final int? minutesLeft;
   final bool isSaved;
 
+  /// Next-episode countdown for ongoing anime (null = finished / unknown):
+  /// "Episode 9 in 6d 20h · Nov 29 at 22:05" (Miruro style).
+  final int? nextEpisode;
+  final String? nextEpisodeIn;
+  final String? nextEpisodeAt;
+
   double get progress {
     if (currentEpisode == null || episodeCount == 0) return 0;
     return (currentEpisode! / episodeCount).clamp(0.0, 1.0);
   }
 
-  Anime copyWith({bool? isSaved, int? currentEpisode, int? minutesLeft}) {
+  Anime copyWith({
+    bool? isSaved,
+    int? currentEpisode,
+    int? minutesLeft,
+    int? nextEpisode,
+    String? nextEpisodeIn,
+    String? nextEpisodeAt,
+  }) {
     return Anime(
       id: id,
       title: title,
@@ -59,6 +75,9 @@ class Anime {
       currentEpisode: currentEpisode ?? this.currentEpisode,
       minutesLeft: minutesLeft ?? this.minutesLeft,
       isSaved: isSaved ?? this.isSaved,
+      nextEpisode: nextEpisode ?? this.nextEpisode,
+      nextEpisodeIn: nextEpisodeIn ?? this.nextEpisodeIn,
+      nextEpisodeAt: nextEpisodeAt ?? this.nextEpisodeAt,
     );
   }
 }
@@ -68,11 +87,23 @@ class Episode {
     required this.number,
     required this.title,
     required this.duration,
+    required this.synopsis,
+    required this.airDate,
+    required this.hasDub,
   });
 
   final int number;
   final String title;
   final String duration;
+
+  /// 2-line synopsis shown on the episode card (M1 mock; M2 = real data).
+  final String synopsis;
+
+  /// Air date, e.g. "Oct 4, 2026".
+  final String airDate;
+
+  /// True when a dubbed track exists (drives the Sub & Dub filter).
+  final bool hasDub;
 }
 
 class ProviderSource {
@@ -170,7 +201,7 @@ List<Anime> mockCatalogue() {
       title: 'Skybound Sailors',
       rating: 4.7,
       year: 2023,
-      episodeCount: 36,
+      episodeCount: 312,
       genres: <String>['Adventure', 'Fantasy'],
       synopsis:
           'A crew of sky-pirates sails the cloud seas in search of the last '
@@ -198,13 +229,16 @@ List<Anime> mockCatalogue() {
       title: 'Summer Phantom',
       rating: 4.3,
       year: 2024,
-      episodeCount: 13,
+      episodeCount: 8,
       genres: <String>['Romance', 'Drama'],
       synopsis:
           'One summer, one ghost, and the girl who can see her — a story '
           'about letting go.',
       gradient: <Color>[Color(0xFF7A5A8C), Color(0xFF241A2E)],
       trailerUrl: kPlaceholderTrailerUrl,
+      nextEpisode: 9,
+      nextEpisodeIn: '6d 20h',
+      nextEpisodeAt: 'Nov 29 at 22:05',
     ),
     const Anime(
       id: 'necro-school',
@@ -256,17 +290,61 @@ List<Episode> mockEpisodes(Anime anime) {
     '23:19',
     '24:44',
   ];
-  final int count = anime.episodeCount < 8 ? anime.episodeCount : 8;
+  const List<String> synopses = <String>[
+    'The crew sets sail for the cloud seas, but a storm on the horizon '
+        'has other plans.',
+    'A quiet exchange in the neon district reveals a secret no one was '
+        'ready to hear.',
+    'The gate opens at midnight, and the warden must choose who walks '
+        'through it.',
+    'Old debts come due as the rebellion reaches the capital walls.',
+    'A phantom thief strikes at dawn, and the treasure is not what '
+        'anyone expected.',
+    'Two rivals share one room for the night. Neither one sleeps.',
+  ];
+  final int count = anime.episodeCount;
   return List<Episode>.generate(
     count,
-    (int i) => Episode(
-      number: i + 1,
-      title: titles[i % titles.length],
-      duration: durations[i % durations.length],
-    ),
+    (int i) {
+      final int n = i + 1;
+      return Episode(
+        number: n,
+        title: titles[i % titles.length],
+        duration: durations[i % durations.length],
+        synopsis: synopses[i % synopses.length],
+        airDate: _mockAirDate(n),
+        // Dubbed tracks lag behind: every 3rd episode is sub-only in M1.
+        hasDub: n % 3 != 0,
+      );
+    },
   );
 }
 
+/// Weekly air date starting Sep 5, 2026 (M1 mock): "Oct 4, 2026".
+String _mockAirDate(int episodeNumber) {
+  const List<String> months = <String>[
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final DateTime d =
+      DateTime(2026, 9, 5).add(Duration(days: (episodeNumber - 1) * 7));
+  return '${months[d.month - 1]} ${d.day}, ${d.year}';
+}
+
+/// Default Sources order: Miruro, AniKoto, AllAnime, then AnimeKai,
+/// ReAnime, AniZone. The user can reorder in Settings > Sources; this is
+/// only the default. (No ranking by episode counts — the 01:41 "1 2 3"
+/// meant the episode NUMBER grid, not a sources ranking.)
 List<ProviderSource> defaultSources() {
   return const <ProviderSource>[
     ProviderSource(

@@ -56,3 +56,14 @@ raw URL would 404 without auth).
   `providers.json`, bump `version`, every AniBee install picks it up on
   next launch, no app update. Big changes (redesign, stricter Cloudflare)
   still need an app update.
+
+## Episode list (M1)
+
+- Long anime (> 24 episodes): 5-column NUMBER grid (AniWaves style) —
+  Sub & Dub filter, range dropdown (001-100, 101-200...), "Find number"
+  search, grid/list toggle. See `lib/widgets/episode_list.dart`.
+- Short anime: Miruro-style CARDS — thumbnail with "EP n" badge, title,
+  2-line synopsis, date, subtitle icon; sort, watched/eye toggle, grid
+  toggle; next-episode countdown bar at the bottom when ongoing.
+- Sources stay plain default order (Miruro, AniKoto, AllAnime...),
+  user-reorderable — no episode-count ranking.

@@ -7,6 +7,7 @@ import '../models.dart';
 import '../player/trailer_player.dart';
 import '../settings_store.dart';
 import '../theme.dart';
+import '../widgets/episode_list.dart';
 import '../widgets/poster.dart';
 import 'full_player_screen.dart';
 
@@ -318,98 +319,18 @@ class _DetailScreenState extends State<DetailScreen> {
                   ),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: <Widget>[
-                    Text(
-                      'EPISODES',
-                      style: TextStyle(
-                        color: secondaryText,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    Text(
-                      '${_anime.episodeCount} Episodes',
-                      style: TextStyle(
-                        color: accent,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
+              EpisodeSection(
+                anime: _anime,
+                episodes: _episodes,
+                store: _store,
+                onPlay: (Episode ep) {
+                  _store.markProgress(_anime.id, ep.number);
+                  _openFullPlayer(
+                    label: 'Ep ${ep.number} • Trailer preview',
+                  );
+                },
+                onToggleDownload: _toggleDownload,
               ),
-              ..._episodes.map((Episode ep) {
-                final String key = '${_anime.id}:${ep.number}';
-                final String? status = _store.downloadStatus[key];
-                final double progress =
-                    _store.downloadProgress[key] ?? 0;
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: InkWell(
-                    onTap: () {
-                      _store.markProgress(_anime.id, ep.number);
-                      _openFullPlayer(
-                        label: 'Ep ${ep.number} • Trailer preview',
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? AppTheme.cardDark
-                            : AppTheme.cardLight,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        children: <Widget>[
-                          Text(
-                            '${ep.number}.',
-                            style: TextStyle(
-                              color: secondaryText,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              ep.title,
-                              style: TextStyle(
-                                color: primaryText,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            ep.duration,
-                            style: TextStyle(
-                              color: secondaryText,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          _DownloadButton(
-                            status: status,
-                            progress: progress,
-                            accent: accent,
-                            onTap: () => _toggleDownload(ep),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }),
             ],
           );
         },
@@ -555,41 +476,5 @@ class _TrailerHero extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-/// Per-episode download button: download -> progress -> downloaded.
-class _DownloadButton extends StatelessWidget {
-  const _DownloadButton({
-    required this.status,
-    required this.progress,
-    required this.accent,
-    required this.onTap,
-  });
-
-  final String? status;
-  final double progress;
-  final Color accent;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    Widget child;
-    if (status == 'downloaded') {
-      child = Icon(Icons.download_done_rounded, color: accent, size: 22);
-    } else if (status == 'downloading') {
-      child = SizedBox(
-        width: 22,
-        height: 22,
-        child: CircularProgressIndicator(
-          value: progress,
-          strokeWidth: 2.5,
-          color: accent,
-        ),
-      );
-    } else {
-      child = const Icon(Icons.download_rounded, size: 22);
-    }
-    return IconButton(onPressed: onTap, icon: child);
   }
 }
