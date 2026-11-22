@@ -30,6 +30,8 @@ class EpisodeSection extends StatefulWidget {
     required this.store,
     required this.onPlay,
     required this.onToggleDownload,
+    this.audioFilter,
+    this.onAudioFilterChanged,
   });
 
   final Anime anime;
@@ -37,6 +39,12 @@ class EpisodeSection extends StatefulWidget {
   final SettingsStore store;
   final void Function(Episode episode) onPlay;
   final void Function(Episode episode) onToggleDownload;
+
+  /// Sub/Dub filter driven by the parent (Detail server row). When set,
+  /// the grid dropdown mirrors it; picking in the dropdown reports back
+  /// via [onAudioFilterChanged].
+  final String? audioFilter;
+  final ValueChanged<String>? onAudioFilterChanged;
 
   @override
   State<EpisodeSection> createState() => _EpisodeSectionState();
@@ -68,11 +76,22 @@ class _EpisodeSectionState extends State<EpisodeSection> {
   @override
   void initState() {
     super.initState();
+    _audioFilter = widget.audioFilter ?? 'Sub & Dub';
     _gridMode = widget.anime.episodeCount > kGridThreshold;
     // Default range: the one holding the next unwatched episode.
     final int nextUp = (_lastWatched ?? 0) + 1;
     _rangeStart = ((nextUp - 1) ~/ kRangeSize) * kRangeSize + 1;
     if (_rangeStart > _total) _rangeStart = 1;
+  }
+
+  @override
+  void didUpdateWidget(covariant EpisodeSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Parent (Detail server row) changed the Sub/Dub pill.
+    if (widget.audioFilter != null &&
+        widget.audioFilter != _audioFilter) {
+      _audioFilter = widget.audioFilter!;
+    }
   }
 
   @override
@@ -270,7 +289,10 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                     )
                     .toList(),
                 onChanged: (String? v) {
-                  if (v != null) setState(() => _audioFilter = v);
+                  if (v != null) {
+                    setState(() => _audioFilter = v);
+                    widget.onAudioFilterChanged?.call(v);
+                  }
                 },
               ),
             ),

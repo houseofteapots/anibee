@@ -27,12 +27,13 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _tab = 0;
 
-  void _openAnime(Anime anime) {
+  void _openAnime(Anime anime, {bool autoPlay = false}) {
     Navigator.of(context).push(
       SmoothPageRoute<void>(
         builder: (BuildContext context) => DetailScreen(
           anime: anime,
           store: widget.store,
+          autoPlay: autoPlay,
         ),
       ),
     );
@@ -49,7 +50,13 @@ class _AppShellState extends State<AppShell> {
           IndexedStack(
             index: _tab,
             children: <Widget>[
-              HomeScreen(store: widget.store, onOpenAnime: _openAnime),
+              HomeScreen(
+                store: widget.store,
+                onOpenAnime: _openAnime,
+                onOpenSearch: () => setState(() => _tab = 1),
+                onWatchNow: (Anime anime) =>
+                    _openAnime(anime, autoPlay: true),
+              ),
               SearchScreen(onOpenAnime: _openAnime),
               CollectionScreen(
                 store: widget.store,

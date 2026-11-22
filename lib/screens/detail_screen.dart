@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../models.dart';
 import '../player/trailer_player.dart';
@@ -10,22 +11,29 @@ import '../theme.dart';
 import '../widgets/episode_list.dart';
 import '../widgets/page_route.dart';
 import '../widgets/poster.dart';
+import '../widgets/reicon_icon.dart';
+import '../widgets/server_sheet.dart';
 import 'full_player_screen.dart';
 
 /// Detail screen.
-/// Layout (user-decided): banner -> title -> SERVER picker -> synopsis ->
-/// episodes. The banner plays the TRAILER preview inline via libmpv;
-/// a button on the SIDE of the banner (and tapping the banner) opens it
-/// in the full player — same Player instance, same engine.
+/// Layout: banner -> title -> My List -> synopsis -> server row
+/// (Anilili-style dropdown + SUB/DUB + status) -> episodes. The banner
+/// plays the TRAILER preview inline via libmpv; a button on the SIDE of
+/// the banner (and tapping the banner) opens it in the full player —
+/// same Player instance, same engine.
 class DetailScreen extends StatefulWidget {
   const DetailScreen({
     super.key,
     required this.anime,
     required this.store,
+    this.autoPlay = false,
   });
 
   final Anime anime;
   final SettingsStore store;
+
+  /// Home "Watch Now" opens straight into the full player.
+  final bool autoPlay;
 
   @override
   State<DetailScreen> createState() => _DetailScreenState();
@@ -35,6 +43,9 @@ class _DetailScreenState extends State<DetailScreen> {
   late final TrailerPlayer _trailer;
   late List<Episode> _episodes;
   final Map<String, Timer> _downloadTimers = <String, Timer>{};
+  String _subDub = 'Sub';
+  bool _connecting = false;
+  Timer? _connectTimer;
 
   Anime get _anime => widget.anime;
   SettingsStore get _store => widget.store;
@@ -45,6 +56,11 @@ class _DetailScreenState extends State<DetailScreen> {
     _trailer = TrailerPlayer();
     _episodes = mockEpisodes(_anime);
     _trailer.loadInline(_anime.trailerUrl);
+    if (widget.autoPlay) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openFullPlayer();
+      });
+    }
   }
 
   @override
@@ -52,8 +68,30 @@ class _DetailScreenState extends State<DetailScreen> {
     for (final Timer t in _downloadTimers.values) {
       t.cancel();
     }
+    _connectTimer?.cancel();
     _trailer.dispose();
     super.dispose();
+  }
+
+  /// Opens the Anilili-style server sheet; on pick, switches the
+  /// preferred server and shows "Reconnecting..." briefly.
+  Future<void> _showServerSheet() async {
+    final ({String server, String subDub})? result = await showServerSheet(
+      context: context,
+      store: _store,
+      currentServer: _store.preferredServer,
+      subDub: _subDub,
+    );
+    if (result == null) return;
+    await _store.setPreferredServer(result.server);
+    setState(() {
+      _subDub = result.subDub;
+      _connecting = true;
+    });
+    _connectTimer?.cancel();
+    _connectTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (mounted) setState(() => _connecting = false);
+    });
   }
 
   Future<void> _openFullPlayer({Episode? episode, bool markPlayed = true}) async {
@@ -339,89 +377,6 @@ class _DetailScreenState extends State<DetailScreen> {
                   ),
                 ),
               ),
-              // SERVER picker — above the synopsis, per the design.
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-                child: Text(
-                  'SERVER',
-                  style: TextStyle(
-                    color: secondaryText,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-              ..._store.sources.where((ProviderSource s) => s.enabled).map(
-                (ProviderSource source) {
-                  final bool selected =
-                      _store.preferredServer == source.name;
-                  return Padding(
-                    padding:
-                        const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: InkWell(
-                      onTap: () =>
-                          _store.setPreferredServer(source.name),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isDark
-                              ? AppTheme.cardDark
-                              : AppTheme.cardLight,
-                          borderRadius: BorderRadius.circular(12),
-                          border: selected
-                              ? Border.all(color: accent, width: 1.5)
-                              : null,
-                        ),
-                        child: Row(
-                          children: <Widget>[
-                            Container(
-                              width: 28,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                color: selected
-                                    ? accent
-                                    : (isDark
-                                        ? const Color(0xFF2A2A38)
-                                        : const Color(0xFFD5D5DE)),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                selected
-                                    ? Icons.check_rounded
-                                    : Icons.circle_outlined,
-                                size: 16,
-                                color: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              source.name,
-                              style: TextStyle(
-                                color: primaryText,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              source.tagline,
-                              style: TextStyle(
-                                color: secondaryText,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
@@ -445,10 +400,154 @@ class _DetailScreenState extends State<DetailScreen> {
                   ),
                 ),
               ),
+              // Server row (Anilili style, above the episodes list):
+              // compact dropdown + SUB/DUB pill + connection status.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                child: Row(
+                  children: <Widget>[
+                    InkWell(
+                      onTap: _showServerSheet,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? AppTheme.cardDark
+                              : AppTheme.cardLight,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            ReiconIcon(
+                              Reicon.outline.download,
+                              size: 18,
+                              color: accent,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _store.preferredServer,
+                              style: TextStyle(
+                                color: primaryText,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            ReiconIcon(
+                              Reicon.outline.chevronDown,
+                              size: 16,
+                              color: secondaryText,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? AppTheme.cardDark
+                            : AppTheme.cardLight,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          for (final String v in <String>['Sub', 'Dub'])
+                            InkWell(
+                              onTap: () => setState(() => _subDub = v),
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _subDub == v
+                                      ? accent
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  v.toUpperCase(),
+                                  style: TextStyle(
+                                    color: _subDub == v
+                                        ? Colors.white
+                                        : secondaryText,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _connecting
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: accent,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    'Reconnecting ${_store.preferredServer}...',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: secondaryText,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                Icon(
+                                  Icons.check_circle_rounded,
+                                  size: 16,
+                                  color: AppTheme.success,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Connected',
+                                  style: TextStyle(
+                                    color: secondaryText,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
+                  ],
+                ),
+              ),
               EpisodeSection(
                 anime: _anime,
                 episodes: _episodes,
                 store: _store,
+                audioFilter: _subDub,
+                onAudioFilterChanged: (String v) {
+                  if (v == 'Sub' || v == 'Dub') {
+                    setState(() => _subDub = v);
+                  }
+                },
                 onPlay: (Episode ep) {
                   _openFullPlayer(episode: ep);
                 },
