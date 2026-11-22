@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../models.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import 'poster.dart';
+import 'reicon_icon.dart';
 
 /// Episode list (user rules 01:44 + 01:45; refs in the goal files/):
 ///
@@ -616,7 +618,8 @@ class _DownloadButton extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget child;
     if (status == 'downloaded') {
-      child = Icon(Icons.download_done_rounded, color: accent, size: 22);
+      // Reicon check (not a generic Material download icon).
+      child = ReiconIcon(Reicon.outline.check, size: 22, color: accent);
     } else if (status == 'downloading') {
       child = SizedBox(
         width: 22,
@@ -628,8 +631,9 @@ class _DownloadButton extends StatelessWidget {
         ),
       );
     } else {
-      child = Icon(
-        Icons.download_rounded,
+      // Reicon Outline download (reicon.dev) — the app's download mark.
+      child = ReiconIcon(
+        Reicon.outline.download,
         size: 22,
         color: Theme.of(context).brightness == Brightness.dark
             ? AppTheme.textSecondaryDark

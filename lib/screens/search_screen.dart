@@ -47,9 +47,11 @@ class _SearchScreenState extends State<SearchScreen> {
     final Color secondaryText =
         isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
 
+    final String q = _query.toLowerCase();
     final List<Anime> results = mockCatalogue().where((Anime a) {
       final bool matchesQuery = _query.isEmpty ||
-          a.title.toLowerCase().contains(_query.toLowerCase());
+          a.title.toLowerCase().contains(q) ||
+          a.genres.any((String g) => g.toLowerCase().contains(q));
       final bool matchesGenre =
           _genre == 'All' || a.genres.contains(_genre);
       return matchesQuery && matchesGenre;
@@ -115,6 +117,15 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ),
         const SizedBox(height: 16),
+        if (_query.isNotEmpty || _genre != 'All')
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text(
+              '${results.length} result${results.length == 1 ? '' : 's'}'
+              '${_query.isNotEmpty ? " for '$_query'" : ''}',
+              style: TextStyle(color: secondaryText, fontSize: 13),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: GridView.builder(

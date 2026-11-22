@@ -118,6 +118,9 @@ const List<AccentOption> kAccentOptions = <AccentOption>[
   AccentOption('Pink', Color(0xFFEC5A9E)),
   AccentOption('Green', Color(0xFF34C759)),
   AccentOption('Orange', Color(0xFFF59E0B)),
+  // White is an accent choice too (player accent follows the picker,
+  // and white-on-dark is a valid player look).
+  AccentOption('White', Colors.white),
 ];
 
 /// Subtitle color choices for the player settings preview.

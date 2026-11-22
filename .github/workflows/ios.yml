@@ -7,11 +7,12 @@
 # No code signing anywhere: the IPA is unsigned and the user signs it with
 # ESign, exactly like the MLBB IPA and Zeus. No secrets are used.
 #
-# Delivery: the IPA is published as a Release asset (v0.1.0) AND uploaded
-# as a workflow artifact. The Release path exists because the Actions
-# artifact storage quota was hit 2026-11-23 (usage recalculates every
-# 6-12h) — releases do not count against that quota, so the IPA always
-# gets out even while the artifact upload is blocked.
+# Delivery: the IPA is published as a Release asset (tag derived from
+# pubspec.yaml, e.g. v0.1.1) AND uploaded as a workflow artifact. The
+# Release path exists because the Actions artifact storage quota was hit
+# 2026-11-23 (usage recalculates every 6-12h) — releases do not count
+# against that quota, so the IPA always gets out even while the artifact
+# upload is blocked.
 #
 # Trigger: every push to main, or manual Run workflow.
 
@@ -62,16 +63,18 @@ jobs:
           zip -r "AniBee-${VERSION}-unsigned.ipa" Payload
           ls -lh *.ipa
 
-      - name: Publish IPA to Release v0.1.0
+      - name: Publish IPA to Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           IPA=$(ls AniBee-*-unsigned.ipa)
-          if gh release view v0.1.0 >/dev/null 2>&1; then
-            gh release upload v0.1.0 --clobber "$IPA"
+          VERSION=$(grep '^version:' pubspec.yaml | cut -d ' ' -f 2 | cut -d '+' -f 1)
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" --clobber "$IPA"
           else
-            gh release create v0.1.0 --title "AniBee 0.1.0 (M1)" \
-              --notes "AniBee milestone 1 — UI shell + navigation + settings state. Unsigned IPA for eSign sideload." \
+            gh release create "$TAG" --title "AniBee $VERSION (M1.1)" \
+              --notes "AniBee milestone 1.1 — real anime catalogue with posters, Navigation Style (Liquid Glass/Blurry), Zeus-style player (landscape, PiP, pinch zoom, audio/subs/episodes, Skip Intro, autoplay, resume), smooth transitions, working search, Collection lists (Watching/Finished/To Be Watched), Reicon Settings icons. Unsigned IPA for eSign sideload." \
               "$IPA"
           fi
 

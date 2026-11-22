@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../models.dart';
 import '../settings_store.dart';
 import '../theme.dart';
+import '../widgets/reicon_icon.dart';
 
 /// Downloads: episodes saved for offline watching (M1 state only).
 class DownloadsScreen extends StatelessWidget {
@@ -77,8 +79,9 @@ class DownloadsScreen extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       alignment: Alignment.center,
-                      child: const Icon(
-                        Icons.play_arrow_rounded,
+                      child: ReiconIcon(
+                        Reicon.outline.play,
+                        size: 20,
                         color: Colors.white,
                       ),
                     ),
@@ -121,7 +124,10 @@ class DownloadsScreen extends StatelessWidget {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.delete_outline_rounded),
+                      icon: ReiconIcon(
+                        Reicon.outline.trash,
+                        size: 22,
+                      ),
                       onPressed: () =>
                           store.removeDownload(entry.key),
                     ),

@@ -52,6 +52,7 @@ class SettingsTile extends StatelessWidget {
     super.key,
     required this.title,
     this.subtitle,
+    this.leading,
     this.trailing,
     this.onTap,
     this.showChevron = false,
@@ -59,6 +60,9 @@ class SettingsTile extends StatelessWidget {
 
   final String title;
   final String? subtitle;
+
+  /// Leading icon in a tinted rounded square (Reicon). Null = no icon.
+  final Widget? leading;
   final Widget? trailing;
   final VoidCallback? onTap;
   final bool showChevron;
@@ -76,6 +80,21 @@ class SettingsTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: <Widget>[
+            if (leading != null) ...<Widget>[
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary.withValues(
+                        alpha: 0.14,
+                      ),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                alignment: Alignment.center,
+                child: leading,
+              ),
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

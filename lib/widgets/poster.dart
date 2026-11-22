@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import '../models.dart';
 import '../theme.dart';
 
-/// Gradient poster art (M1 stand-in for real AniList cover art).
-/// M2 swaps this for CachedNetworkImage of the real cover.
+/// Real cover art (M1.1): the anime's poster from the network (AniList CDN
+/// or TMDB), cached in Flutter's in-memory ImageCache, with the gradient
+/// art as the local fallback while loading or when offline / on error.
 class PosterArt extends StatelessWidget {
   const PosterArt({
     super.key,
@@ -26,6 +27,7 @@ class PosterArt extends StatelessWidget {
         .map((String w) => w[0])
         .join()
         .toUpperCase();
+    final String? url = anime.posterUrl;
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(borderRadius),
@@ -35,37 +37,72 @@ class PosterArt extends StatelessWidget {
           colors: anime.gradient,
         ),
       ),
-      child: Stack(
-        children: <Widget>[
-          Positioned(
-            right: 8,
-            top: 8,
-            child: Text(
-              initials,
-              style: TextStyle(
-                fontSize: 44,
-                fontWeight: FontWeight.w900,
-                color: Colors.white.withValues(alpha: 0.18),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(borderRadius),
+        child: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            if (url != null)
+              Image.network(
+                url,
+                fit: BoxFit.cover,
+                // While the poster loads (or if it fails), the gradient
+                // underneath shows — never a blank tile.
+                loadingBuilder:
+                    (BuildContext context, Widget child,
+                        ImageChunkEvent? progress) {
+                  if (progress == null) return child;
+                  return const SizedBox.shrink();
+                },
+                errorBuilder: (BuildContext context, Object error,
+                    StackTrace? stackTrace) {
+                  return const SizedBox.shrink();
+                },
               ),
-            ),
-          ),
-          if (showTitle)
-            Positioned(
-              left: 8,
-              right: 8,
-              bottom: 8,
-              child: Text(
-                anime.title.toUpperCase(),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
+            if (url == null)
+              Positioned(
+                right: 8,
+                top: 8,
+                child: Text(
+                  initials,
+                  style: TextStyle(
+                    fontSize: 44,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white.withValues(alpha: 0.18),
+                  ),
                 ),
               ),
-            ),
-        ],
+            if (showTitle)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(8, 14, 8, 8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: <Color>[
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: url == null ? 0 : 0.55),
+                      ],
+                    ),
+                  ),
+                  child: Text(
+                    anime.title.toUpperCase(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

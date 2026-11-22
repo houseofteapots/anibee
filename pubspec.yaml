@@ -1,7 +1,7 @@
 name: anibee
 description: "aniBee — personal iOS anime app. Miruro-linked, AniList-powered."
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.1.1+2
 
 environment:
   sdk: ^3.13.5
@@ -17,6 +17,15 @@ dependencies:
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
 
+  # iOS Picture-in-Picture for the mpv player (Zeus-proven mechanism:
+  # forked media_kit_video frame tap + native sample-buffer plugin).
+  anibee_mpv_pip:
+    path: packages/anibee_mpv_pip
+
+  # Reicon icons (reicon.dev, MIT) for the Settings screen.
+  flutter_svg: ^2.2.3
+  reicon_flutter: ^1.0.1
+
   shared_preferences: ^2.5.4
   local_auth: ^3.0.2
   crypto: ^3.0.7
@@ -26,6 +35,13 @@ dev_dependencies:
     sdk: flutter
 
   flutter_lints: ^6.0.0
+
+# media_kit_video is vendored (packages/media_kit_video) — the ZoroX fork
+# with the iOS frame-export tap that feeds the PiP plugin. Byte-identical
+# to pub.dev 2.0.1 except that tap (see packages/media_kit_video/FORK.md).
+dependency_overrides:
+  media_kit_video:
+    path: packages/media_kit_video
 
 flutter:
   uses-material-design: true

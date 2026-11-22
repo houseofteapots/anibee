@@ -6,7 +6,9 @@ import '../theme.dart';
 import '../widgets/app_logo.dart';
 import '../widgets/poster.dart';
 
-/// Home: hero banner + Continue Watching + Trending + Top Airing rows.
+/// Home: hero banner + Continue Watching + Trending + Popular + Top
+/// Airing rows — the full 39-title catalogue, every card with a real
+/// poster. Continue Watching stays here only (never in Collection).
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
     super.key,
@@ -26,8 +28,9 @@ class HomeScreen extends StatelessWidget {
     final List<Anime> continueWatching = catalogue
         .where((Anime a) => a.currentEpisode != null)
         .toList();
-    final List<Anime> trending = catalogue.sublist(1);
-    final List<Anime> topAiring = catalogue.reversed.toList();
+    final List<Anime> trending = catalogue.sublist(1, 13);
+    final List<Anime> popular = catalogue.sublist(13, 25);
+    final List<Anime> topAiring = catalogue.sublist(25).reversed.toList();
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 110),
@@ -94,6 +97,12 @@ class HomeScreen extends StatelessWidget {
         ),
         const SizedBox(height: 28),
         AnimeRow(
+          title: 'Popular',
+          items: popular,
+          onTapAnime: onOpenAnime,
+        ),
+        const SizedBox(height: 28),
+        AnimeRow(
           title: 'Top Airing',
           items: topAiring,
           onTapAnime: onOpenAnime,
@@ -130,74 +139,86 @@ class _HeroBanner extends StatelessWidget {
               colors: anime.gradient,
             ),
           ),
-          child: Stack(
-            children: <Widget>[
-              Positioned(
-                right: 16,
-                top: 12,
-                child: Text(
-                  anime.title
-                      .split(RegExp(r'\s+'))
-                      .take(1)
-                      .join()
-                      .toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 64,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white.withValues(alpha: 0.10),
-                  ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                // Real poster as the hero art (gradient underneath while
+                // it loads / if offline).
+                PosterArt(
+                  anime: anime,
+                  borderRadius: 0,
+                  showTitle: false,
                 ),
-              ),
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: 16,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      anime.title.toUpperCase(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Ep ${anime.currentEpisode ?? 1} • '
-                      'New Episode • 24min',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: <Widget>[
-                        ElevatedButton.icon(
-                          onPressed: onTap,
-                          icon: const Icon(Icons.play_arrow_rounded, size: 20),
-                          label: const Text(
-                            'Play',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: accent,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: <Color>[
+                        Colors.black.withValues(alpha: 0.25),
+                        Colors.transparent,
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.72),
                       ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        anime.title.toUpperCase(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Ep ${anime.currentEpisode ?? 1} • '
+                        'New Episode • 24min',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: <Widget>[
+                          ElevatedButton.icon(
+                            onPressed: onTap,
+                            icon: const Icon(
+                              Icons.play_arrow_rounded,
+                              size: 20,
+                            ),
+                            label: const Text(
+                              'Play',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: accent,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

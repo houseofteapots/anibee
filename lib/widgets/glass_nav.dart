@@ -1,10 +1,17 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:reicon_flutter/reicon_flutter.dart';
+
+import 'reicon_icon.dart';
 
 /// The bottom navigation pill — the ONLY liquid-glass surface in the app.
 /// Dark mode cards everywhere else are solid; this pill is translucent blur.
 /// Positioned talks directly to the Stack (never wrap in Transform/Padding).
+///
+/// [navStyle] (Settings → Appearance): 'glass' = Liquid Glass — highly
+/// translucent with a sheen; 'blurry' = frosted blur — stronger blur,
+/// more opaque, matte finish.
 class GlassNavBar extends StatelessWidget {
   const GlassNavBar({
     super.key,
@@ -12,38 +19,60 @@ class GlassNavBar extends StatelessWidget {
     required this.onTap,
     required this.accent,
     required this.isDark,
+    this.navStyle = 'glass',
   });
 
   final int currentIndex;
   final ValueChanged<int> onTap;
   final Color accent;
   final bool isDark;
+  final String navStyle;
 
-  static const List<_NavItem> _items = <_NavItem>[
-    _NavItem(Icons.home_rounded, 'Home'),
-    _NavItem(Icons.search_rounded, 'Search'),
-    _NavItem(Icons.bookmark_rounded, 'Collection'),
-    _NavItem(Icons.settings_rounded, 'Settings'),
+  // Navigation icons are Reicon Outline (reicon.dev, MIT) — no generic
+  // Material icons on the nav pill.
+  static final List<_NavItem> _items = <_NavItem>[
+    _NavItem(Reicon.outline.home, 'Home'),
+    _NavItem(Reicon.outline.search, 'Search'),
+    _NavItem(Reicon.outline.bookmark, 'Collection'),
+    _NavItem(Reicon.outline.settings, 'Settings'),
   ];
 
   @override
   Widget build(BuildContext context) {
+    final bool glass = navStyle != 'blurry';
+    // Liquid Glass: clearly translucent, light blur, bright sheen edge.
+    // Blurry: frosted — heavy blur + much more opaque, matte.
+    final double blurSigma = glass ? 18 : 32;
+    final Color bgColor = isDark
+        ? (glass
+            ? Colors.white.withValues(alpha: 0.08)
+            : Colors.white.withValues(alpha: 0.24))
+        : (glass
+            ? Colors.white.withValues(alpha: 0.55)
+            : Colors.white.withValues(alpha: 0.82));
+    final Color borderColor = Colors.white.withValues(
+      alpha: isDark ? (glass ? 0.20 : 0.10) : (glass ? 0.45 : 0.25),
+    );
     return ClipRRect(
       borderRadius: BorderRadius.circular(32),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
         child: Container(
           height: 64,
           decoration: BoxDecoration(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.10)
-                : Colors.white.withValues(alpha: 0.65),
+            color: bgColor,
             borderRadius: BorderRadius.circular(32),
-            border: Border.all(
-              color: Colors.white.withValues(
-                alpha: isDark ? 0.14 : 0.35,
-              ),
-            ),
+            border: Border.all(color: borderColor),
+            gradient: glass
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: <Color>[
+                      Colors.white.withValues(alpha: isDark ? 0.10 : 0.20),
+                      Colors.white.withValues(alpha: 0.0),
+                    ],
+                  )
+                : null,
           ),
           child: Row(
             children: <Widget>[
@@ -68,7 +97,8 @@ class GlassNavBar extends StatelessWidget {
 class _NavItem {
   const _NavItem(this.icon, this.label);
 
-  final IconData icon;
+  /// Reicon outline path data (see Reicon.outline.*).
+  final String icon;
   final String label;
 }
 
@@ -98,7 +128,7 @@ class _NavButton extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
-          Icon(item.icon, color: color, size: 24),
+          ReiconIcon(item.icon, size: 24, color: color),
           const SizedBox(height: 2),
           Text(
             item.label,

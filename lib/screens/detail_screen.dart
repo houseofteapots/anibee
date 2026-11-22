@@ -8,6 +8,7 @@ import '../player/trailer_player.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/episode_list.dart';
+import '../widgets/page_route.dart';
 import '../widgets/poster.dart';
 import 'full_player_screen.dart';
 
@@ -55,20 +56,99 @@ class _DetailScreenState extends State<DetailScreen> {
     super.dispose();
   }
 
-  Future<void> _openFullPlayer({required String label}) async {
+  Future<void> _openFullPlayer({Episode? episode, bool markPlayed = true}) async {
+    final Episode initial = episode ??
+        _episodes.firstWhere(
+          (Episode e) => e.number == (_anime.currentEpisode ?? 1),
+          orElse: () => _episodes.first,
+        );
+    if (markPlayed) {
+      _store.markProgress(_anime.id, initial.number);
+      _autoStatus(initial);
+    }
     await _trailer.expandToFull();
     if (!mounted) return;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      SmoothPageRoute<void>(
         builder: (BuildContext context) => FullPlayerScreen(
           trailer: _trailer,
           store: _store,
-          title: _anime.title,
-          label: label,
+          anime: _anime,
+          episodes: _episodes,
+          initialEpisode: initial,
+          onEpisodeChanged: _onPlayerEpisodeChanged,
         ),
       ),
     );
     await _trailer.backToInline();
+  }
+
+  void _onPlayerEpisodeChanged(Episode episode) {
+    _store.markProgress(_anime.id, episode.number);
+    _autoStatus(episode);
+  }
+
+  /// Playing an episode puts it in the Collection lists automatically:
+  /// last episode → Finished, anything else → Watching.
+  void _autoStatus(Episode episode) {
+    if (episode.number >= _anime.episodeCount) {
+      _store.setListStatus(_anime.id, 'finished');
+    } else {
+      _store.setListStatus(_anime.id, 'watching');
+    }
+  }
+
+  String _statusLabel(String? status) {
+    switch (status) {
+      case 'watching':
+        return 'Watching';
+      case 'finished':
+        return 'Finished';
+      case 'plan':
+        return 'To Be Watched';
+      default:
+        return 'Not in list';
+    }
+  }
+
+  Future<void> _pickListStatus() async {
+    final Color accent = Theme.of(context).colorScheme.primary;
+    final String? current = _store.statusOf(_anime);
+    final String? picked = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => SimpleDialog(
+        title: const Text('My List'),
+        children: <Widget>[
+          for (final (String value, String label)
+              in <(String, String)>[
+            ('plan', 'To Be Watched'),
+            ('watching', 'Watching'),
+            ('finished', 'Finished'),
+          ])
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(value),
+              child: Row(
+                children: <Widget>[
+                  Text(label),
+                  const Spacer(),
+                  if (current == value)
+                    Icon(Icons.check_rounded, color: accent),
+                ],
+              ),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop(''),
+            child: const Text('Remove from list'),
+          ),
+        ],
+      ),
+    );
+    if (picked == null) return;
+    if (picked.isEmpty) {
+      _store.setListStatus(_anime.id, null);
+    } else {
+      _store.setListStatus(_anime.id, picked);
+    }
   }
 
   /// M1 download simulation: the button animates queued -> downloading ->
@@ -120,7 +200,7 @@ class _DetailScreenState extends State<DetailScreen> {
               _TrailerHero(
                 anime: _anime,
                 trailer: _trailer,
-                onExpand: () => _openFullPlayer(label: 'Trailer'),
+                onExpand: () => _openFullPlayer(markPlayed: false),
                 onBack: () => Navigator.of(context).pop(),
                 onToggleSaved: () => _store.toggleSaved(_anime.id),
                 saved: saved,
@@ -191,8 +271,7 @@ class _DetailScreenState extends State<DetailScreen> {
                     ),
                     const Spacer(),
                     ElevatedButton.icon(
-                      onPressed: () =>
-                          _openFullPlayer(label: 'Trailer'),
+                      onPressed: () => _openFullPlayer(),
                       icon: const Icon(Icons.play_arrow_rounded, size: 20),
                       label: const Text(
                         'PLAY',
@@ -211,6 +290,53 @@ class _DetailScreenState extends State<DetailScreen> {
                       ),
                     ),
                   ],
+                ),
+              ),
+              // MY LIST — Collection status picker (Watching / Finished /
+              // To Be Watched). Bookmarking also lands here (To Be Watched).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                child: InkWell(
+                  onTap: _pickListStatus,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isDark ? AppTheme.cardDark : AppTheme.cardLight,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        Icon(Icons.bookmark_rounded, color: accent, size: 20),
+                        const SizedBox(width: 12),
+                        Text(
+                          'My List',
+                          style: TextStyle(
+                            color: primaryText,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          _statusLabel(_store.statusOf(_anime)),
+                          style: TextStyle(
+                            color: secondaryText,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: secondaryText,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               // SERVER picker — above the synopsis, per the design.
@@ -324,10 +450,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 episodes: _episodes,
                 store: _store,
                 onPlay: (Episode ep) {
-                  _store.markProgress(_anime.id, ep.number);
-                  _openFullPlayer(
-                    label: 'Ep ${ep.number} • Trailer preview',
-                  );
+                  _openFullPlayer(episode: ep);
                 },
                 onToggleDownload: _toggleDownload,
               ),

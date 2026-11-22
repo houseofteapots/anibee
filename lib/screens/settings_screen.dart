@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../services/provider_config.dart';
 import '../settings_store.dart';
 import '../theme.dart';
+import '../widgets/page_route.dart';
+import '../widgets/reicon_icon.dart';
 import '../widgets/settings_row.dart';
 import 'downloads_screen.dart';
 import 'lock_screen.dart';
@@ -11,6 +14,7 @@ import 'sources_screen.dart';
 
 /// Settings — the full list, matching the approved mockup:
 /// Accounts, Appearance, Player, Servers, Downloads, Debrid, App Lock.
+/// Every row carries a matching Reicon icon (reicon.dev, MIT).
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
     super.key,
@@ -20,6 +24,14 @@ class SettingsScreen extends StatelessWidget {
 
   final SettingsStore store;
   final ProviderConfigService configService;
+
+  Widget _icon(String pathData, BuildContext context) {
+    return ReiconIcon(
+      pathData,
+      size: 18,
+      color: Theme.of(context).colorScheme.primary,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +62,7 @@ class SettingsScreen extends StatelessWidget {
                 _AccountTile(
                   name: 'AniList',
                   color: const Color(0xFF2F7CF6),
-                  label: 'A',
+                  icon: Reicon.outline.userCircle,
                   status: 'Not synced • Tap to link account',
                   onLogin: () => _showComingSoon(context, 'AniList login'),
                 ),
@@ -58,7 +70,7 @@ class SettingsScreen extends StatelessWidget {
                 _AccountTile(
                   name: 'MyAnimeList',
                   color: const Color(0xFFEC5A9E),
-                  label: 'MAL',
+                  icon: Reicon.outline.star,
                   status: 'Not synced • Tap to link account',
                   onLogin: () =>
                       _showComingSoon(context, 'MyAnimeList login'),
@@ -70,6 +82,7 @@ class SettingsScreen extends StatelessWidget {
               children: <Widget>[
                 SettingsTile(
                   title: 'Theme',
+                  leading: _icon(Reicon.outline.moon, context),
                   trailing: Text(
                     switch (store.themeMode) {
                       ThemeMode.dark => 'Dark',
@@ -89,6 +102,7 @@ class SettingsScreen extends StatelessWidget {
                 const SettingsDivider(),
                 SettingsTile(
                   title: 'Accent color',
+                  leading: _icon(Reicon.outline.palette, context),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
@@ -124,6 +138,27 @@ class SettingsScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                const SettingsDivider(),
+                SettingsTile(
+                  title: 'Navigation Style',
+                  leading: _icon(Reicon.outline.layout, context),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      _NavStylePill(
+                        label: 'Liquid Glass',
+                        selected: store.navStyle == 'glass',
+                        onTap: () => store.setNavStyle('glass'),
+                      ),
+                      const SizedBox(width: 6),
+                      _NavStylePill(
+                        label: 'Blurry',
+                        selected: store.navStyle == 'blurry',
+                        onTap: () => store.setNavStyle('blurry'),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
             SettingsSection(
@@ -131,9 +166,10 @@ class SettingsScreen extends StatelessWidget {
               children: <Widget>[
                 SettingsTile(
                   title: 'Player settings',
+                  leading: _icon(Reicon.outline.play, context),
                   showChevron: true,
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
+                    SmoothPageRoute<void>(
                       builder: (BuildContext context) =>
                           PlayerSettingsScreen(store: store),
                     ),
@@ -142,9 +178,10 @@ class SettingsScreen extends StatelessWidget {
                 const SettingsDivider(),
                 SettingsTile(
                   title: 'Subtitles',
+                  leading: _icon(Reicon.outline.subtitle, context),
                   showChevron: true,
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
+                    SmoothPageRoute<void>(
                       builder: (BuildContext context) =>
                           PlayerSettingsScreen(store: store),
                     ),
@@ -153,9 +190,20 @@ class SettingsScreen extends StatelessWidget {
                 const SettingsDivider(),
                 SettingsTile(
                   title: 'Skip Intro',
+                  leading: _icon(Reicon.outline.fastForward, context),
                   trailing: Switch(
                     value: store.skipIntro,
                     onChanged: store.setSkipIntro,
+                  ),
+                ),
+                const SettingsDivider(),
+                SettingsTile(
+                  title: 'Autoplay next episode',
+                  subtitle: 'Plays the next episode when one ends',
+                  leading: _icon(Reicon.outline.arrowRight, context),
+                  trailing: Switch(
+                    value: store.autoplayNext,
+                    onChanged: store.setAutoplayNext,
                   ),
                 ),
               ],
@@ -165,6 +213,7 @@ class SettingsScreen extends StatelessWidget {
               children: <Widget>[
                 SettingsTile(
                   title: 'Preferred server',
+                  leading: _icon(Reicon.outline.server, context),
                   trailing: Text(
                     store.preferredServer,
                     style: TextStyle(
@@ -180,6 +229,7 @@ class SettingsScreen extends StatelessWidget {
                 const SettingsDivider(),
                 SettingsTile(
                   title: 'Fallback providers',
+                  leading: _icon(Reicon.outline.refresh, context),
                   trailing: Switch(
                     value: store.fallbackProviders,
                     onChanged: store.setFallbackProviders,
@@ -188,9 +238,10 @@ class SettingsScreen extends StatelessWidget {
                 const SettingsDivider(),
                 SettingsTile(
                   title: 'Sources',
+                  leading: _icon(Reicon.outline.globe, context),
                   showChevron: true,
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
+                    SmoothPageRoute<void>(
                       builder: (BuildContext context) =>
                           SourcesScreen(store: store),
                     ),
@@ -203,9 +254,10 @@ class SettingsScreen extends StatelessWidget {
               children: <Widget>[
                 SettingsTile(
                   title: 'Downloads',
+                  leading: _icon(Reicon.outline.download, context),
                   showChevron: true,
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
+                    SmoothPageRoute<void>(
                       builder: (BuildContext context) =>
                           DownloadsScreen(store: store),
                     ),
@@ -214,6 +266,7 @@ class SettingsScreen extends StatelessWidget {
                 const SettingsDivider(),
                 SettingsTile(
                   title: 'Download quality',
+                  leading: _icon(Reicon.outline.film, context),
                   trailing: Text(
                     store.downloadQuality,
                     style: TextStyle(
@@ -229,6 +282,7 @@ class SettingsScreen extends StatelessWidget {
                 const SettingsDivider(),
                 SettingsTile(
                   title: 'Wi-Fi only',
+                  leading: _icon(Reicon.outline.wifi, context),
                   trailing: Switch(
                     value: store.wifiOnly,
                     onChanged: store.setWifiOnly,
@@ -241,6 +295,7 @@ class SettingsScreen extends StatelessWidget {
               children: <Widget>[
                 _DebridTile(
                   name: 'TorBox',
+                  icon: Reicon.outline.key,
                   apiKey: store.torboxApiKey,
                   onTap: () => _editDebridKey(
                     context,
@@ -252,6 +307,7 @@ class SettingsScreen extends StatelessWidget {
                 const SettingsDivider(),
                 _DebridTile(
                   name: 'Real-Debrid',
+                  icon: Reicon.outline.key,
                   apiKey: store.realDebridApiKey,
                   onTap: () => _editDebridKey(
                     context,
@@ -267,6 +323,7 @@ class SettingsScreen extends StatelessWidget {
               children: <Widget>[
                 SettingsTile(
                   title: 'App Lock',
+                  leading: _icon(Reicon.outline.lock, context),
                   trailing: Switch(
                     value: store.appLockEnabled,
                     onChanged: (bool value) =>
@@ -277,6 +334,7 @@ class SettingsScreen extends StatelessWidget {
                   const SettingsDivider(),
                   SettingsTile(
                     title: 'Face ID',
+                    leading: _icon(Reicon.outline.shieldCheck, context),
                     trailing: Switch(
                       value: store.faceIdEnabled,
                       onChanged: store.setFaceIdEnabled,
@@ -285,6 +343,7 @@ class SettingsScreen extends StatelessWidget {
                   const SettingsDivider(),
                   SettingsTile(
                     title: 'Change passcode',
+                    leading: _icon(Reicon.outline.fingerprint, context),
                     showChevron: true,
                     onTap: () => _changePasscode(context),
                   ),
@@ -294,14 +353,27 @@ class SettingsScreen extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 32, 16, 0),
               child: Center(
-                child: Text(
-                  'AniBee 0.1.0 (M1) • Personal build',
-                  style: TextStyle(
-                    color: isDark
-                        ? AppTheme.textSecondaryDark
-                        : AppTheme.textSecondaryLight,
-                    fontSize: 12,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    ReiconIcon(
+                      Reicon.outline.infoCircle,
+                      size: 14,
+                      color: isDark
+                          ? AppTheme.textSecondaryDark
+                          : AppTheme.textSecondaryLight,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'AniBee 0.1.1 (M1.1) • Personal build',
+                      style: TextStyle(
+                        color: isDark
+                            ? AppTheme.textSecondaryDark
+                            : AppTheme.textSecondaryLight,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -441,7 +513,7 @@ class SettingsScreen extends StatelessWidget {
       return;
     }
     final bool? set = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
+      SmoothPageRoute<bool>(
         builder: (BuildContext context) => LockScreen(
           mode: LockMode.setup,
           store: store,
@@ -455,10 +527,54 @@ class SettingsScreen extends StatelessWidget {
 
   Future<void> _changePasscode(BuildContext context) async {
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      SmoothPageRoute<void>(
         builder: (BuildContext context) => LockScreen(
           mode: LockMode.setup,
           store: store,
+        ),
+      ),
+    );
+  }
+}
+
+/// Small pill for the Navigation Style choice (Liquid Glass / Blurry).
+class _NavStylePill extends StatelessWidget {
+  const _NavStylePill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color accent = Theme.of(context).colorScheme.primary;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? accent
+              : (isDark ? const Color(0xFF2A2A38) : const Color(0xFFE8E8EF)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected
+                ? Colors.white
+                : (isDark
+                    ? AppTheme.textSecondaryDark
+                    : AppTheme.textSecondaryLight),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );
@@ -469,14 +585,14 @@ class _AccountTile extends StatelessWidget {
   const _AccountTile({
     required this.name,
     required this.color,
-    required this.label,
+    required this.icon,
     required this.status,
     required this.onLogin,
   });
 
   final String name;
   final Color color;
-  final String label;
+  final String icon;
   final String status;
   final VoidCallback onLogin;
 
@@ -495,14 +611,7 @@ class _AccountTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
             alignment: Alignment.center,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: 13,
-              ),
-            ),
+            child: ReiconIcon(icon, size: 20, color: Colors.white),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -551,11 +660,13 @@ class _AccountTile extends StatelessWidget {
 class _DebridTile extends StatelessWidget {
   const _DebridTile({
     required this.name,
+    required this.icon,
     required this.apiKey,
     required this.onTap,
   });
 
   final String name;
+  final String icon;
   final String? apiKey;
   final VoidCallback onTap;
 
@@ -565,6 +676,11 @@ class _DebridTile extends StatelessWidget {
     final bool connected = apiKey != null && apiKey!.isNotEmpty;
     return SettingsTile(
       title: name,
+      leading: ReiconIcon(
+        icon,
+        size: 18,
+        color: Theme.of(context).colorScheme.primary,
+      ),
       subtitle: connected
           ? 'Connected • key saved'
           : 'Not connected • Tap to add API key',

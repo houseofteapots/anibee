@@ -9,6 +9,7 @@ import 'screens/home_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
 import 'widgets/glass_nav.dart';
+import 'widgets/page_route.dart';
 
 /// Root tab shell: 4 tabs under the liquid-glass nav pill.
 /// The pill is Positioned directly on the Stack (never wrapped in
@@ -28,7 +29,7 @@ class _AppShellState extends State<AppShell> {
 
   void _openAnime(Anime anime) {
     Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      SmoothPageRoute<void>(
         builder: (BuildContext context) => DetailScreen(
           anime: anime,
           store: widget.store,
@@ -53,6 +54,7 @@ class _AppShellState extends State<AppShell> {
               CollectionScreen(
                 store: widget.store,
                 onOpenAnime: _openAnime,
+                onBrowse: () => setState(() => _tab = 1),
               ),
               SettingsScreen(
                 store: widget.store,
@@ -64,11 +66,17 @@ class _AppShellState extends State<AppShell> {
             left: 16,
             right: 16,
             bottom: 20,
-            child: GlassNavBar(
-              currentIndex: _tab,
-              onTap: (int i) => setState(() => _tab = i),
-              accent: accent,
-              isDark: isDark,
+            // ListenableBuilder so the pill restyles the moment the
+            // Navigation Style is tapped in Settings.
+            child: ListenableBuilder(
+              listenable: widget.store,
+              builder: (BuildContext context, Widget? _) => GlassNavBar(
+                currentIndex: _tab,
+                onTap: (int i) => setState(() => _tab = i),
+                accent: accent,
+                isDark: isDark,
+                navStyle: widget.store.navStyle,
+              ),
             ),
           ),
         ],

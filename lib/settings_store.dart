@@ -23,6 +23,10 @@ class SettingsStore extends ChangeNotifier {
   ThemeMode themeMode = ThemeMode.dark;
   int accentIndex = 0;
 
+  /// Bottom nav pill style: 'glass' (Liquid Glass, default) or 'blurry'
+  /// (frosted blur). Applied to the nav pill immediately on change.
+  String navStyle = 'glass';
+
   // --- Player: subtitles ---
   String subFont = 'Inter Semibold';
   double subSize = 18;
@@ -39,6 +43,13 @@ class SettingsStore extends ChangeNotifier {
 
   // --- Player: skip intro ---
   bool skipIntro = true;
+
+  /// Auto-play the next episode when the current one ends (player overlay
+  /// with a 5 s countdown; tap to cancel).
+  bool autoplayNext = true;
+
+  /// Resume positions, seconds into the episode. Key: "$animeId:$episode".
+  Map<String, double> resumeSeconds = <String, double>{};
 
   // --- Servers / sources ---
   String preferredServer = 'Miruro';
@@ -66,6 +77,13 @@ class SettingsStore extends ChangeNotifier {
   bool faceIdEnabled = false;
   String? pinHash;
 
+  // --- Collection lists (AniList-style statuses) ---
+  // Explicit per-anime status: 'watching' | 'finished' | 'plan'.
+  // Derived when unset: progress or a started episode -> watching;
+  // saved with no progress -> plan. A newly saved title defaults to
+  // 'plan' (To Be Watched). Downloads live in Settings only.
+  Map<String, String> listStatus = <String, String>{};
+
   // --- Collection (M1: local only) ---
   Set<String> savedIds = <String>{};
   Map<String, int> progressEpisodes = <String, int>{};
@@ -80,6 +98,7 @@ class SettingsStore extends ChangeNotifier {
       _ => ThemeMode.dark,
     };
     accentIndex = _prefs.getInt('accent_index') ?? 0;
+    navStyle = _prefs.getString('nav_style') ?? 'glass';
     subFont = _prefs.getString('sub_font') ?? 'Inter Semibold';
     subSize = _prefs.getDouble('sub_size') ?? 18;
     subColorIndex = _prefs.getInt('sub_color') ?? 0;
@@ -91,6 +110,19 @@ class SettingsStore extends ChangeNotifier {
     gestures = _prefs.getBool('gestures') ?? true;
     hwDecoding = _prefs.getBool('hw_decoding') ?? true;
     skipIntro = _prefs.getBool('skip_intro') ?? true;
+    autoplayNext = _prefs.getBool('autoplay_next') ?? true;
+    final String? resumeJson = _prefs.getString('resume_seconds');
+    if (resumeJson != null) {
+      try {
+        final Map<String, dynamic> decoded =
+            jsonDecode(resumeJson) as Map<String, dynamic>;
+        resumeSeconds = decoded.map(
+          (String k, dynamic v) => MapEntry(k, (v as num).toDouble()),
+        );
+      } catch (_) {
+        resumeSeconds = <String, double>{};
+      }
+    }
     preferredServer = _prefs.getString('preferred_server') ?? 'Miruro';
     fallbackProviders = _prefs.getBool('fallback_providers') ?? true;
     downloadQuality = _prefs.getString('download_quality') ?? '1080p';
@@ -132,6 +164,18 @@ class SettingsStore extends ChangeNotifier {
       progressEpisodes = decoded.map(
         (String k, dynamic v) => MapEntry(k, (v as num).toInt()),
       );
+    }
+    final String? listStatusJson = _prefs.getString('list_status');
+    if (listStatusJson != null) {
+      try {
+        final Map<String, dynamic> decoded =
+            jsonDecode(listStatusJson) as Map<String, dynamic>;
+        listStatus = decoded.map(
+          (String k, dynamic v) => MapEntry(k, v as String),
+        );
+      } catch (_) {
+        listStatus = <String, String>{};
+      }
     }
     final String? sourcesJson = _prefs.getString('sources');
     if (sourcesJson != null) {
@@ -177,6 +221,12 @@ class SettingsStore extends ChangeNotifier {
   Future<void> setAccentIndex(int index) async {
     accentIndex = index;
     await _save('accent_index', index);
+    notifyListeners();
+  }
+
+  Future<void> setNavStyle(String style) async {
+    navStyle = style;
+    await _save('nav_style', style);
     notifyListeners();
   }
 
@@ -243,6 +293,24 @@ class SettingsStore extends ChangeNotifier {
   Future<void> setSkipIntro(bool value) async {
     skipIntro = value;
     await _save('skip_intro', value);
+    notifyListeners();
+  }
+
+  Future<void> setAutoplayNext(bool value) async {
+    autoplayNext = value;
+    await _save('autoplay_next', value);
+    notifyListeners();
+  }
+
+  Future<void> setResumeSeconds(String key, double seconds) async {
+    resumeSeconds[key] = seconds;
+    await _prefs.setString('resume_seconds', jsonEncode(resumeSeconds));
+    notifyListeners();
+  }
+
+  Future<void> clearResumeSeconds(String key) async {
+    resumeSeconds.remove(key);
+    await _prefs.setString('resume_seconds', jsonEncode(resumeSeconds));
     notifyListeners();
   }
 
@@ -361,10 +429,48 @@ class SettingsStore extends ChangeNotifier {
   Future<void> toggleSaved(String animeId) async {
     if (savedIds.contains(animeId)) {
       savedIds.remove(animeId);
+      listStatus.remove(animeId);
+      await _saveListStatus();
     } else {
       savedIds.add(animeId);
+      // A newly saved title defaults to To Be Watched.
+      listStatus.putIfAbsent(animeId, () => 'plan');
+      await _saveListStatus();
     }
     await _prefs.setStringList('saved_ids', savedIds.toList());
+    notifyListeners();
+  }
+
+  /// Collection status for an anime: explicit list status when set,
+  /// else derived — started (progress / Continue Watching) is Watching,
+  /// saved-but-unstarted is To Be Watched, otherwise not listed.
+  /// Returns 'watching' | 'finished' | 'plan' | null.
+  String? statusOf(Anime anime) {
+    final String? explicit = listStatus[anime.id];
+    if (explicit != null) return explicit;
+    final int? ep = progressEpisodes[anime.id];
+    if (ep != null || anime.currentEpisode != null) return 'watching';
+    if (savedIds.contains(anime.id)) return 'plan';
+    return null;
+  }
+
+  Future<void> _saveListStatus() async {
+    await _prefs.setString('list_status', jsonEncode(listStatus));
+  }
+
+  /// Move an anime to a Collection list ('watching' | 'finished' |
+  /// 'plan'); null removes it from all lists. Listing implies saved.
+  Future<void> setListStatus(String animeId, String? status) async {
+    if (status == null) {
+      listStatus.remove(animeId);
+    } else {
+      listStatus[animeId] = status;
+      if (!savedIds.contains(animeId)) {
+        savedIds.add(animeId);
+        await _prefs.setStringList('saved_ids', savedIds.toList());
+      }
+    }
+    await _saveListStatus();
     notifyListeners();
   }
 
