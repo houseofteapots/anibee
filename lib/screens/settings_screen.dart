@@ -366,7 +366,7 @@ class SettingsScreen extends StatelessWidget {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      'AniBee 0.1.2 (M1.2) • Personal build',
+                      'AniBee 0.2.0 (M2) • Personal build',
                       style: TextStyle(
                         color: isDark
                             ? AppTheme.textSecondaryDark

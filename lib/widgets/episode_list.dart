@@ -141,6 +141,70 @@ class _EpisodeSectionState extends State<EpisodeSection> {
     });
   }
 
+  /// Range picker as a bottom sheet — never an overlay dropdown (the
+  /// old DropdownButton menu rendered as a solid grey box overlapping
+  /// the Sub dropdown and the Find number field).
+  Future<void> _showRangeSheet() async {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color accent = Theme.of(context).colorScheme.primary;
+    final Color primaryText = isDark
+        ? AppTheme.textPrimaryDark
+        : AppTheme.textPrimaryLight;
+    final Color sheetBg = isDark ? AppTheme.cardDark : AppTheme.cardLight;
+    final int? picked = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: sheetBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const SizedBox(height: 8),
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3A3A48),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  'Episode range',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              for (final int s in _rangeStarts)
+                ListTile(
+                  title: Text(
+                    _rangeLabel(s),
+                    style: TextStyle(color: primaryText),
+                  ),
+                  trailing: s == _rangeStart
+                      ? Icon(Icons.check_rounded, color: accent)
+                      : null,
+                  onTap: () => Navigator.of(context).pop(s),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked != null && mounted) setState(() => _rangeStart = picked);
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
@@ -290,30 +354,13 @@ class _EpisodeSectionState extends State<EpisodeSection> {
             ),
           ),
           const SizedBox(width: 8),
-          _DropdownBox(
+          _RangeBox(
             card: card,
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<int>(
-                value: _rangeStart,
-                icon: Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  color: secondaryText,
-                ),
-                style: TextStyle(color: primaryText, fontSize: 13),
-                dropdownColor: card,
-                items: _rangeStarts
-                    .map(
-                      (int s) => DropdownMenuItem<int>(
-                        value: s,
-                        child: Text(_rangeLabel(s)),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (int? v) {
-                  if (v != null) setState(() => _rangeStart = v);
-                },
-              ),
-            ),
+            label: _rangeLabel(_rangeStart),
+            hasMultiple: _rangeStarts.length > 1,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            onTap: _rangeStarts.length > 1 ? _showRangeSheet : null,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -587,6 +634,61 @@ class _ControlButton extends StatelessWidget {
                       ? AppTheme.textPrimaryDark
                       : AppTheme.textPrimaryLight),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Range selector box: shows the current episode range (001-047).
+/// Tapping opens a bottom sheet with the range options — never an
+/// overlay dropdown (the old menu rendered as a solid grey box over the
+/// Sub dropdown and Find number field). A single range renders as a
+/// static label: no chevron, not tappable.
+class _RangeBox extends StatelessWidget {
+  const _RangeBox({
+    required this.card,
+    required this.label,
+    required this.hasMultiple,
+    required this.primaryText,
+    required this.secondaryText,
+    required this.onTap,
+  });
+
+  final Color card;
+  final String label;
+  final bool hasMultiple;
+  final Color primaryText;
+  final Color secondaryText;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+        decoration: BoxDecoration(
+          color: card,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              label,
+              style: TextStyle(color: primaryText, fontSize: 13),
+            ),
+            if (hasMultiple) ...<Widget>[
+              const SizedBox(width: 2),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: secondaryText,
+                size: 18,
+              ),
+            ],
+          ],
         ),
       ),
     );
