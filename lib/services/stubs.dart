@@ -2,6 +2,13 @@
 /// No real network calls happen in milestone 1 — the UI shell runs on mock
 /// data (see models.dart). Milestone 2 wires these up, one at a time.
 ///
+/// SOURCES ARCHITECTURE (user-decided 2026-11-23 01:25): BUILT-IN, Anilili
+/// style. Miruro + Anikoto resolvers are compiled into the app in Dart
+/// (lib/services/miruro_resolver.dart, anikoto_resolver.dart in M2) — no
+/// plugin import needed. Resolve happens ON-DEVICE (see Miruro notes
+/// below). .cs3 plugin import is a FUTURE extra option only — do NOT
+/// build it in milestone 1.
+///
 /// MIRURO — no official API; reverse-engineered SvelteKit endpoints.
 /// Resolve MUST happen on-device: Cloudflare blocks datacenter IPs, so a
 /// server-side fetch gets 403. Mirrors rotate:
