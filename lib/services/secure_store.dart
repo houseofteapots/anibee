@@ -1,8 +1,10 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// Secure storage for secrets (API keys, OAuth tokens, client IDs).
+/// Secure storage for secrets (API keys, OAuth tokens).
 /// M2: keys/tokens used to live in SharedPreferences plaintext — they
 /// are migrated here on first load (see SettingsStore.load).
+/// OAuth client IDs are NOT secrets and are NOT stored here: they
+/// live in the remote provider config (0.2.3).
 class SecureStore {
   SecureStore({FlutterSecureStorage? storage})
     : _storage = storage ?? const FlutterSecureStorage();
@@ -11,9 +13,7 @@ class SecureStore {
 
   static const String torboxApiKey = 'torbox_api_key';
   static const String realDebridApiKey = 'realdebrid_api_key';
-  static const String anilistClientId = 'anilist_client_id';
   static const String anilistAccessToken = 'anilist_access_token';
-  static const String malClientId = 'mal_client_id';
   static const String malAccessToken = 'mal_access_token';
   static const String malRefreshToken = 'mal_refresh_token';
   static const String malTokenExpiry = 'mal_token_expiry';

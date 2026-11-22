@@ -131,71 +131,86 @@ class PosterCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    // 0.2.3: the poster height used to be `width * 1.35` where callers
+    // passed width: double.infinity (Search + Collection grids) — that
+    // is an INFINITE height, so every card failed layout and the grid
+    // rendered blank ("20 results" with nothing below). The poster now
+    // flexes into whatever height the parent gives the card (grid cell
+    // / fixed-height row, like Home's _GridCard) and the width is the
+    // real cell width measured here — never infinity.
     return GestureDetector(
       onTap: onTap,
-      child: SizedBox(
-        width: width,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Container(
-              width: width,
-              height: width * 1.35,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : Colors.black.withValues(alpha: 0.08),
-                ),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: PosterArt(anime: anime),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              anime.title.toUpperCase(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isDark
-                    ? AppTheme.textPrimaryDark
-                    : AppTheme.textPrimaryLight,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            if (anime.currentEpisode != null) ...<Widget>[
-              const SizedBox(height: 6),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: LinearProgressIndicator(
-                  value: anime.progress,
-                  minHeight: 4,
-                  backgroundColor: isDark
-                      ? const Color(0xFF2A2A38)
-                      : const Color(0xFFD5D5DE),
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    Theme.of(context).colorScheme.primary,
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final double cardWidth = constraints.maxWidth.isFinite
+              ? constraints.maxWidth
+              : width;
+          return SizedBox(
+            width: cardWidth,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(
+                  child: Container(
+                    width: cardWidth,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.08),
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: PosterArt(anime: anime),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Ep ${anime.currentEpisode} • '
-                '${anime.minutesLeft ?? 0}min left',
-                style: TextStyle(
-                  color: isDark
-                      ? AppTheme.textSecondaryDark
-                      : AppTheme.textSecondaryLight,
-                  fontSize: 11,
+                const SizedBox(height: 8),
+                Text(
+                  anime.title.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isDark
+                        ? AppTheme.textPrimaryDark
+                        : AppTheme.textPrimaryLight,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-            ],
-          ],
-        ),
+                if (anime.currentEpisode != null) ...<Widget>[
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: anime.progress,
+                      minHeight: 4,
+                      backgroundColor: isDark
+                          ? const Color(0xFF2A2A38)
+                          : const Color(0xFFD5D5DE),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Ep ${anime.currentEpisode} • '
+                    '${anime.minutesLeft ?? 0}min left',
+                    style: TextStyle(
+                      color: isDark
+                          ? AppTheme.textSecondaryDark
+                          : AppTheme.textSecondaryLight,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        },
       ),
     );
   }

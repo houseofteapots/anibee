@@ -17,7 +17,12 @@ void main() async {
   final ProviderConfigService configService =
       await ProviderConfigService.load();
   // M2 real services: AniList, Miruro resolver, Debrid, OAuth.
-  final AppServices services = AppServices.create();
+  // The config service is passed in so MAL token refresh can use the
+  // config's client ID (0.2.3: client IDs live in the remote config,
+  // never typed in by the user).
+  final AppServices services = AppServices.create(
+    configService: configService,
+  );
   runApp(
     AniBeeApp(store: store, configService: configService, services: services),
   );

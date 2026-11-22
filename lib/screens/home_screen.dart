@@ -109,8 +109,46 @@ class _HomeScreenState extends State<HomeScreen> {
     return list;
   }
 
-  List<Anime> get _continueWatching =>
-      _catalogue.where((Anime a) => a.currentEpisode != null).toList();
+  Future<void> _confirmClearWatchHistory() async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF17171F),
+          title: const Text(
+            'Clear Continue Watching?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+          ),
+          content: const Text(
+            'This removes all your saved watch progress from the Home row.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text(
+                'Clear All',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed == true) {
+      await widget.store.clearWatchHistory();
+    }
+  }
 
   Future<void> _showListSheet(Anime anime) async {
     final Color accent = Theme.of(context).colorScheme.primary;
@@ -187,7 +225,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final Color card = isDark ? AppTheme.cardDark : AppTheme.cardLight;
 
     final List<Anime> gridItems = _gridItems;
-    final List<Anime> cw = _continueWatching;
 
     // Header + genre chips are PINNED: they stay fixed at the top
     // while only the content below scrolls (Anilili home behaviour).
@@ -337,41 +374,86 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
               const SizedBox(height: 24),
-              // Continue Watching.
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  'Continue Watching',
-                  style: TextStyle(
-                    color: primaryText,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                child: Text(
-                  'Long-press a title to remove it or move it on your anime list',
-                  style: TextStyle(color: secondaryText, fontSize: 12),
-                ),
-              ),
-              SizedBox(
-                height: 172,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: cw.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 12),
-                  itemBuilder: (BuildContext context, int index) {
-                    final Anime anime = cw[index];
-                    return _ContinueWatchingCard(
-                      anime: anime,
-                      onTap: () => widget.onOpenAnime(anime),
-                      onLongPress: () => _showListSheet(anime),
-                    );
-                  },
-                ),
+              // Continue Watching — driven by REAL persisted progress
+              // (0.2.3): the mock catalogue's currentEpisode/minutesLeft
+              // no longer feed this row. Hidden when nothing was
+              // watched yet. Tapping a card resumes that episode at
+              // the saved position.
+              ListenableBuilder(
+                listenable: widget.store,
+                builder: (BuildContext context, Widget? _) {
+                  final List<WatchEntry> history = widget.store.watchHistory;
+                  if (history.isEmpty) return const SizedBox.shrink();
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: <Widget>[
+                            Container(
+                              width: 4,
+                              height: 18,
+                              decoration: BoxDecoration(
+                                color: accent,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'CONTINUE WATCHING',
+                              style: TextStyle(
+                                color: primaryText,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            const Spacer(),
+                            TextButton.icon(
+                              onPressed: _confirmClearWatchHistory,
+                              icon: const Icon(
+                                Icons.delete_outline_rounded,
+                                size: 18,
+                                color: Colors.redAccent,
+                              ),
+                              label: const Text(
+                                'Clear All',
+                                style: TextStyle(
+                                  color: Colors.redAccent,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 158,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: history.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(width: 12),
+                          itemBuilder: (BuildContext context, int index) {
+                            final WatchEntry entry = history[index];
+                            return _ContinueWatchingCard(
+                              entry: entry,
+                              accent: accent,
+                              onTap: () =>
+                                  widget.onWatchNow(entry.toAnime()),
+                              onLongPress: () =>
+                                  _showListSheet(entry.toAnime()),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 24),
               // NEWEST / POPULAR / TRENDING / TOP RATED tab bar.
@@ -676,81 +758,156 @@ class _HeroPage extends StatelessWidget {
   }
 }
 
+/// Continue Watching card (0.2.3, Zeus Home reference): wide
+/// LANDSCAPE card over the poster — position/total badge top-right,
+/// accent circular play button bottom-left, title + "Resume · X left"
+/// next to it, accent progress bar along the bottom edge. The
+/// reference's gold is Zeus's accent; here the button/bar use
+/// AniBee's Settings accent.
 class _ContinueWatchingCard extends StatelessWidget {
   const _ContinueWatchingCard({
-    required this.anime,
+    required this.entry,
+    required this.accent,
     required this.onTap,
     required this.onLongPress,
   });
 
-  final Anime anime;
+  final WatchEntry entry;
+  final Color accent;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
+  String _clock(int seconds) {
+    final int h = seconds ~/ 3600;
+    final int m = (seconds % 3600) ~/ 60;
+    final int s = seconds % 60;
+    final String mm = m.toString().padLeft(2, '0');
+    final String ss = s.toString().padLeft(2, '0');
+    return h > 0 ? '$h:$mm:$ss' : '$mm:$ss';
+  }
+
+  String _total(int seconds) {
+    final int h = seconds ~/ 3600;
+    final int m = (seconds % 3600) ~/ 60;
+    if (h > 0) return '${h}h ${m}m';
+    if (m > 0) return '${m}m';
+    return '${seconds}s';
+  }
+
+  String _left(int minutesLeft) {
+    if (minutesLeft >= 60) {
+      return '${minutesLeft ~/ 60}h ${minutesLeft % 60}m left';
+    }
+    return '${minutesLeft}m left';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Anime anime = entry.toAnime();
+    final int posSeconds = entry.positionSeconds.round();
+    final int durSeconds = entry.durationSeconds.round();
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
       child: SizedBox(
-        width: 150,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            SizedBox(
-              width: 150,
-              height: 95,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Stack(
-                  fit: StackFit.expand,
+        width: 280,
+        height: 158,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              PosterArt(anime: anime, borderRadius: 0, showTitle: false),
+              Container(color: Colors.black.withValues(alpha: 0.28)),
+              // Position / total badge, top-right.
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${_clock(posSeconds)} / ${_total(durSeconds)}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              // Play button + title + resume, bottom-left.
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 14,
+                child: Row(
                   children: <Widget>[
-                    PosterArt(anime: anime, borderRadius: 0, showTitle: false),
-                    Container(color: Colors.black.withValues(alpha: 0.18)),
-                    Center(
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.9),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.play_arrow_rounded,
-                          color: Colors.black,
-                          size: 26,
-                        ),
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: accent,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(
+                            entry.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Episode ${entry.episode} · Resume · ${_left(entry.minutesLeft)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              anime.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isDark
-                    ? AppTheme.textPrimaryDark
-                    : AppTheme.textPrimaryLight,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+              // Progress bar along the bottom edge.
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: LinearProgressIndicator(
+                  value: entry.progress.clamp(0, 1),
+                  backgroundColor: Colors.white24,
+                  valueColor: AlwaysStoppedAnimation<Color>(accent),
+                  minHeight: 3,
+                ),
               ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              'Episode ${anime.currentEpisode ?? 1}',
-              style: TextStyle(
-                color: isDark
-                    ? AppTheme.textSecondaryDark
-                    : AppTheme.textSecondaryLight,
-                fontSize: 11,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

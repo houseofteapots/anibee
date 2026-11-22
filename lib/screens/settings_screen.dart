@@ -76,8 +76,8 @@ class SettingsScreen extends StatelessWidget {
                   icon: Reicon.outline.userCircle,
                   status: store.anilistConnected
                       ? 'Connected as ${store.anilistUsername ?? 'AniList user'}'
-                      : store.anilistClientId == null
-                          ? 'Client ID needed • Tap to set up'
+                      : configService.config.anilistClientId.isEmpty
+                          ? 'Login setup in progress'
                           : 'Not connected • Tap to log in',
                   buttonLabel: store.anilistConnected ? 'Logout' : 'Login',
                   onButton: () => store.anilistConnected
@@ -91,8 +91,8 @@ class SettingsScreen extends StatelessWidget {
                   icon: Reicon.outline.star,
                   status: store.malConnected
                       ? 'Connected as ${store.malUsername ?? 'MAL user'}'
-                      : store.malClientId == null
-                          ? 'Client ID needed • Tap to set up'
+                      : configService.config.malClientId.isEmpty
+                          ? 'Login setup in progress'
                           : 'Not connected • Tap to log in',
                   buttonLabel: store.malConnected ? 'Logout' : 'Login',
                   onButton: () => store.malConnected
@@ -443,23 +443,17 @@ class SettingsScreen extends StatelessWidget {
 
   // ---------------------------------------------------------- accounts
 
-  /// AniList login: client ID first (user creates it at
-  /// anilist.co/settings/developer), then the in-app OAuth webview
-  /// (implicit grant — token in the redirect fragment).
+  /// AniList login (0.2.3): one tap opens the bottom-sheet webview
+  /// with AniList's own authorize page — no client ID dialog anywhere.
+  /// The client ID comes from the remote provider config (set by the
+  /// app developer); until it is configured, the button shows a
+  /// "setup in progress" state instead of asking the user for it.
+  /// Implicit grant — the token comes back in the redirect fragment.
   Future<void> _loginAnilist(BuildContext context) async {
-    String? clientId = store.anilistClientId;
-    if (clientId == null || clientId.isEmpty) {
-      clientId = await _setupClientId(
-        context,
-        name: 'AniList',
-        instructions:
-            'Create a client at anilist.co/settings/developer '
-            '(any name, redirect: anibee://anilist-auth) and paste the '
-            'Client ID below.',
-        current: null,
-      );
-      if (clientId == null) return;
-      await store.setAnilistClientId(clientId);
+    final String clientId = configService.config.anilistClientId;
+    if (clientId.isEmpty) {
+      _snack(context, 'AniList login is being set up — please try again soon.');
+      return;
     }
     if (!context.mounted) return;
     final Uri? redirect = await showOAuthLogin(
@@ -467,6 +461,8 @@ class SettingsScreen extends StatelessWidget {
       title: 'Log in to AniList',
       authUrl: OAuthService.anilistAuthUrl(clientId),
       redirectScheme: 'anibee',
+      domain: 'anilist.co',
+      subtitle: 'Sign in to AniList to sync what you watch.',
     );
     if (redirect == null) return;
     final String? token = OAuthService.parseAnilistRedirect(redirect);
@@ -488,23 +484,18 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
-  /// MAL login: client ID first (myanimelist.net/apiconfig, App Type
-  /// iOS, public, no secret, redirect anibee://mal-auth), then the
-  /// in-app OAuth webview (Authorization Code + PKCE plain).
+  /// MAL login (0.2.3): one tap opens the bottom-sheet webview with
+  /// MAL's own authorize page. Client ID from the remote provider
+  /// config; "setup in progress" until it is configured. Authorization
+  /// Code + PKCE plain.
   Future<void> _loginMal(BuildContext context) async {
-    String? clientId = store.malClientId;
-    if (clientId == null || clientId.isEmpty) {
-      clientId = await _setupClientId(
+    final String clientId = configService.config.malClientId;
+    if (clientId.isEmpty) {
+      _snack(
         context,
-        name: 'MyAnimeList',
-        instructions:
-            'Create an app at myanimelist.net/apiconfig '
-            '(App Type: iOS, redirect: anibee://mal-auth) and paste the '
-            'Client ID below.',
-        current: null,
+        'MyAnimeList login is being set up — please try again soon.',
       );
-      if (clientId == null) return;
-      await store.setMalClientId(clientId);
+      return;
     }
     if (!context.mounted) return;
     final String verifier = OAuthService.generateVerifier();
@@ -518,6 +509,8 @@ class SettingsScreen extends StatelessWidget {
         state: state,
       ),
       redirectScheme: 'anibee',
+      domain: 'myanimelist.net',
+      subtitle: 'Sign in to MyAnimeList to sync what you watch.',
     );
     if (redirect == null) return;
     final String? code = OAuthService.parseMalRedirect(redirect, state);
@@ -580,50 +573,6 @@ class SettingsScreen extends StatelessWidget {
     }
     if (!context.mounted) return;
     _snack(context, 'Logged out of $name.');
-  }
-
-  /// Dialog to enter an OAuth client ID, with where-to-create it.
-  Future<String?> _setupClientId(
-    BuildContext context, {
-    required String name,
-    required String instructions,
-    required String? current,
-  }) async {
-    final TextEditingController controller = TextEditingController(
-      text: current ?? '',
-    );
-    final String? result = await showDialog<String>(
-      context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: Text('$name Client ID'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(instructions),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                hintText: 'Paste the Client ID',
-              ),
-            ),
-          ],
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    if (result == null || result.isEmpty) return null;
-    return result;
   }
 
   // ------------------------------------------------------------ debrid

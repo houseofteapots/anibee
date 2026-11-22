@@ -227,7 +227,11 @@ class _DetailScreenState extends State<DetailScreen> {
     final Episode initial =
         episode ??
         _episodes.firstWhere(
-          (Episode e) => e.number == (_anime.currentEpisode ?? 1),
+          (Episode e) =>
+              e.number ==
+              (_store.progressEpisodeFor(_anime) ??
+                  _anime.currentEpisode ??
+                  1),
           orElse: () => _episodes.first,
         );
     // M2: resolve a REAL stream first — never open the player on the
@@ -244,7 +248,7 @@ class _DetailScreenState extends State<DetailScreen> {
       return;
     }
     if (markPlayed) {
-      _store.markProgress(_anime.id, initial.number);
+      _store.markProgress(_anime, initial.number);
       _autoStatus(initial);
     }
     await _openPlayerWithStream(stream: stream, initial: initial);
@@ -264,10 +268,26 @@ class _DetailScreenState extends State<DetailScreen> {
           episodes: _episodes,
           initialEpisode: episode,
           onEpisodeChanged: _onPlayerEpisodeChanged,
+          resolver: _services.miruro,
+          subDub: _subDub,
+          currentDebrid: _selectedDebrid,
+          onServerChanged: _onPlayerServerChanged,
         ),
       ),
     );
     await _trailer.backToInline();
+  }
+
+  /// The player picked another server: remember the choice (Detail's
+  /// resolver reads these fields on the next resolve).
+  Future<void> _onPlayerServerChanged(
+    String server,
+    String subDub,
+    String? debrid,
+  ) async {
+    await _store.setPreferredServer(server);
+    _subDub = subDub;
+    _selectedDebrid = debrid;
   }
 
   Future<void> _openPlayerWithStream({
@@ -284,6 +304,10 @@ class _DetailScreenState extends State<DetailScreen> {
           initialEpisode: initial,
           stream: stream,
           onEpisodeChanged: _onPlayerEpisodeChanged,
+          resolver: _services.miruro,
+          subDub: _subDub,
+          currentDebrid: _selectedDebrid,
+          onServerChanged: _onPlayerServerChanged,
           onResolveEpisode: (Episode episode) async {
             return _services.resolveEpisode(
               anime: _anime,
@@ -301,7 +325,7 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   void _onPlayerEpisodeChanged(Episode episode) {
-    _store.markProgress(_anime.id, episode.number);
+    _store.markProgress(_anime, episode.number);
     _autoStatus(episode);
   }
 

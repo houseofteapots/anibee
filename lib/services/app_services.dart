@@ -4,6 +4,7 @@ import 'anilist_service.dart';
 import 'debrid_service.dart';
 import 'miruro_resolver.dart';
 import 'oauth_service.dart';
+import 'provider_config.dart';
 
 /// All M2 services, created once in main() and passed down through
 /// AppShell so screens never construct their own clients.
@@ -13,15 +14,17 @@ class AppServices {
     required this.miruro,
     required this.debrid,
     required this.oauth,
+    this.configService,
   });
 
-  factory AppServices.create() {
+  factory AppServices.create({ProviderConfigService? configService}) {
     final AniListService anilist = AniListService();
     return AppServices(
       anilist: anilist,
       miruro: MiruroResolver(anilist: anilist),
       debrid: DebridService(),
       oauth: OAuthService(),
+      configService: configService,
     );
   }
 
@@ -29,6 +32,9 @@ class AppServices {
   final MiruroResolver miruro;
   final DebridService debrid;
   final OAuthService oauth;
+
+  /// Remote config (OAuth client IDs live here in 0.2.3).
+  final ProviderConfigService? configService;
 
   /// Resolve a playable stream for an episode.
   /// [debrid] is null (Miruro/Anikoto) or 'torbox' / 'realdebrid'.
@@ -126,8 +132,11 @@ class AppServices {
     if (expiry != null &&
         DateTime.now().isAfter(expiry.subtract(const Duration(minutes: 5)))) {
       final String? refresh = store.malRefreshToken;
-      final String? clientId = store.malClientId;
-      if (refresh == null || clientId == null) return false;
+      // 0.2.3: the MAL client ID comes from the remote config now
+      // (never typed in by the user).
+      final String clientId =
+          configService?.config.malClientId ?? '';
+      if (refresh == null || clientId.isEmpty) return false;
       try {
         final MalTokens tokens = await oauth.refreshMalToken(
           clientId: clientId,

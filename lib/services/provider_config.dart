@@ -199,6 +199,8 @@ class ProviderConfig {
     required this.version,
     required this.updatedAt,
     required this.providers,
+    this.anilistClientId = '',
+    this.malClientId = '',
   });
 
   factory ProviderConfig.fromJson(Map<String, dynamic> json) {
@@ -210,6 +212,14 @@ class ProviderConfig {
       providers: raw
           .map((dynamic e) => ProviderDef.fromJson(e as Map<String, dynamic>))
           .toList(),
+      // 0.2.3: OAuth client IDs for the one-tap login sheet. These are
+      // the APP's developer clients (created once by the developer,
+      // registered with redirect anibee://anilist-auth /
+      // anibee://mal-auth) — they are public identifiers, not secrets.
+      // Empty until they are put in the config: the Login buttons then
+      // show "setup in progress" instead of asking the user for an ID.
+      anilistClientId: json['anilistClientId'] as String? ?? '',
+      malClientId: json['malClientId'] as String? ?? '',
     );
   }
 
@@ -224,6 +234,12 @@ class ProviderConfig {
   final int version;
   final String updatedAt;
   final List<ProviderDef> providers;
+
+  /// AniList OAuth client ID from the remote config ('' = not set up).
+  final String anilistClientId;
+
+  /// MyAnimeList OAuth client ID from the remote config ('' = not set).
+  final String malClientId;
 
   ProviderDef? provider(String id) {
     for (final ProviderDef p in providers) {

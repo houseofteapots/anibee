@@ -89,6 +89,16 @@ class PlayerSettingsScreen extends StatelessWidget {
                 title: 'SUBTITLES',
                 children: <Widget>[
                   SettingsTile(
+                    title: 'Subtitle language',
+                    trailing: Text(
+                      _subtitleLanguageLabel(store.subtitleLanguage),
+                      style: TextStyle(color: secondaryText, fontSize: 14),
+                    ),
+                    showChevron: true,
+                    onTap: () => _pickSubtitleLanguage(context),
+                  ),
+                  const SettingsDivider(),
+                  SettingsTile(
                     title: 'Font',
                     trailing: Text(
                       store.subFont,
@@ -233,6 +243,51 @@ class PlayerSettingsScreen extends StatelessWidget {
         },
       ),
     );
+  }
+
+  /// Preferred subtitle language (0.2.3): the player auto-selects
+  /// this language's track when available. Auto = English by default.
+  String _subtitleLanguageLabel(String value) {
+    return switch (value) {
+      'en' => 'English',
+      'hi' => 'Hindi',
+      'ar' => 'Arabic',
+      'off' => 'Off',
+      _ => 'Auto (English)',
+    };
+  }
+
+  Future<void> _pickSubtitleLanguage(BuildContext context) async {
+    const List<(String, String)> options = <(String, String)>[
+      ('auto', 'Auto (English)'),
+      ('en', 'English'),
+      ('hi', 'Hindi'),
+      ('ar', 'Arabic'),
+      ('off', 'Off'),
+    ];
+    final String? picked = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => SimpleDialog(
+        title: const Text('Subtitle language'),
+        children: <Widget>[
+          for (final (String value, String label) in options)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(value),
+              child: Row(
+                children: <Widget>[
+                  Expanded(child: Text(label)),
+                  if (value == store.subtitleLanguage)
+                    Icon(
+                      Icons.check_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (picked != null) await store.setSubtitleLanguage(picked);
   }
 
   Future<void> _pickFont(BuildContext context) async {

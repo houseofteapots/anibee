@@ -12,6 +12,7 @@ import '../services/miruro_resolver.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/poster.dart';
+import '../widgets/server_sheet.dart';
 
 /// Full-screen player (Zeus feature set, AniBee accent).
 ///
@@ -51,6 +52,10 @@ class FullPlayerScreen extends StatefulWidget {
     this.onEpisodeChanged,
     this.stream,
     this.onResolveEpisode,
+    this.resolver,
+    this.onServerChanged,
+    this.subDub = 'Sub',
+    this.currentDebrid,
   });
 
   final TrailerPlayer trailer;
@@ -68,6 +73,23 @@ class FullPlayerScreen extends StatefulWidget {
 
   /// Resolve the stream for a newly selected episode (M2).
   final Future<ResolvedStream?> Function(Episode episode)? onResolveEpisode;
+
+  /// Miruro resolver (shared with Detail) — used to fetch English
+  /// subtitles when the playing stream has none. Created on the spot
+  /// when not passed in.
+  final MiruroResolver? resolver;
+
+  /// Fired when the user picks another server in the player (server
+  /// icon in the bottom-right row). Detail updates its preferred
+  /// server / debrid choice; the player then re-resolves the current
+  /// episode through [onResolveEpisode].
+  final Future<void> Function(String server, String subDub, String? debrid)?
+  onServerChanged;
+
+  /// Sub/Dub of the current stream + the debrid choice in use (from
+  /// Detail) — shown in the in-player server sheet.
+  final String subDub;
+  final String? currentDebrid;
 
   @override
   State<FullPlayerScreen> createState() => _FullPlayerScreenState();
@@ -87,8 +109,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// True while a new episode's stream is resolving.
   bool _resolving = false;
   final ValueNotifier<double> _videoScale = ValueNotifier<double>(1.0);
-  final ValueNotifier<String?> _gestureHint = ValueNotifier<String?>(null);
-  double _brightness = 0; // mpv brightness -100..100
+
+  /// Animated gesture HUD state (volume / brightness / seek).
+  final ValueNotifier<_HudState?> _hud = ValueNotifier<_HudState?>(null);
+  Timer? _hudHideTimer;
+
+  /// Brightness 0..100 as an overlay dim layer (100 = full bright, no
+  /// overlay; 0 = darkest). mpv's `brightness` property is a no-op on
+  /// iOS under hwdec (videotoolbox), so the picture is dimmed with a
+  /// black overlay instead — it visibly works on every stream.
+  final ValueNotifier<double> _brightnessLevel = ValueNotifier<double>(100);
   double _rate = 1.0;
 
   StreamSubscription<Duration>? _positionSub;
@@ -112,11 +142,51 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   Duration? _dragStartPosition;
   Duration? _dragHintTarget;
   double _dragAccumDx = 0;
+  double _dragAccumDy = 0;
   double _dragStartVolume = 100;
-  double _dragStartBrightness = 0;
-  double _scaleBase = 1.0;
+  double _dragStartBrightnessLevel = 100;
+  bool _dragVerticalRight = true;
 
-  String get _resumeKey => '${widget.anime.id}:${_currentEpisode.number}';
+  // Pinch zoom is tracked with a raw Listener (pointer events), NOT
+  // with a ScaleGestureRecognizer: the scale recognizer competes with
+  // the drag recognizers in the gesture arena and swallows
+  // single-finger drags. The Listener never joins the arena, so
+  // vertical/horizontal drags always reach their handlers.
+  final Map<int, Offset> _activePointers = <int, Offset>{};
+  bool _pinching = false;
+  double _pinchBaseDistance = 0;
+  double _pinchBaseScale = 1.0;
+
+  // 0.2.3 Zeus-layout player state.
+  /// Controls locked (lock icon): only the unlock button shows.
+  bool _controlsLocked = false;
+
+  /// Video fit, cycled by the aspect-ratio button: Fit → Fill → Stretch.
+  BoxFit _videoFit = BoxFit.contain;
+
+  /// Double-tap seek flash: which side + how much, shown briefly.
+  /// null side = center play/pause flash.
+  bool _seekFlashVisible = false;
+  bool? _seekFlashLeft;
+  int _seekFlashAmount = 10;
+  Timer? _seekFlashTimer;
+
+  /// X of the last double-tap down (onDoubleTap carries no position).
+  double _lastDoubleTapX = 0;
+
+  /// English-subtitle fetch (0.2.3): one attempt per loaded stream.
+  bool _englishFetchTried = false;
+
+  /// Last periodic progress save (Continue Watching + resume).
+  DateTime _lastProgressSave = DateTime.fromMillisecondsSinceEpoch(0);
+
+  MiruroResolver get _resolver => widget.resolver ?? _fallbackResolver;
+  late final MiruroResolver _fallbackResolver;
+
+  /// Canonical resume key: the same title opened from Home and from
+  /// Search shares one key (see SettingsStore.keyFor).
+  String get _resumeKey =>
+      _store.resumeKeyFor(widget.anime, _currentEpisode.number);
 
   Episode? get _nextEpisode {
     final int i = widget.episodes.indexOf(_currentEpisode);
@@ -124,17 +194,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     return widget.episodes[i + 1];
   }
 
-  Episode? get _prevEpisode {
-    final int i = widget.episodes.indexOf(_currentEpisode);
-    if (i <= 0) return null;
-    return widget.episodes[i - 1];
-  }
-
   @override
   void initState() {
     super.initState();
     _currentEpisode = widget.initialEpisode;
     _rate = _player.state.rate;
+    _fallbackResolver = MiruroResolver();
 
     // Landscape + immersive, like a real video player.
     SystemChrome.setPreferredOrientations(<DeviceOrientation>[
@@ -163,9 +228,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _positionSub?.cancel();
     _hideTimer?.cancel();
     _autoplayTimer?.cancel();
+    _seekFlashTimer?.cancel();
+    _hudHideTimer?.cancel();
     _videoScale.dispose();
-    _gestureHint.dispose();
-    _saveResumePosition();
+    _brightnessLevel.dispose();
+    _hud.dispose();
+    _saveProgress();
     _teardownPip();
     unawaited(widget.trailer.backToInline());
     SystemChrome.setPreferredOrientations(<DeviceOrientation>[
@@ -181,10 +249,22 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     final Duration duration = _player.state.duration;
     if (!_resumeApplied && duration.inSeconds > 20) {
       _resumeApplied = true;
-      final double? saved = _store.resumeSeconds[_resumeKey];
+      final double? saved = _store.resumePositionFor(
+        widget.anime,
+        _currentEpisode.number,
+      );
       if (saved != null && saved > 10 && saved < duration.inSeconds - 20) {
         unawaited(_player.seek(Duration(seconds: saved.round())));
       }
+    }
+    // Periodic progress save (Continue Watching + resume): every 30 s
+    // while playing, so a background kill / crash doesn't lose the
+    // position — dispose() alone was not enough.
+    if (_player.state.playing &&
+        position.inSeconds > 5 &&
+        DateTime.now().difference(_lastProgressSave).inSeconds >= 30) {
+      _lastProgressSave = DateTime.now();
+      _saveProgress();
     }
     // Autoplay-next countdown near the end of a real episode.
     if (!_autoplayShown &&
@@ -212,11 +292,22 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     }
   }
 
-  void _saveResumePosition() {
+  /// Save the current position: resume key (canonical — Home and
+  /// Search share it) + the real Continue Watching entry. Called on
+  /// pause, periodically while playing, on episode switch and on exit.
+  void _saveProgress() {
     final Duration pos = _player.state.position;
     final Duration dur = _player.state.duration;
     if (pos.inSeconds > 10 && pos < dur - const Duration(seconds: 20)) {
       unawaited(_store.setResumeSeconds(_resumeKey, pos.inSeconds.toDouble()));
+      unawaited(
+        _store.recordWatch(
+          anime: widget.anime,
+          episode: _currentEpisode.number,
+          positionSeconds: pos.inSeconds.toDouble(),
+          durationSeconds: dur.inSeconds.toDouble(),
+        ),
+      );
     } else {
       unawaited(_store.clearResumeSeconds(_resumeKey));
     }
@@ -301,19 +392,48 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _pokeControls();
     if (_player.state.playing) {
       await _player.pause();
+      // Pausing saves progress right away (Continue Watching + resume).
+      _saveProgress();
     } else {
       await _player.play();
     }
   }
 
-  Future<void> _seekBy(int seconds) async {
+  Future<void> _seekBy(int seconds, {bool showFlash = false}) async {
     final Duration pos = _player.state.position;
     final Duration dur = _player.state.duration;
     Duration target = pos + Duration(seconds: seconds);
     if (target < Duration.zero) target = Duration.zero;
     if (target > dur) target = dur;
     await _player.seek(target);
+    if (showFlash) _flashSeek(seconds < 0, seconds.abs());
     _pokeControls();
+  }
+
+  /// Double-tap seek flash: a brief "-10s" / "+10s" badge on the
+  /// tapped side (center = play/pause flash). This is what makes the
+  /// double-tap feel like it worked — 0.2.1 sought silently.
+  void _flashSeek(bool left, int amount) {
+    _seekFlashTimer?.cancel();
+    setState(() {
+      _seekFlashVisible = true;
+      _seekFlashLeft = left;
+      _seekFlashAmount = amount;
+    });
+    _seekFlashTimer = Timer(const Duration(milliseconds: 650), () {
+      if (mounted) setState(() => _seekFlashVisible = false);
+    });
+  }
+
+  void _flashPlayPause() {
+    _seekFlashTimer?.cancel();
+    setState(() {
+      _seekFlashVisible = true;
+      _seekFlashLeft = null;
+    });
+    _seekFlashTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _seekFlashVisible = false);
+    });
   }
 
   void _cycleSpeed() {
@@ -327,13 +447,61 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   /// Load a resolved stream into the shared player (unmuted).
   Future<void> _loadStream(ResolvedStream stream) async {
-    await widget.trailer.loadStream(stream);
+    await widget.trailer.loadStream(
+      stream,
+      subtitleLanguage: _store.subtitleLanguage,
+    );
     _applySubtitleStyle();
+    _englishFetchTried = false;
+    unawaited(_maybeFetchEnglishSubtitles(stream));
+  }
+
+  /// When the playing stream carries no English subtitles (0.2.1:
+  /// JJK's stream had Arabic only), fetch English tracks for the
+  /// episode from the justanime providers and add the first one.
+  /// Best-effort and silent — the sheet keeps working either way.
+  Future<void> _maybeFetchEnglishSubtitles(ResolvedStream stream) async {
+    if (_englishFetchTried) return;
+    _englishFetchTried = true;
+    final String lang = _store.subtitleLanguage;
+    if (lang == 'off' || (lang != 'auto' && lang != 'en')) return;
+    if (stream.subtitles.any(
+      (SubtitleInfo s) => MiruroResolver.isEnglishLabel(s.label),
+    )) {
+      return;
+    }
+    // Let mpv's own (HLS rendition) tracks arrive first.
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    final bool mpvHasEnglish = _player.state.tracks.subtitle.any(
+      (SubtitleTrack t) =>
+          MiruroResolver.isEnglishLabel(t.title) ||
+          (t.language ?? '').toLowerCase().startsWith('en'),
+    );
+    if (mpvHasEnglish) return;
+    final List<SubtitleInfo> fetched = await _resolver.fetchSubtitlesOnly(
+      anime: widget.anime,
+      episodeNumber: _currentEpisode.number,
+    );
+    if (!mounted) return;
+    final SubtitleInfo? english = fetched
+        .where((SubtitleInfo s) => MiruroResolver.isEnglishLabel(s.label))
+        .firstOrNull;
+    if (english == null) return;
+    if (_player.state.tracks.subtitle.any(
+      (SubtitleTrack t) => MiruroResolver.isEnglishLabel(t.title),
+    )) {
+      return;
+    }
+    await widget.trailer.addExternalSubtitle(english);
+    if (mounted) setState(() {});
   }
 
   void _selectEpisode(Episode episode) {
     if (episode.number == _currentEpisode.number) return;
     final Episode previous = _currentEpisode;
+    // Save the old episode's position before leaving it.
+    _saveProgress();
     setState(() {
       _currentEpisode = episode;
       _autoplayShown = false;
@@ -346,8 +514,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       unawaited(_switchToEpisode(episode, previous));
       return;
     }
-    final double? saved =
-        _store.resumeSeconds['${widget.anime.id}:${episode.number}'];
+    final double? saved = _store.resumePositionFor(widget.anime, episode.number);
     unawaited(
       _player.seek(
         saved != null && saved > 10
@@ -375,8 +542,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     await _loadStream(stream);
     if (!mounted) return;
     setState(() => _resolving = false);
-    final double? saved =
-        _store.resumeSeconds['${widget.anime.id}:${episode.number}'];
+    final double? saved = _store.resumePositionFor(widget.anime, episode.number);
     unawaited(
       _player.seek(
         saved != null && saved > 10
@@ -550,25 +716,244 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   Future<void> _showSubtitleSheet() async {
     final Tracks tracks = _player.state.tracks;
     final String currentId = _player.state.track.subtitle.id;
+    // mpv's own tracks (incl. HLS rendition subtitles) + the tracks the
+    // resolver fetched for this episode (e.g. English when the stream
+    // only carried Arabic) — deduped by id so nothing shows twice.
     final List<SubtitleTrack> list = tracks.subtitle
         .where((SubtitleTrack t) => t.id != 'auto' && t.id != 'no')
         .toList();
-    await _showTrackSheet<SubtitleTrack>(
-      title: 'Subtitles',
-      currentId: currentId,
-      entries: <({String id, String label, SubtitleTrack? track})>[
-        (id: 'no', label: 'Off', track: SubtitleTrack.no()),
-        ...list.map(
-          (SubtitleTrack t) => (
-            id: t.id,
-            label: _trackLabel(t.title, t.language, 'Subtitle'),
-            track: t,
+    for (final SubtitleTrack t in widget.trailer.streamSubtitles) {
+      if (!list.any((SubtitleTrack m) => m.id == t.id)) list.add(t);
+    }
+    final Color accent = Theme.of(context).colorScheme.primary;
+    bool openStyle = false;
+    final SubtitleTrack? picked = await showModalBottomSheet<SubtitleTrack>(
+      context: context,
+      backgroundColor: const Color(0xFF17171F),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  'Subtitles',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: <Widget>[
+                    ListTile(
+                      title: const Text(
+                        'Off',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      trailing: currentId == 'no'
+                          ? Icon(Icons.check_rounded, color: accent)
+                          : null,
+                      onTap: () =>
+                          Navigator.of(context).pop(SubtitleTrack.no()),
+                    ),
+                    for (final SubtitleTrack t in list)
+                      ListTile(
+                        title: Text(
+                          _trackLabel(t.title, t.language, 'Subtitle'),
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        trailing: t.id == currentId
+                            ? Icon(Icons.check_rounded, color: accent)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(t),
+                      ),
+                    const Divider(color: Color(0xFF2A2A35)),
+                    ListTile(
+                      leading: Icon(
+                        Icons.tune_rounded,
+                        color: accent,
+                      ),
+                      title: const Text(
+                        'Subtitle style',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      subtitle: const Text(
+                        'Font, size, color, position, delay',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                      onTap: () {
+                        openStyle = true;
+                        Navigator.of(context).pop();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
           ),
-        ),
-      ],
-      onPick: (SubtitleTrack track) => _player.setSubtitleTrack(track),
+        );
+      },
     );
+    if (openStyle) {
+      await _showSubtitleEditSheet();
+      _pokeControls();
+      return;
+    }
+    if (picked != null) {
+      await _player.setSubtitleTrack(picked);
+      _pokeControls();
+    }
   }
+
+  /// In-player server switch (server/playlist icon in the bottom row):
+  /// pick another server (or debrid) for THIS episode, then re-resolve
+  /// the current episode through Detail's resolver and reload it at
+  /// the same position.
+  Future<void> _showServerSheetInPlayer() async {
+    final String currentServer = _store.preferredServer;
+    final ({String server, String subDub, String? debrid})? picked =
+        await showServerSheet(
+          context: context,
+          store: _store,
+          currentServer: currentServer,
+          subDub: widget.subDub,
+          currentDebrid: widget.currentDebrid,
+        );
+    if (picked == null) return;
+    final String? currentDebrid = _currentStream?.source == 'TorBox'
+        ? 'torbox'
+        : _currentStream?.source == 'Real-Debrid'
+        ? 'realdebrid'
+        : widget.currentDebrid;
+    if (picked.server == currentServer && picked.debrid == currentDebrid) {
+      return;
+    }
+    final Duration pos = _player.state.position;
+    await widget.onServerChanged?.call(picked.server, picked.subDub, picked.debrid);
+    if (!mounted || widget.onResolveEpisode == null) return;
+    setState(() => _resolving = true);
+    final ResolvedStream? stream = await widget.onResolveEpisode!(
+      _currentEpisode,
+    );
+    if (!mounted) return;
+    setState(() => _resolving = false);
+    if (stream == null) {
+      _snack('Could not find sources on ${picked.server}');
+      return;
+    }
+    _currentStream = stream;
+    await _loadStream(stream);
+    if (!mounted) return;
+    unawaited(_player.seek(pos));
+    unawaited(_player.play());
+    _pokeControls();
+  }
+
+  /// Volume sheet: slider + mute toggle, opened from the volume icon.
+  Future<void> _showVolumeSheet() async {
+    final Color accent = Theme.of(context).colorScheme.primary;
+    double volume = _player.state.volume;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF17171F),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setSheet) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      'Volume',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: <Widget>[
+                        IconButton(
+                          icon: Icon(
+                            volume == 0
+                                ? Icons.volume_off_rounded
+                                : Icons.volume_down_rounded,
+                            color: Colors.white,
+                          ),
+                          onPressed: () {
+                            setSheet(() => volume = 0);
+                            unawaited(_player.setVolume(0));
+                          },
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: volume,
+                            min: 0,
+                            max: 100,
+                            activeColor: accent,
+                            onChanged: (double v) {
+                              setSheet(() => volume = v);
+                              unawaited(_player.setVolume(v));
+                            },
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.volume_up_rounded,
+                            color: Colors.white,
+                          ),
+                          onPressed: () {
+                            setSheet(() => volume = 100);
+                            unawaited(_player.setVolume(100));
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    _pokeControls();
+  }
+
+  /// Aspect ratio cycle: Fit → Fill → Stretch (cover).
+  void _cycleAspect() {
+    setState(() {
+      _videoFit = _videoFit == BoxFit.contain
+          ? BoxFit.cover
+          : _videoFit == BoxFit.cover
+          ? BoxFit.fill
+          : BoxFit.contain;
+    });
+    _pokeControls();
+  }
+
+  String get _aspectLabel => _videoFit == BoxFit.contain
+      ? 'Fit'
+      : _videoFit == BoxFit.cover
+      ? 'Fill'
+      : 'Stretch';
 
   Future<void> _showQualitySheet() async {
     // M2: real streams carry quality variants — picking one reloads
@@ -980,7 +1365,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                       scale: scale,
                       child: Video(
                         controller: widget.trailer.controller,
-                        fit: BoxFit.contain,
+                        fit: _videoFit,
                         // No built-in controls: the vendored media_kit_video
                         // defaults to AdaptiveVideoControls, whose bottom
                         // bar (duplicate time + fullscreen button) renders
@@ -990,6 +1375,24 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                         // built-in controls entirely.
                         controls: NoVideoControls,
                       ),
+                    );
+                  },
+                ),
+              // Brightness dim layer (0.2.3): a black overlay whose
+              // opacity follows the left-swipe brightness level. It sits
+              // above the video but below the gestures/controls/HUD, so
+              // it dims the picture (and the poster) without blocking
+              // input. mpv's `brightness` property is a no-op under
+              // hwdec on iOS, so this overlay IS the brightness control.
+              if (!hasError)
+                ValueListenableBuilder<double>(
+                  valueListenable: _brightnessLevel,
+                  builder: (BuildContext context, double level, Widget? _) {
+                    final double opacity =
+                        ((100 - level) / 100 * 0.75).clamp(0, 0.75);
+                    if (opacity <= 0) return const SizedBox.shrink();
+                    return IgnorePointer(
+                      child: Container(color: Colors.black.withValues(alpha: opacity)),
                     );
                   },
                 ),
@@ -1038,32 +1441,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     ],
                   ),
                 ),
-              if (!hasError) _buildGestures(),
+              if (!hasError) _buildPinchListener(child: _buildGestures()),
               if (!hasError && _controlsVisible) _buildControls(accent),
-              ValueListenableBuilder<String?>(
-                valueListenable: _gestureHint,
-                builder: (BuildContext context, String? hint, Widget? _) {
-                  if (hint == null) return const SizedBox.shrink();
-                  return Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        hint,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  );
+              if (_seekFlashVisible) _buildSeekFlash(),
+              ValueListenableBuilder<_HudState?>(
+                valueListenable: _hud,
+                builder: (BuildContext context, _HudState? state, Widget? _) {
+                  return _GestureHud(state: state, accent: accent);
                 },
               ),
               if (_autoplayTimer != null && _autoplayTimer!.isActive)
@@ -1088,48 +1472,111 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     );
   }
 
+  /// Pinch zoom lives in a raw Listener, NOT in the GestureDetector:
+  /// a ScaleGestureRecognizer competes with the drag recognizers in
+  /// the arena and swallows single-finger drags. The Listener only
+  /// observes raw pointer events, so it never steals a drag.
+  Widget _buildPinchListener({required Widget child}) {
+    return Listener(
+      onPointerDown: (PointerDownEvent event) {
+        _activePointers[event.pointer] = event.position;
+        if (_activePointers.length == 2) {
+          final List<Offset> points = _activePointers.values.toList();
+          _pinchBaseDistance = (points[0] - points[1]).distance;
+          _pinchBaseScale = _videoScale.value;
+          _pinching = true;
+        }
+      },
+      onPointerMove: (PointerMoveEvent event) {
+        if (!_activePointers.containsKey(event.pointer)) return;
+        _activePointers[event.pointer] = event.position;
+        if (_pinching && _activePointers.length == 2) {
+          final List<Offset> points = _activePointers.values.toList();
+          final double distance = (points[0] - points[1]).distance;
+          if (_pinchBaseDistance > 0) {
+            _videoScale.value =
+                (_pinchBaseScale * distance / _pinchBaseDistance).clamp(
+                  0.5,
+                  3.0,
+                );
+          }
+        }
+      },
+      onPointerUp: (PointerUpEvent event) {
+        _activePointers.remove(event.pointer);
+        if (_activePointers.length < 2) _pinching = false;
+      },
+      onPointerCancel: (PointerCancelEvent event) {
+        _activePointers.remove(event.pointer);
+        if (_activePointers.length < 2) _pinching = false;
+      },
+      child: child,
+    );
+  }
+
+  /// Show the animated gesture HUD (volume / brightness / seek).
+  void _showHud(_HudState state) {
+    _hudHideTimer?.cancel();
+    _hud.value = state;
+  }
+
+  /// Fade the HUD out shortly after the drag ends.
+  void _hideHudSoon() {
+    _hudHideTimer?.cancel();
+    _hudHideTimer = Timer(const Duration(milliseconds: 700), () {
+      _hud.value = null;
+    });
+  }
+
   Widget _buildGestures() {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: _pokeControls,
       onDoubleTapDown: (TapDownDetails details) {
-        // Zoomed in: double-tap resets to fit. Otherwise: side seek.
-        if (_videoScale.value != 1.0) {
-          _videoScale.value = 1.0;
-          return;
-        }
+        _lastDoubleTapX = details.globalPosition.dx;
+        // Zoomed in: center double-tap resets to fit. Side double-taps
+        // always seek, even when zoomed (0.2.1 reset the zoom on ANY
+        // double-tap, which felt broken).
         final double w = MediaQuery.of(context).size.width;
-        if (details.globalPosition.dx < w / 2) {
-          unawaited(_seekBy(-_store.doubleTapSeek));
-        } else {
-          unawaited(_seekBy(_store.doubleTapSeek));
+        final double x = details.globalPosition.dx;
+        if (_videoScale.value != 1.0 && x > w / 3 && x < w * 2 / 3) {
+          _videoScale.value = 1.0;
         }
       },
-      onScaleStart: (ScaleStartDetails details) {
-        _scaleBase = _videoScale.value;
-      },
-      onScaleUpdate: (ScaleUpdateDetails details) {
-        if (details.scale == 1.0) return;
-        _videoScale.value = (_scaleBase * details.scale).clamp(0.5, 3.0);
+      onDoubleTap: () {
+        final double w = MediaQuery.of(context).size.width;
+        final double x = _lastDoubleTapX;
+        if (x < w / 3) {
+          unawaited(_seekBy(-_store.doubleTapSeek, showFlash: true));
+        } else if (x > w * 2 / 3) {
+          unawaited(_seekBy(_store.doubleTapSeek, showFlash: true));
+        } else {
+          _flashPlayPause();
+          unawaited(_togglePlay());
+        }
       },
       onHorizontalDragStart: (DragStartDetails details) {
-        if (!_store.gestures) return;
+        if (!_store.gestures || _pinching) return;
         _dragStartPosition = _player.state.position;
         _dragAccumDx = 0;
       },
       onHorizontalDragUpdate: (DragUpdateDetails details) {
-        if (!_store.gestures || _dragStartPosition == null) return;
+        if (!_store.gestures || _dragStartPosition == null || _pinching) {
+          return;
+        }
         _dragAccumDx += details.delta.dx;
         final int seconds = (_dragAccumDx / 10).round();
         _dragHintTarget = _dragStartPosition! + Duration(seconds: seconds);
-        _gestureHint.value = '${seconds >= 0 ? '+' : ''}$seconds s';
+        _showHud(
+          _HudState.seek(label: '${seconds >= 0 ? '+' : ''}$seconds s'),
+        );
       },
       onHorizontalDragEnd: (DragEndDetails details) {
         if (!_store.gestures || _dragStartPosition == null) return;
         final Duration target = _dragHintTarget ?? _dragStartPosition!;
         _dragStartPosition = null;
         _dragHintTarget = null;
-        _gestureHint.value = null;
+        _hideHudSoon();
         final Duration dur = _player.state.duration;
         Duration clamped = target;
         if (clamped < Duration.zero) clamped = Duration.zero;
@@ -1138,103 +1585,221 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         _pokeControls();
       },
       onVerticalDragStart: (DragStartDetails details) {
-        if (!_store.gestures) return;
+        if (!_store.gestures || _pinching) return;
+        final double w = MediaQuery.of(context).size.width;
+        _dragVerticalRight = details.globalPosition.dx > w / 2;
+        _dragAccumDy = 0;
         _dragStartVolume = _player.state.volume;
-        _dragStartBrightness = _brightness;
+        _dragStartBrightnessLevel = _brightnessLevel.value;
       },
       onVerticalDragUpdate: (DragUpdateDetails details) {
-        if (!_store.gestures) return;
-        final double w = MediaQuery.of(context).size.width;
-        final bool rightSide = details.globalPosition.dx > w / 2;
-        if (rightSide) {
-          final double v = (_dragStartVolume - details.delta.dy * 0.5).clamp(
-            0,
-            100,
-          );
+        if (!_store.gestures || _pinching) return;
+        // ROOT CAUSE (0.2.1): the old code subtracted only the
+        // per-frame `details.delta.dy` from the start value, so the
+        // value oscillated around where the swipe began and never
+        // accumulated — the swipe visibly did nothing. The distance
+        // must be accumulated across frames (like _dragAccumDx).
+        _dragAccumDy += details.delta.dy;
+        if (_dragVerticalRight) {
+          // Right half = volume. Swipe up raises it; ~200 px spans
+          // the full 0..100 range.
+          final double v =
+              (_dragStartVolume - _dragAccumDy * 0.5).clamp(0, 100);
           unawaited(_player.setVolume(v));
-          _gestureHint.value = 'Volume ${v.round()}%';
-        } else {
-          final double b = (_dragStartBrightness - details.delta.dy * 0.3)
-              .clamp(-100, 100);
-          _brightness = b;
-          unawaited(
-            _setMpvProperty(_player, 'brightness', b.toStringAsFixed(0)),
+          _showHud(
+            _HudState.volume(value: v / 100, label: 'Volume ${v.round()}%'),
           );
-          _gestureHint.value = 'Brightness ${b >= 0 ? '+' : ''}${b.round()}';
+        } else {
+          // Left half = brightness (overlay dim layer — mpv's
+          // `brightness` property is a no-op under hwdec on iOS).
+          // Swipe up brightens; ~250 px spans the full range.
+          final double b =
+              (_dragStartBrightnessLevel - _dragAccumDy * 0.4).clamp(0, 100);
+          _brightnessLevel.value = b;
+          _showHud(
+            _HudState.brightness(
+              value: b / 100,
+              label: 'Brightness ${b.round()}%',
+            ),
+          );
         }
       },
       onVerticalDragEnd: (DragEndDetails details) {
-        _gestureHint.value = null;
+        _hideHudSoon();
       },
       child: const SizedBox.expand(),
     );
   }
 
+  /// Zeus/Steps layout (0.2.3): NO top bar, NO bottom bar — every
+  /// control floats directly over the video. Dark translucent circles
+  /// (never milky liquid glass), accent color from Settings.
   Widget _buildControls(Color accent) {
+    if (_controlsLocked) {
+      return Center(
+        child: _RoundButton(
+          icon: Icons.lock_open_rounded,
+          size: 56,
+          iconSize: 28,
+          accentIcon: true,
+          accent: accent,
+          tooltip: 'Unlock controls',
+          onTap: () {
+            setState(() => _controlsLocked = false);
+            _pokeControls();
+          },
+        ),
+      );
+    }
     return AnimatedOpacity(
       opacity: _controlsVisible ? 1 : 0,
       duration: const Duration(milliseconds: 250),
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: <Color>[
-              Color(0x99000000),
-              Colors.transparent,
-              Colors.transparent,
-              Color(0x99000000),
-            ],
-            stops: <double>[0.0, 0.25, 0.65, 1.0],
-          ),
-        ),
-        child: Column(
-          children: <Widget>[
-            _buildTopBar(accent),
-            const Spacer(),
-            StreamBuilder<Duration>(
-              stream: _player.stream.position,
-              initialData: _player.state.position,
-              builder: (BuildContext context, AsyncSnapshot<Duration> snap) {
-                final Duration pos = snap.data ?? Duration.zero;
-                final Duration dur = _player.state.duration;
-                final bool showSkip =
-                    _store.skipIntro &&
-                    dur.inSeconds > 120 &&
-                    pos.inSeconds < 95;
-                if (!showSkip) return const SizedBox.shrink();
-                return Align(
-                  alignment: Alignment.centerRight,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 16, bottom: 12),
-                    child: ElevatedButton(
-                      onPressed: () {
-                        unawaited(_player.seek(const Duration(seconds: 85)));
-                        _pokeControls();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: accent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: const Text(
-                        'Skip Intro',
-                        style: TextStyle(fontWeight: FontWeight.w700),
+      child: Column(
+        children: <Widget>[
+          _buildTopBar(accent),
+          Expanded(child: _buildCenterControls(accent)),
+          StreamBuilder<Duration>(
+            stream: _player.stream.position,
+            initialData: _player.state.position,
+            builder: (BuildContext context, AsyncSnapshot<Duration> snap) {
+              final Duration pos = snap.data ?? Duration.zero;
+              final Duration dur = _player.state.duration;
+              final bool showSkip =
+                  _store.skipIntro && dur.inSeconds > 120 && pos.inSeconds < 95;
+              if (!showSkip) return const SizedBox.shrink();
+              return Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 16, bottom: 12),
+                  child: ElevatedButton(
+                    onPressed: () {
+                      unawaited(_player.seek(const Duration(seconds: 85)));
+                      _pokeControls();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
                       ),
                     ),
+                    child: const Text(
+                      'Skip Intro',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
                   ),
-                );
-              },
-            ),
-            _buildBottomBar(accent),
-          ],
+                ),
+              );
+            },
+          ),
+          _buildBottomBar(accent),
+        ],
+      ),
+    );
+  }
+
+  /// Center cluster: medium round dark buttons — -10s / play-pause /
+  /// +10s (the red-circled area of the reference).
+  Widget _buildCenterControls(Color accent) {
+    return Center(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _RoundButton(
+            icon: Icons.replay_10_rounded,
+            size: 48,
+            iconSize: 26,
+            accent: accent,
+            tooltip: 'Back 10 seconds',
+            onTap: () => unawaited(_seekBy(-10, showFlash: true)),
+          ),
+          const SizedBox(width: 28),
+          StreamBuilder<bool>(
+            stream: _player.stream.playing,
+            initialData: _player.state.playing,
+            builder: (BuildContext context, AsyncSnapshot<bool> snap) {
+              final bool playing = snap.data ?? false;
+              return _RoundButton(
+                icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                size: 60,
+                iconSize: 34,
+                accent: accent,
+                tooltip: playing ? 'Pause' : 'Play',
+                onTap: _togglePlay,
+              );
+            },
+          ),
+          const SizedBox(width: 28),
+          _RoundButton(
+            icon: Icons.forward_10_rounded,
+            size: 48,
+            iconSize: 26,
+            accent: accent,
+            tooltip: 'Forward 10 seconds',
+            onTap: () => unawaited(_seekBy(10, showFlash: true)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Double-tap seek feedback: a brief dark badge on the tapped side
+  /// ("-10s" / "+10s") or a play/pause flash in the center.
+  Widget _buildSeekFlash() {
+    final bool? left = _seekFlashLeft;
+    final Alignment alignment = left == null
+        ? Alignment.center
+        : left
+        ? const Alignment(-0.55, 0)
+        : const Alignment(0.55, 0);
+    final Widget child = left == null
+        ? Icon(
+            _player.state.playing
+                ? Icons.pause_rounded
+                : Icons.play_arrow_rounded,
+            color: Colors.white,
+            size: 36,
+          )
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(
+                left ? Icons.replay_10_rounded : Icons.forward_10_rounded,
+                color: Colors.white,
+                size: 30,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${left ? '-' : '+'}$_seekFlashAmount s',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          );
+    return IgnorePointer(
+      child: Align(
+        alignment: alignment,
+        child: Container(
+          width: 76,
+          height: 76,
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.55),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+          ),
+          alignment: Alignment.center,
+          child: child,
         ),
       ),
     );
   }
 
+  /// Top row, floating over the video: small back arrow + title +
+  /// episode (left), episode-list + PiP round buttons (right).
+  /// No bar behind anything.
   Widget _buildTopBar(Color accent) {
     return SafeArea(
       bottom: false,
@@ -1243,91 +1808,95 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         child: Row(
           children: <Widget>[
             IconButton(
-              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+              icon: const Icon(
+                Icons.arrow_back_rounded,
+                color: Colors.white,
+                size: 26,
+              ),
               onPressed: () => Navigator.of(context).pop(),
             ),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    widget.anime.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  Text(
-                    'Episode ${_currentEpisode.number} · ${_currentEpisode.title}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                ],
-              ),
-            ),
-            InkWell(
-              onTap: _showEpisodeSheet,
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+              child: GestureDetector(
+                onTap: _showEpisodeSheet,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      'EP ${_currentEpisode.number}',
+                      widget.anime.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white,
+                        fontSize: 16,
                         fontWeight: FontWeight.w800,
-                        fontSize: 14,
+                        shadows: <Shadow>[
+                          Shadow(
+                            color: Colors.black54,
+                            blurRadius: 4,
+                            offset: Offset(0, 1),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 2),
-                    const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      color: Colors.white,
-                      size: 18,
+                    Text(
+                      'Episode ${_currentEpisode.number} · ${_currentEpisode.title}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        shadows: <Shadow>[
+                          Shadow(
+                            color: Colors.black54,
+                            blurRadius: 4,
+                            offset: Offset(0, 1),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(width: 6),
-            _TopButton(
-              label:
-                  '${_rate.toStringAsFixed(_rate.truncateToDouble() == _rate ? 0 : 2)}x',
-              onTap: _cycleSpeed,
+            _RoundButton(
+              icon: Icons.list_rounded,
+              size: 40,
+              iconSize: 22,
+              accent: accent,
+              tooltip: 'Episodes',
+              onTap: _showEpisodeSheet,
             ),
-            IconButton(
-              icon: Icon(
-                Icons.picture_in_picture_alt_rounded,
-                color: _inPip ? accent : Colors.white,
-              ),
+            const SizedBox(width: 8),
+            _RoundButton(
+              icon: Icons.picture_in_picture_alt_rounded,
+              size: 40,
+              iconSize: 22,
+              accent: accent,
+              active: _inPip,
               tooltip: 'Picture-in-Picture',
-              onPressed: _inPip
+              onTap: _inPip
                   ? () async {
                       final AnibeeMpvPip? bridge = _pipBridge;
                       if (bridge != null) await bridge.exitPiP();
                     }
                   : _enterPip,
             ),
+            const SizedBox(width: 8),
           ],
         ),
       ),
     );
   }
 
+  /// Bottom, floating over the video: the ONLY full-width element is
+  /// the thin seek bar (time left / total right). Below it, ONE row of
+  /// small dark round buttons anchored to the BOTTOM-RIGHT corner —
+  /// nothing at the bottom-left or bottom-center. Next is the very
+  /// last button at the far corner.
   Widget _buildBottomBar(Color accent) {
+    final bool subtitlesOn = _player.state.track.subtitle.id != 'no';
+    final String rateLabel =
+        '${_rate.toStringAsFixed(_rate.truncateToDouble() == _rate ? 0 : 2)}x';
     return SafeArea(
       top: false,
       child: Padding(
@@ -1349,14 +1918,24 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   children: <Widget>[
                     Text(
                       _formatDuration(pos),
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        shadows: <Shadow>[
+                          Shadow(
+                            color: Colors.black54,
+                            blurRadius: 4,
+                            offset: Offset(0, 1),
+                          ),
+                        ],
+                      ),
                     ),
                     Expanded(
                       child: SliderTheme(
                         data: SliderTheme.of(context).copyWith(
                           activeTrackColor: accent,
                           inactiveTrackColor: Colors.white24,
-                          thumbColor: Colors.white,
+                          thumbColor: accent,
                           trackHeight: 3,
                           thumbShape: const RoundSliderThumbShape(
                             enabledThumbRadius: 6,
@@ -1378,83 +1957,111 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     ),
                     Text(
                       _formatDuration(dur),
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        shadows: <Shadow>[
+                          Shadow(
+                            color: Colors.black54,
+                            blurRadius: 4,
+                            offset: Offset(0, 1),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 );
               },
             ),
+            const SizedBox(height: 2),
             Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.end,
               children: <Widget>[
-                IconButton(
-                  icon: const Icon(
-                    Icons.skip_previous_rounded,
-                    color: Colors.white,
-                    size: 30,
-                  ),
-                  onPressed: _prevEpisode == null
-                      ? null
-                      : () => _selectEpisode(_prevEpisode!),
-                ),
-                const SizedBox(width: 8),
-                StreamBuilder<bool>(
-                  stream: _player.stream.playing,
-                  initialData: _player.state.playing,
-                  builder: (BuildContext context, AsyncSnapshot<bool> snap) {
-                    final bool playing = snap.data ?? false;
-                    return IconButton(
-                      icon: Icon(
-                        playing
-                            ? Icons.pause_rounded
-                            : Icons.play_arrow_rounded,
-                        color: Colors.white,
-                        size: 40,
-                      ),
-                      onPressed: _togglePlay,
-                    );
-                  },
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(
-                    Icons.skip_next_rounded,
-                    color: Colors.white,
-                    size: 30,
-                  ),
-                  onPressed: _nextEpisode == null
-                      ? null
-                      : () => _selectEpisode(_nextEpisode!),
-                ),
-                const SizedBox(width: 16),
-                _ControlChip(
-                  label: 'Audio',
+                _RoundButton(
+                  icon: Icons.closed_caption_rounded,
+                  size: 40,
+                  iconSize: 21,
                   accent: accent,
-                  onTap: _showAudioSheet,
-                ),
-                const SizedBox(width: 8),
-                _ControlChip(
-                  label: 'Subs',
-                  accent: accent,
+                  active: subtitlesOn,
+                  tooltip: 'Subtitles',
                   onTap: _showSubtitleSheet,
                 ),
                 const SizedBox(width: 8),
-                _ControlChip(
-                  label: 'Sub edit',
+                _RoundButton(
+                  icon: Icons.music_note_rounded,
+                  size: 40,
+                  iconSize: 21,
                   accent: accent,
-                  onTap: _showSubtitleEditSheet,
+                  tooltip: 'Audio',
+                  onTap: _showAudioSheet,
                 ),
                 const SizedBox(width: 8),
-                _ControlChip(
-                  label: 'Quality',
+                _RoundButton(
+                  icon: Icons.storage_rounded,
+                  size: 40,
+                  iconSize: 21,
                   accent: accent,
+                  tooltip: 'Server',
+                  onTap: _showServerSheetInPlayer,
+                ),
+                const SizedBox(width: 8),
+                _RoundButton(
+                  icon: Icons.tune_rounded,
+                  size: 40,
+                  iconSize: 21,
+                  accent: accent,
+                  tooltip: 'Quality',
                   onTap: _showQualitySheet,
                 ),
                 const SizedBox(width: 8),
-                _ControlChip(
-                  label: 'Episodes',
+                _RoundButton(
+                  icon: Icons.volume_up_rounded,
+                  size: 40,
+                  iconSize: 21,
                   accent: accent,
-                  onTap: _showEpisodeSheet,
+                  tooltip: 'Volume',
+                  onTap: _showVolumeSheet,
+                ),
+                const SizedBox(width: 8),
+                _RoundButton(
+                  label: rateLabel,
+                  size: 40,
+                  accent: accent,
+                  tooltip: 'Playback speed',
+                  onTap: _cycleSpeed,
+                ),
+                const SizedBox(width: 8),
+                _RoundButton(
+                  icon: Icons.lock_rounded,
+                  size: 40,
+                  iconSize: 20,
+                  accent: accent,
+                  tooltip: 'Lock controls',
+                  onTap: () {
+                    setState(() => _controlsLocked = true);
+                  },
+                ),
+                const SizedBox(width: 8),
+                _RoundButton(
+                  icon: Icons.aspect_ratio_rounded,
+                  size: 40,
+                  iconSize: 20,
+                  accent: accent,
+                  active: _videoFit != BoxFit.contain,
+                  tooltip: 'Aspect ratio ($_aspectLabel)',
+                  onTap: _cycleAspect,
+                ),
+                const SizedBox(width: 8),
+                _RoundButton(
+                  icon: Icons.skip_next_rounded,
+                  size: 40,
+                  iconSize: 22,
+                  accent: accent,
+                  tooltip: 'Next episode',
+                  enabled: _nextEpisode != null,
+                  onTap: _nextEpisode == null
+                      ? null
+                      : () => _selectEpisode(_nextEpisode!),
                 ),
               ],
             ),
@@ -1472,61 +2079,204 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   }
 }
 
-class _TopButton extends StatelessWidget {
-  const _TopButton({required this.label, required this.onTap});
+/// One round player control button — DARK translucent black (the Zeus
+/// reference), never milky liquid glass. The icon/text turns the
+/// Settings accent color when the control is active (e.g. subtitles
+/// on, speed chip, locked) — the player color follows the accent
+/// picker, never a hardcoded color.
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({
+    this.icon,
+    this.label,
+    required this.size,
+    this.iconSize = 22,
+    required this.accent,
+    this.active = false,
+    this.accentIcon = false,
+    this.enabled = true,
+    this.tooltip,
+    this.onTap,
+  });
 
-  final String label;
-  final VoidCallback onTap;
+  final IconData? icon;
+  final String? label;
+  final double size;
+  final double iconSize;
+  final Color accent;
+  final bool active;
+  final bool accentIcon;
+  final bool enabled;
+  final String? tooltip;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return TextButton(
-      onPressed: onTap,
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w800,
-          fontSize: 15,
-        ),
+    final bool useAccent = active || accentIcon;
+    final Widget content = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
       ),
+      alignment: Alignment.center,
+      child: label != null
+          ? Text(
+              label!,
+              style: TextStyle(
+                color: accent,
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
+            )
+          : Icon(
+              icon,
+              color: useAccent
+                  ? accent
+                  : enabled
+                  ? Colors.white
+                  : Colors.white38,
+              size: iconSize,
+            ),
     );
+    final Widget button = InkWell(
+      onTap: enabled ? onTap : null,
+      customBorder: const CircleBorder(),
+      child: content,
+    );
+    return tooltip == null
+        ? button
+        : Tooltip(message: tooltip!, child: button);
   }
 }
 
-class _ControlChip extends StatelessWidget {
-  const _ControlChip({
-    required this.label,
-    required this.accent,
-    required this.onTap,
-  });
+enum _HudKind { volume, brightness, seek }
 
+/// One gesture-HUD state: volume / brightness carry a 0..1 value for
+/// the animated bar; seek carries only a label ("+12 s").
+class _HudState {
+  const _HudState.volume({required this.value, required this.label})
+    : kind = _HudKind.volume;
+  const _HudState.brightness({required this.value, required this.label})
+    : kind = _HudKind.brightness;
+  const _HudState.seek({required this.label})
+    : kind = _HudKind.seek,
+      value = null;
+
+  final _HudKind kind;
+  final double? value;
   final String label;
+}
+
+/// Centered animated gesture HUD (MX Player / VLC style): big icon +
+/// label + a smoothly animated progress bar for volume/brightness.
+/// Fades in while swiping, fades out shortly after the swipe ends.
+/// The last state is kept during the fade-out so it doesn't vanish
+/// abruptly.
+class _GestureHud extends StatefulWidget {
+  const _GestureHud({required this.state, required this.accent});
+
+  final _HudState? state;
   final Color accent;
-  final VoidCallback onTap;
+
+  @override
+  State<_GestureHud> createState() => _GestureHudState();
+}
+
+class _GestureHudState extends State<_GestureHud> {
+  _HudState? _last;
+
+  @override
+  void didUpdateWidget(_GestureHud oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.state != null) _last = widget.state;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: Colors.white12,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: accent.withValues(alpha: 0.45)),
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
+    final _HudState? shown = widget.state ?? _last;
+    final bool visible = widget.state != null;
+    return Center(
+      child: AnimatedOpacity(
+        opacity: visible ? 1 : 0,
+        duration: const Duration(milliseconds: 250),
+        child: shown == null
+            ? const SizedBox.shrink()
+            : Container(
+                width: 176,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 18,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.78),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.15),
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(_iconFor(shown), color: Colors.white, size: 36),
+                    const SizedBox(height: 10),
+                    Text(
+                      shown.label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (shown.value != null) ...<Widget>[
+                      const SizedBox(height: 12),
+                      TweenAnimationBuilder<double>(
+                        tween: Tween<double>(end: shown.value),
+                        duration: const Duration(milliseconds: 150),
+                        builder:
+                            (BuildContext context, double value, Widget? _) {
+                              return Container(
+                                width: 136,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: Colors.white24,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                                alignment: Alignment.centerLeft,
+                                child: Container(
+                                  width: 136 * value.clamp(0, 1),
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: widget.accent,
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                              );
+                            },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
       ),
     );
+  }
+
+  IconData _iconFor(_HudState state) {
+    switch (state.kind) {
+      case _HudKind.volume:
+        final double v = state.value ?? 0;
+        if (v <= 0) return Icons.volume_off_rounded;
+        if (v < 0.5) return Icons.volume_down_rounded;
+        return Icons.volume_up_rounded;
+      case _HudKind.brightness:
+        return Icons.wb_sunny_rounded;
+      case _HudKind.seek:
+        return state.label.startsWith('-')
+            ? Icons.fast_rewind_rounded
+            : Icons.fast_forward_rounded;
+    }
   }
 }
 
@@ -1603,7 +2353,7 @@ class _AutoplayOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return Positioned(
       right: 16,
-      bottom: 120,
+      bottom: 150,
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(

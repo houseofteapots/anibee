@@ -7,26 +7,56 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../models.dart';
 import '../services/miruro_resolver.dart';
 
+/// Pick the subtitle track for the user's preferred language
+/// (Settings → Player → Subtitle language): 'auto' | 'en' | 'hi' |
+/// 'ar' | 'off'. 'auto' means English. A missing language falls back
+/// to English, then the first track. Returns null for 'off' (no
+/// subtitles) or an empty list.
+SubtitleTrack? pickSubtitleTrack(List<SubtitleTrack> tracks, String language) {
+  if (language == 'off' || tracks.isEmpty) return null;
+  bool matches(String lang, SubtitleTrack track) {
+    final String label = (track.title ?? '').trim().toLowerCase();
+    final String code = (track.language ?? '').trim().toLowerCase();
+    switch (lang) {
+      case 'en':
+        return MiruroResolver.isEnglishLabel(track.title) ||
+            code == 'en' ||
+            code == 'eng';
+      case 'hi':
+        return label.contains('hindi') ||
+            label == 'hi' ||
+            label.startsWith('hi ') ||
+            code == 'hi' ||
+            code == 'hin';
+      case 'ar':
+        return label.contains('arabic') ||
+            label == 'ar' ||
+            label.startsWith('ar ') ||
+            code == 'ar' ||
+            code == 'ara';
+      default:
+        return false;
+    }
+  }
+  if (language != 'auto') {
+    for (final SubtitleTrack track in tracks) {
+      if (matches(language, track)) return track;
+    }
+  }
+  // 'auto' = English; also the fallback for a missing language.
+  for (final SubtitleTrack track in tracks) {
+    if (matches('en', track)) return track;
+  }
+  return tracks.first;
+}
+
 /// Default subtitle track for a freshly loaded stream: prefer English
 /// (matching the SUB selection) — sources list tracks in their own
 /// order and Arabic can come first, so taking `.first` wrongly showed
 /// Arabic subtitles (0.2.1, Chainsaw Man EP 2). Falls back to the
 /// first track when no English track exists. [tracks] must be non-empty.
 SubtitleTrack pickDefaultSubtitleTrack(List<SubtitleTrack> tracks) {
-  for (final SubtitleTrack track in tracks) {
-    final String label = (track.title ?? '').trim().toLowerCase();
-    if (label.contains('english') ||
-        label == 'en' ||
-        label == 'eng' ||
-        label.startsWith('en ') ||
-        label.startsWith('en-') ||
-        label.startsWith('eng ') ||
-        label.startsWith('[en') ||
-        label.startsWith('(en')) {
-      return track;
-    }
-  }
-  return tracks.first;
+  return pickSubtitleTrack(tracks, 'auto') ?? tracks.first;
 }
 
 /// The ONE libmpv player shared by the Detail inline trailer and the full
@@ -75,6 +105,15 @@ class TrailerPlayer extends ChangeNotifier {
   Map<String, String> _streamHeaders = const <String, String>{};
   List<SubtitleTrack> _streamSubtitles = const <SubtitleTrack>[];
 
+  /// Preferred subtitle language for the loaded stream ('auto' |
+  /// 'en' | 'hi' | 'ar' | 'off') — kept so retry() re-applies it.
+  String _subtitleLanguage = 'auto';
+
+  /// Subtitle tracks of the loaded stream (incl. externally fetched
+  /// ones added via [addExternalSubtitle]) — the player sheet merges
+  /// these with mpv's own track list.
+  List<SubtitleTrack> get streamSubtitles => _streamSubtitles;
+
   /// Whether the Detail hero should render its inline Video widget.
   /// False while the full player screen owns the video surface.
   bool get inlineActive => _inlineActive;
@@ -120,11 +159,17 @@ class TrailerPlayer extends ChangeNotifier {
   /// headers (Referer/Origin) + subtitle tracks. Single-play mode
   /// (no loop — it is a real episode, not the trailer preview).
   /// [muted] is false when the full player loads the stream (volume
-  /// 100); the inline hero never loads streams.
-  Future<void> loadStream(ResolvedStream stream, {bool muted = false}) async {
+  /// 100); the inline hero never loads streams. [subtitleLanguage] is
+  /// the user's preferred subtitle language (Settings → Player).
+  Future<void> loadStream(
+    ResolvedStream stream, {
+    bool muted = false,
+    String subtitleLanguage = 'auto',
+  }) async {
     _url = stream.url;
     _isStream = true;
     _streamHeaders = stream.headers;
+    _subtitleLanguage = subtitleLanguage;
     _streamSubtitles = stream.subtitles
         .map(
           (SubtitleInfo s) => SubtitleTrack.uri(s.url, title: s.label),
@@ -145,8 +190,12 @@ class TrailerPlayer extends ChangeNotifier {
       _loadError = null;
       if (_streamSubtitles.isNotEmpty) {
         try {
+          final SubtitleTrack? picked = pickSubtitleTrack(
+            _streamSubtitles,
+            subtitleLanguage,
+          );
           await _player.setSubtitleTrack(
-            pickDefaultSubtitleTrack(_streamSubtitles),
+            picked ?? SubtitleTrack.no(),
           );
         } catch (_) {
           // Subtitles are best-effort; playback continues without them.
@@ -155,6 +204,26 @@ class TrailerPlayer extends ChangeNotifier {
     } catch (e) {
       _loadError = e.toString();
       _loaded = false;
+    }
+    notifyListeners();
+  }
+
+  /// Add an externally fetched subtitle (e.g. English fetched when
+  /// the stream carried none) and select it. Joins [_streamSubtitles]
+  /// so the sheet lists it and retry() keeps it.
+  Future<void> addExternalSubtitle(SubtitleInfo info) async {
+    final SubtitleTrack track = SubtitleTrack.uri(
+      info.url,
+      title: info.label,
+    );
+    if (_streamSubtitles.any((SubtitleTrack t) => t.id == track.id)) {
+      return;
+    }
+    _streamSubtitles = <SubtitleTrack>[..._streamSubtitles, track];
+    try {
+      await _player.setSubtitleTrack(track);
+    } catch (_) {
+      // Best-effort; playback continues without it.
     }
     notifyListeners();
   }
@@ -237,6 +306,7 @@ class TrailerPlayer extends ChangeNotifier {
               .where((SubtitleInfo s) => s.url.isNotEmpty)
               .toList(),
         ),
+        subtitleLanguage: _subtitleLanguage,
       );
       return;
     }

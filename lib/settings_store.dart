@@ -6,6 +6,141 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 import 'services/secure_store.dart';
 
+/// One real Continue Watching entry: the title, episode, saved
+/// position + duration, and enough anime metadata to rebuild the
+/// Detail screen. Persisted in `watch_history` (most recent first,
+/// capped at 20). The mock catalogue's currentEpisode/minutesLeft
+/// must NOT drive the row — only these real entries do (0.2.3: the
+/// row showed Solo Leveling EP 7 / JJK EP 5 / Demon Slayer EP 5
+/// while the user had actually watched JJK EP 1 + Chainsaw Man EP 2).
+class WatchEntry {
+  const WatchEntry({
+    required this.key,
+    required this.animeId,
+    required this.title,
+    required this.episode,
+    required this.positionSeconds,
+    required this.durationSeconds,
+    required this.updatedAt,
+    this.anilistId,
+    this.posterUrl,
+    this.episodeCount = 0,
+    this.year = 0,
+    this.rating = 0,
+    this.genres = const <String>[],
+    this.synopsis = '',
+  });
+
+  factory WatchEntry.fromJson(Map<String, dynamic> json) {
+    return WatchEntry(
+      key: json['key'] as String? ?? '',
+      animeId: json['animeId'] as String? ?? '',
+      anilistId: (json['anilistId'] as num?)?.toInt(),
+      title: json['title'] as String? ?? 'Unknown',
+      posterUrl: json['posterUrl'] as String?,
+      episodeCount: (json['episodeCount'] as num?)?.toInt() ?? 0,
+      year: (json['year'] as num?)?.toInt() ?? 0,
+      rating: (json['rating'] as num?)?.toDouble() ?? 0,
+      genres: (json['genres'] as List<dynamic>?)
+              ?.map((dynamic e) => e as String)
+              .toList() ??
+          const <String>[],
+      synopsis: json['synopsis'] as String? ?? '',
+      episode: (json['episode'] as num?)?.toInt() ?? 1,
+      positionSeconds: (json['position'] as num?)?.toDouble() ?? 0,
+      durationSeconds: (json['duration'] as num?)?.toDouble() ?? 0,
+      updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// Canonical identity: `'al:<anilistId>'` when known, else
+  /// `'id:<catalogue id>'`.
+  final String key;
+  final String animeId;
+  final int? anilistId;
+  final String title;
+  final String? posterUrl;
+  final int episodeCount;
+  final int year;
+  final double rating;
+  final List<String> genres;
+  final String synopsis;
+  final int episode;
+  final double positionSeconds;
+  final double durationSeconds;
+  final int updatedAt;
+
+  double get progress {
+    if (durationSeconds <= 0) return 0;
+    return (positionSeconds / durationSeconds).clamp(0.0, 1.0);
+  }
+
+  int get minutesLeft {
+    if (durationSeconds <= positionSeconds) return 0;
+    return ((durationSeconds - positionSeconds) / 60).ceil();
+  }
+
+  WatchEntry copyWith({
+    int? episode,
+    double? positionSeconds,
+    double? durationSeconds,
+    int? updatedAt,
+  }) {
+    return WatchEntry(
+      key: key,
+      animeId: animeId,
+      anilistId: anilistId,
+      title: title,
+      posterUrl: posterUrl,
+      episodeCount: episodeCount,
+      year: year,
+      rating: rating,
+      genres: genres,
+      synopsis: synopsis,
+      episode: episode ?? this.episode,
+      positionSeconds: positionSeconds ?? this.positionSeconds,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'key': key,
+      'animeId': animeId,
+      'anilistId': anilistId,
+      'title': title,
+      'posterUrl': posterUrl,
+      'episodeCount': episodeCount,
+      'year': year,
+      'rating': rating,
+      'genres': genres,
+      'synopsis': synopsis,
+      'episode': episode,
+      'position': positionSeconds,
+      'duration': durationSeconds,
+      'updatedAt': updatedAt,
+    };
+  }
+
+  Anime toAnime() {
+    return Anime(
+      id: animeId,
+      anilistId: anilistId,
+      title: title,
+      rating: rating,
+      year: year,
+      episodeCount: episodeCount,
+      genres: genres,
+      synopsis: synopsis,
+      gradient: const <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
+      posterUrl: posterUrl,
+      currentEpisode: episode,
+      minutesLeft: minutesLeft,
+    );
+  }
+}
+
 /// App-wide settings, persisted in SharedPreferences.
 /// Secrets (Debrid keys, OAuth tokens, client IDs) live in secure
 /// storage (M2) — migrated from prefs on first load.
@@ -44,9 +179,7 @@ class SettingsStore extends ChangeNotifier {
   Future<void> _readSecrets() async {
     torboxApiKey = await _secure.read(SecureStore.torboxApiKey);
     realDebridApiKey = await _secure.read(SecureStore.realDebridApiKey);
-    anilistClientId = await _secure.read(SecureStore.anilistClientId);
     anilistToken = await _secure.read(SecureStore.anilistAccessToken);
-    malClientId = await _secure.read(SecureStore.malClientId);
     malAccessToken = await _secure.read(SecureStore.malAccessToken);
     malRefreshToken = await _secure.read(SecureStore.malRefreshToken);
     final String? expiry = await _secure.read(SecureStore.malTokenExpiry);
@@ -71,6 +204,11 @@ class SettingsStore extends ChangeNotifier {
   String subPosition = 'Bottom';
   int subDelayMs = 200;
 
+  /// Preferred subtitle language (Settings → Player): 'auto' |
+  /// 'en' | 'hi' | 'ar' | 'off'. 'auto' means English by default.
+  /// The player auto-selects this language's track when available.
+  String subtitleLanguage = 'auto';
+
   // --- Player: playback ---
   int doubleTapSeek = 10;
   double playbackSpeed = 1.0;
@@ -84,8 +222,14 @@ class SettingsStore extends ChangeNotifier {
   /// with a 5 s countdown; tap to cancel).
   bool autoplayNext = true;
 
-  /// Resume positions, seconds into the episode. Key: "$animeId:$episode".
+  /// Resume positions, seconds into the episode. Key: canonical
+  /// resume key (see [resumeKeyFor]) — `'al:<anilistId>:ep<n>'` or
+  /// `'id:<catalogue id>:ep<n>'`.
   Map<String, double> resumeSeconds = <String, double>{};
+
+  /// Real Continue Watching history (most recent first). The Home
+  /// row is driven ONLY by this — never by the mock catalogue.
+  List<WatchEntry> watchHistory = <WatchEntry>[];
 
   // --- Servers / sources ---
   String preferredServer = 'Miruro';
@@ -111,13 +255,12 @@ class SettingsStore extends ChangeNotifier {
   bool realDebridVerified = false;
   String? realDebridAccount;
 
-  // --- Accounts (M2: real OAuth). Client IDs are user-entered
-  /// (created at anilist.co/settings/developer and
-  /// myanimelist.net/apiconfig) so no rebuild is needed.
-  String? anilistClientId;
+  // --- Accounts (M2: real OAuth). Tokens live in secure storage.
+  // Client IDs are NOT user-entered: they are the app's developer
+  // clients, read from the remote provider config (0.2.3) — the
+  // login sheet opens the browser authorize page directly.
   String? anilistToken;
   String? anilistUsername;
-  String? malClientId;
   String? malAccessToken;
   String? malRefreshToken;
   DateTime? malTokenExpiry;
@@ -160,6 +303,7 @@ class SettingsStore extends ChangeNotifier {
     subBackground = _prefs.getBool('sub_background') ?? true;
     subPosition = _prefs.getString('sub_position') ?? 'Bottom';
     subDelayMs = _prefs.getInt('sub_delay_ms') ?? 200;
+    subtitleLanguage = _prefs.getString('sub_language') ?? 'auto';
     doubleTapSeek = _prefs.getInt('double_tap_seek') ?? 10;
     playbackSpeed = _prefs.getDouble('playback_speed') ?? 1.0;
     gestures = _prefs.getBool('gestures') ?? true;
@@ -176,6 +320,22 @@ class SettingsStore extends ChangeNotifier {
         );
       } catch (_) {
         resumeSeconds = <String, double>{};
+      }
+    }
+    final String? historyJson = _prefs.getString('watch_history');
+    if (historyJson != null) {
+      try {
+        final List<dynamic> decoded =
+            jsonDecode(historyJson) as List<dynamic>;
+        watchHistory = decoded
+            .map(
+              (dynamic e) =>
+                  WatchEntry.fromJson(e as Map<String, dynamic>),
+            )
+            .where((WatchEntry e) => e.key.isNotEmpty)
+            .toList();
+      } catch (_) {
+        watchHistory = <WatchEntry>[];
       }
     }
     preferredServer = _prefs.getString('preferred_server') ?? 'Miruro';
@@ -322,6 +482,111 @@ class SettingsStore extends ChangeNotifier {
   Future<void> setSubDelayMs(int ms) async {
     subDelayMs = ms;
     await _save('sub_delay_ms', ms);
+    notifyListeners();
+  }
+
+  Future<void> setSubtitleLanguage(String language) async {
+    subtitleLanguage = language;
+    await _save('sub_language', language);
+    notifyListeners();
+  }
+
+  // ------------------------------------------------- canonical identity
+
+  /// Canonical identity for an anime: the AniList id when known
+  /// ('al:113415'), else the catalogue id ('id:jujutsu-kaisen').
+  /// The SAME title opened from Home ('jujutsu-kaisen') and from
+  /// Search ('anilist-113415') must share one progress/resume key —
+  /// raw ids fragmented them and resume was lost across entry points.
+  static String keyFor(Anime anime) {
+    if (anime.anilistId != null) return 'al:${anime.anilistId}';
+    return 'id:${anime.id}';
+  }
+
+  String resumeKeyFor(Anime anime, int episode) {
+    return '${keyFor(anime)}:ep$episode';
+  }
+
+  /// Saved resume position (seconds) for an anime episode: canonical
+  /// key first, legacy raw-id key (`'<anime.id>:<episode>'`) as
+  /// fallback for positions saved before 0.2.3.
+  double? resumePositionFor(Anime anime, int episode) {
+    final double? canonical = resumeSeconds[resumeKeyFor(anime, episode)];
+    if (canonical != null) return canonical;
+    return resumeSeconds['${anime.id}:$episode'];
+  }
+
+  /// Episode the user was last watching for this title (real watch
+  /// history first, then the per-episode progress map), or null.
+  int? progressEpisodeFor(Anime anime) {
+    final String key = keyFor(anime);
+    for (final WatchEntry e in watchHistory) {
+      if (e.key == key) return e.episode;
+    }
+    return progressEpisodes[key] ?? progressEpisodes[anime.id];
+  }
+
+  // --------------------------------------------------- watch history
+
+  /// Record real watch progress (called on play / pause / exit and
+  /// periodically while playing). Upserts by canonical key, most
+  /// recent first, capped at 20. This is what drives Continue
+  /// Watching — never the mock catalogue.
+  Future<void> recordWatch({
+    required Anime anime,
+    required int episode,
+    required double positionSeconds,
+    required double durationSeconds,
+  }) async {
+    final String key = keyFor(anime);
+    watchHistory.removeWhere((WatchEntry e) => e.key == key);
+    watchHistory.insert(
+      0,
+      WatchEntry(
+        key: key,
+        animeId: anime.id,
+        anilistId: anime.anilistId,
+        title: anime.title,
+        posterUrl: anime.posterUrl,
+        episodeCount: anime.episodeCount,
+        year: anime.year,
+        rating: anime.rating,
+        genres: anime.genres,
+        synopsis: anime.synopsis,
+        episode: episode,
+        positionSeconds: positionSeconds,
+        durationSeconds: durationSeconds,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    if (watchHistory.length > 20) {
+      watchHistory.removeRange(20, watchHistory.length);
+    }
+    await _saveWatchHistory();
+    notifyListeners();
+  }
+
+  Future<void> _saveWatchHistory() async {
+    await _prefs.setString(
+      'watch_history',
+      jsonEncode(watchHistory.map((WatchEntry e) => e.toJson()).toList()),
+    );
+  }
+
+  /// "Clear All" on the Continue Watching header (with a confirm step
+  /// in the UI). Also drops the per-episode progress map so the row
+  /// stays empty until the user watches something again.
+  Future<void> clearWatchHistory() async {
+    watchHistory = <WatchEntry>[];
+    progressEpisodes = <String, int>{};
+    await _prefs.remove('watch_history');
+    await _prefs.setString('progress_eps', jsonEncode(progressEpisodes));
+    notifyListeners();
+  }
+
+  Future<void> removeWatchEntry(String key) async {
+    watchHistory.removeWhere((WatchEntry e) => e.key == key);
+    await _saveWatchHistory();
     notifyListeners();
   }
 
@@ -500,16 +765,6 @@ class SettingsStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setAnilistClientId(String? id) async {
-    anilistClientId = id;
-    if (id == null || id.isEmpty) {
-      await _secure.delete(SecureStore.anilistClientId);
-    } else {
-      await _secure.write(SecureStore.anilistClientId, id);
-    }
-    notifyListeners();
-  }
-
   Future<void> setAnilistSession(String? token, String? username) async {
     anilistToken = token;
     anilistUsername = username;
@@ -522,16 +777,6 @@ class SettingsStore extends ChangeNotifier {
       await _prefs.remove('anilist_username');
     } else {
       await _prefs.setString('anilist_username', username);
-    }
-    notifyListeners();
-  }
-
-  Future<void> setMalClientId(String? id) async {
-    malClientId = id;
-    if (id == null || id.isEmpty) {
-      await _secure.delete(SecureStore.malClientId);
-    } else {
-      await _secure.write(SecureStore.malClientId, id);
     }
     notifyListeners();
   }
@@ -642,9 +887,17 @@ class SettingsStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> markProgress(String animeId, int episode) async {
-    progressEpisodes[animeId] = episode;
+  Future<void> markProgress(Anime anime, int episode) async {
+    progressEpisodes[keyFor(anime)] = episode;
     await _prefs.setString('progress_eps', jsonEncode(progressEpisodes));
+    // Keep the Continue Watching entry's episode in step even before
+    // the player has saved a position for the new episode.
+    final String key = keyFor(anime);
+    final int i = watchHistory.indexWhere((WatchEntry e) => e.key == key);
+    if (i >= 0) {
+      watchHistory[i] = watchHistory[i].copyWith(episode: episode);
+      await _saveWatchHistory();
+    }
     notifyListeners();
   }
 }

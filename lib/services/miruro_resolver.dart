@@ -97,6 +97,63 @@ class MiruroResolver {
 
   String? lastError;
 
+  /// True when a subtitle label is English ('English', 'English [SDH]',
+  /// 'en', 'eng', ...). Pure — unit-tested. Single source of truth:
+  /// the player default picker uses this too.
+  static bool isEnglishLabel(String? label) {
+    final String l = (label ?? '').trim().toLowerCase();
+    if (l.isEmpty) return false;
+    return l.contains('english') ||
+        l == 'en' ||
+        l == 'eng' ||
+        l.startsWith('en ') ||
+        l.startsWith('en-') ||
+        l.startsWith('eng ') ||
+        l.startsWith('[en') ||
+        l.startsWith('(en');
+  }
+
+  /// Fetch subtitle tracks for an episode WITHOUT resolving video —
+  /// used by the player when the playing stream has no English track
+  /// (0.2.1: JJK's stream carried only Arabic). Hits the justanime
+  /// providers (megaplay, then animegg) and returns the merged track
+  /// lists. Best-effort: empty list on any failure.
+  Future<List<SubtitleInfo>> fetchSubtitlesOnly({
+    required Anime anime,
+    required int episodeNumber,
+    String subDub = 'Sub',
+  }) async {
+    final int? anilistId =
+        anime.anilistId ?? await _anilist.resolveId(anime.title);
+    if (anilistId == null) return <SubtitleInfo>[];
+    final List<SubtitleInfo> out = <SubtitleInfo>[];
+    final Set<String> seen = <String>{};
+    for (final String provider in <String>['megaplay', 'animegg']) {
+      try {
+        final Map<String, dynamic>? data = await _justAnimeWatch(
+          anilistId,
+          episodeNumber,
+          provider,
+        );
+        if (data == null) continue;
+        final List<String> audios = subDub == 'Dub'
+            ? <String>['dub', 'sub']
+            : <String>['sub', 'dub'];
+        for (final String audio in audios) {
+          final Map<String, dynamic>? typeData =
+              data[audio] as Map<String, dynamic>?;
+          if (typeData == null) continue;
+          for (final SubtitleInfo s in _parseJustAnimeTracks(typeData)) {
+            if (seen.add('${s.label}|${s.url}')) out.add(s);
+          }
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return out;
+  }
+
   /// Resolve a playable stream for [anime] episode [episodeNumber].
   /// [subDub] is 'Sub' or 'Dub'. Returns null when nothing resolved.
   Future<ResolvedStream?> resolve({
@@ -142,11 +199,13 @@ class MiruroResolver {
 
   // ------------------------------------------------------------ justanime
 
-  Future<ResolvedStream?> _resolveJustAnime(
+  /// One justanime watch call: GET the episode JSON for a provider.
+  /// Null on HTTP error / API error. Shared by resolve + subtitle-only
+  /// fetch so both parse the same shape.
+  Future<Map<String, dynamic>?> _justAnimeWatch(
     int anilistId,
     int episode,
     String provider,
-    String subDub,
   ) async {
     final Uri uri = Uri.parse(
       '$_justAnimeApi/$anilistId/episode/$episode/$provider',
@@ -166,6 +225,53 @@ class MiruroResolver {
     final Map<String, dynamic> data =
         jsonDecode(resp.body) as Map<String, dynamic>;
     if (data['error'] != null) return null;
+    return data;
+  }
+
+  /// Subtitle tracks out of one justanime audio block ('sub'/'dub').
+  /// Accepts 'subtitles' or 'tracks', kind 'captions'/'subtitles' (or
+  /// empty). Pure — unit-tested.
+  static List<SubtitleInfo> _parseJustAnimeTracks(
+    Map<String, dynamic> typeData,
+  ) {
+    final List<SubtitleInfo> subtitles = <SubtitleInfo>[];
+    final List<dynamic> tracks =
+        (typeData['subtitles'] as List<dynamic>?) ??
+        (typeData['tracks'] as List<dynamic>?) ??
+        <dynamic>[];
+    for (final dynamic t in tracks) {
+      final Map<String, dynamic> track = t as Map<String, dynamic>;
+      final String kind = track['kind'] as String? ?? '';
+      if (kind.isNotEmpty && kind != 'captions' && kind != 'subtitles') {
+        continue;
+      }
+      final String? file =
+          track['file'] as String? ??
+          track['src'] as String? ??
+          track['url'] as String?;
+      if (file == null || file.isEmpty) continue;
+      subtitles.add(
+        SubtitleInfo(
+          label: track['label'] as String? ?? 'Unknown',
+          url: file,
+        ),
+      );
+    }
+    return subtitles;
+  }
+
+  Future<ResolvedStream?> _resolveJustAnime(
+    int anilistId,
+    int episode,
+    String provider,
+    String subDub,
+  ) async {
+    final Map<String, dynamic>? data = await _justAnimeWatch(
+      anilistId,
+      episode,
+      provider,
+    );
+    if (data == null) return null;
     final String referer = provider == 'megaplay'
         ? _megaReferer
         : 'https://www.animegg.org/';
@@ -182,30 +288,7 @@ class MiruroResolver {
       final Map<String, dynamic>? typeData =
           data[audio] as Map<String, dynamic>?;
       if (typeData == null) continue;
-      final List<dynamic> tracks =
-          (typeData['subtitles'] as List<dynamic>?) ??
-          (typeData['tracks'] as List<dynamic>?) ??
-          <dynamic>[];
-      for (final dynamic t in tracks) {
-        final Map<String, dynamic> track = t as Map<String, dynamic>;
-        final String kind = track['kind'] as String? ?? '';
-        if (kind.isNotEmpty &&
-            kind != 'captions' &&
-            kind != 'subtitles') {
-          continue;
-        }
-        final String? file =
-            track['file'] as String? ??
-            track['src'] as String? ??
-            track['url'] as String?;
-        if (file == null || file.isEmpty) continue;
-        subtitles.add(
-          SubtitleInfo(
-            label: track['label'] as String? ?? 'Unknown',
-            url: file,
-          ),
-        );
-      }
+      subtitles.addAll(_parseJustAnimeTracks(typeData));
       final List<dynamic> sources =
           typeData['sources'] as List<dynamic>? ?? <dynamic>[];
       for (final dynamic s in sources) {
@@ -588,7 +671,14 @@ class MiruroResolver {
           for (final dynamic t in tracks) {
             final Map<String, dynamic> track = t as Map<String, dynamic>;
             final String kind = track['kind'] as String? ?? '';
-            if (kind != 'captions' && kind != 'subtitles') continue;
+            // Same rule as the justanime path: empty kind is a
+            // subtitle track too (0.2.3 — the strict filter dropped
+            // tracks here that the justanime path kept).
+            if (kind.isNotEmpty &&
+                kind != 'captions' &&
+                kind != 'subtitles') {
+              continue;
+            }
             final String f =
                 (track['file'] as String? ?? '').isNotEmpty
                     ? track['file'] as String
