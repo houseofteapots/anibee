@@ -1,0 +1,64 @@
+# AniBee — unsigned iOS IPA build for sideloading (ESign / SideStore).
+#
+# Personal anime app (iOS only). Adapted from the Zeus
+# .github/workflows/ios.yml pattern: Flutter stable, Xcode latest, build
+# with --no-codesign, zip the .app into an unsigned .ipa.
+#
+# No code signing anywhere: the IPA is unsigned and the user signs it with
+# ESign, exactly like the MLBB IPA and Zeus. No secrets are used.
+#
+# Trigger: every push to main, or manual Run workflow.
+
+name: Build AniBee iOS (Unsigned IPA)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.47.7
+
+jobs:
+  ios:
+    name: iOS Build (Unsigned)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Build iOS (No Codesign)
+        run: |
+          flutter build ios --release --no-codesign
+          mkdir -p Payload
+          mv build/ios/iphoneos/Runner.app Payload/
+          VERSION=$(grep '^version:' pubspec.yaml | cut -d ' ' -f 2 | cut -d '+' -f 1)
+          zip -r "AniBee-${VERSION}-unsigned.ipa" Payload
+          ls -lh *.ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AniBee-iOS-unsigned
+          path: AniBee-*-unsigned.ipa
+          retention-days: 30
