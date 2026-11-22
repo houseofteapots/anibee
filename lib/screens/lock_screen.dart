@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
 
 import '../settings_store.dart';
+import '../widgets/app_logo.dart';
 
 enum LockMode { unlock, setup }
 
@@ -136,15 +137,7 @@ class _LockScreenState extends State<LockScreen> {
                 ),
               ),
             const Spacer(),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Image.asset(
-                'assets/logo.jpg',
-                width: 72,
-                height: 72,
-                fit: BoxFit.cover,
-              ),
-            ),
+            const AppLogo(size: 72, borderRadius: 20),
             const SizedBox(height: 16),
             Text.rich(
               TextSpan(

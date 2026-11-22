@@ -20,7 +20,10 @@ distribution — built for one user, sideloaded with ESign.
 
 Design: Frost Glass style, dark mode default, **solid** dark cards in dark
 mode (no glassy panels), liquid glass **only** on the bottom navigation
-pill. Display name **AniBee**, bundle id `com.toji.anibee`.
+pill. Display name **AniBee**, bundle id `com.toji.anibee`. The in-app
+logo loads from `https://raw.githubusercontent.com/sezkc16/anibee/main/assets/logo.jpg`
+with the bundled `assets/logo.jpg` as fallback (home-screen icon stays
+bundled — iOS rule).
 
 ## Milestone 1 (this build)
 

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models.dart';
 import '../settings_store.dart';
 import '../theme.dart';
+import '../widgets/app_logo.dart';
 import '../widgets/poster.dart';
 
 /// Home: hero banner + Continue Watching + Trending + Top Airing rows.
@@ -35,15 +36,7 @@ class HomeScreen extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 56, 16, 16),
           child: Row(
             children: <Widget>[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.asset(
-                  'assets/logo.jpg',
-                  width: 28,
-                  height: 28,
-                  fit: BoxFit.cover,
-                ),
-              ),
+              const AppLogo(size: 28, borderRadius: 8),
               const SizedBox(width: 10),
               Text.rich(
                 TextSpan(
