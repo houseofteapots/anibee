@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:reicon_flutter/reicon_flutter.dart';
 
+import '../services/app_services.dart';
+import '../services/oauth_service.dart';
 import '../services/provider_config.dart';
 import '../settings_store.dart';
 import '../theme.dart';
+import '../widgets/oauth_webview.dart';
 import '../widgets/page_route.dart';
 import '../widgets/reicon_icon.dart';
 import '../widgets/settings_row.dart';
@@ -20,10 +23,12 @@ class SettingsScreen extends StatelessWidget {
     super.key,
     required this.store,
     required this.configService,
+    required this.services,
   });
 
   final SettingsStore store;
   final ProviderConfigService configService;
+  final AppServices services;
 
   /// Row icons: white in dark mode, accent in light mode — full
   /// contrast on the tinted tile (the M1.1 icons rendered dark-on-dark
@@ -69,16 +74,30 @@ class SettingsScreen extends StatelessWidget {
                   name: 'AniList',
                   color: const Color(0xFF2F7CF6),
                   icon: Reicon.outline.userCircle,
-                  status: 'Not synced • Tap to link account',
-                  onLogin: () => _showComingSoon(context, 'AniList login'),
+                  status: store.anilistConnected
+                      ? 'Connected as ${store.anilistUsername ?? 'AniList user'}'
+                      : store.anilistClientId == null
+                          ? 'Client ID needed • Tap to set up'
+                          : 'Not connected • Tap to log in',
+                  buttonLabel: store.anilistConnected ? 'Logout' : 'Login',
+                  onButton: () => store.anilistConnected
+                      ? _logoutAccount(context, 'AniList')
+                      : _loginAnilist(context),
                 ),
                 const SettingsDivider(),
                 _AccountTile(
                   name: 'MyAnimeList',
                   color: const Color(0xFFEC5A9E),
                   icon: Reicon.outline.star,
-                  status: 'Not synced • Tap to link account',
-                  onLogin: () => _showComingSoon(context, 'MyAnimeList login'),
+                  status: store.malConnected
+                      ? 'Connected as ${store.malUsername ?? 'MAL user'}'
+                      : store.malClientId == null
+                          ? 'Client ID needed • Tap to set up'
+                          : 'Not connected • Tap to log in',
+                  buttonLabel: store.malConnected ? 'Logout' : 'Login',
+                  onButton: () => store.malConnected
+                      ? _logoutAccount(context, 'MyAnimeList')
+                      : _loginMal(context),
                 ),
               ],
             ),
@@ -299,11 +318,17 @@ class SettingsScreen extends StatelessWidget {
                   name: 'TorBox',
                   icon: Reicon.outline.key,
                   apiKey: store.torboxApiKey,
+                  verified: store.torboxVerified,
+                  account: store.torboxAccount,
                   onTap: () => _editDebridKey(
                     context,
                     name: 'TorBox',
                     currentKey: store.torboxApiKey,
-                    onSave: store.setTorboxApiKey,
+                    onSave: (String? key) async {
+                      await store.setTorboxApiKey(key);
+                      if (!context.mounted) return;
+                      await _verifyDebrid(context, 'TorBox', key);
+                    },
                   ),
                 ),
                 const SettingsDivider(),
@@ -311,11 +336,17 @@ class SettingsScreen extends StatelessWidget {
                   name: 'Real-Debrid',
                   icon: Reicon.outline.key,
                   apiKey: store.realDebridApiKey,
+                  verified: store.realDebridVerified,
+                  account: store.realDebridAccount,
                   onTap: () => _editDebridKey(
                     context,
                     name: 'Real-Debrid',
                     currentKey: store.realDebridApiKey,
-                    onSave: store.setRealDebridApiKey,
+                    onSave: (String? key) async {
+                      await store.setRealDebridApiKey(key);
+                      if (!context.mounted) return;
+                      await _verifyDebrid(context, 'Real-Debrid', key);
+                    },
                   ),
                 ),
               ],
@@ -366,7 +397,7 @@ class SettingsScreen extends StatelessWidget {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      'AniBee 0.2.0 (M2) • Personal build',
+                      'AniBee 0.2.1 (M2) • Personal build',
                       style: TextStyle(
                         color: isDark
                             ? AppTheme.textSecondaryDark
@@ -404,10 +435,232 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  void _showComingSoon(BuildContext context, String feature) {
+  void _snack(BuildContext context, String message) {
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('$feature arrives in milestone 2.')));
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  // ---------------------------------------------------------- accounts
+
+  /// AniList login: client ID first (user creates it at
+  /// anilist.co/settings/developer), then the in-app OAuth webview
+  /// (implicit grant — token in the redirect fragment).
+  Future<void> _loginAnilist(BuildContext context) async {
+    String? clientId = store.anilistClientId;
+    if (clientId == null || clientId.isEmpty) {
+      clientId = await _setupClientId(
+        context,
+        name: 'AniList',
+        instructions:
+            'Create a client at anilist.co/settings/developer '
+            '(any name, redirect: anibee://anilist-auth) and paste the '
+            'Client ID below.',
+        current: null,
+      );
+      if (clientId == null) return;
+      await store.setAnilistClientId(clientId);
+    }
+    if (!context.mounted) return;
+    final Uri? redirect = await showOAuthLogin(
+      context: context,
+      title: 'Log in to AniList',
+      authUrl: OAuthService.anilistAuthUrl(clientId),
+      redirectScheme: 'anibee',
+    );
+    if (redirect == null) return;
+    final String? token = OAuthService.parseAnilistRedirect(redirect);
+    if (token == null) {
+      if (!context.mounted) return;
+      _snack(context, 'AniList login failed — no token returned.');
+      return;
+    }
+    try {
+      final ({int id, String name}) viewer = await services.anilist.viewer(
+        token,
+      );
+      await store.setAnilistSession(token, viewer.name);
+      if (!context.mounted) return;
+      _snack(context, 'Connected to AniList as ${viewer.name}.');
+    } catch (e) {
+      if (!context.mounted) return;
+      _snack(context, 'AniList login failed: $e');
+    }
+  }
+
+  /// MAL login: client ID first (myanimelist.net/apiconfig, App Type
+  /// iOS, public, no secret, redirect anibee://mal-auth), then the
+  /// in-app OAuth webview (Authorization Code + PKCE plain).
+  Future<void> _loginMal(BuildContext context) async {
+    String? clientId = store.malClientId;
+    if (clientId == null || clientId.isEmpty) {
+      clientId = await _setupClientId(
+        context,
+        name: 'MyAnimeList',
+        instructions:
+            'Create an app at myanimelist.net/apiconfig '
+            '(App Type: iOS, redirect: anibee://mal-auth) and paste the '
+            'Client ID below.',
+        current: null,
+      );
+      if (clientId == null) return;
+      await store.setMalClientId(clientId);
+    }
+    if (!context.mounted) return;
+    final String verifier = OAuthService.generateVerifier();
+    final String state = OAuthService.generateVerifier().substring(0, 16);
+    final Uri? redirect = await showOAuthLogin(
+      context: context,
+      title: 'Log in to MyAnimeList',
+      authUrl: OAuthService.malAuthUrl(
+        clientId: clientId,
+        verifier: verifier,
+        state: state,
+      ),
+      redirectScheme: 'anibee',
+    );
+    if (redirect == null) return;
+    final String? code = OAuthService.parseMalRedirect(redirect, state);
+    if (code == null) {
+      if (!context.mounted) return;
+      _snack(context, 'MyAnimeList login failed — no code returned.');
+      return;
+    }
+    try {
+      final MalTokens tokens = await services.oauth.exchangeMalCode(
+        clientId: clientId,
+        code: code,
+        verifier: verifier,
+      );
+      if (!tokens.isValid) {
+        if (!context.mounted) return;
+        _snack(context, 'MyAnimeList login failed — bad token response.');
+        return;
+      }
+      final String name = await services.oauth.malMe(tokens.accessToken);
+      await store.setMalSession(
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiry: DateTime.now().add(
+          Duration(seconds: tokens.expiresInSeconds),
+        ),
+        username: name,
+      );
+      if (!context.mounted) return;
+      _snack(context, 'Connected to MyAnimeList as $name.');
+    } catch (e) {
+      if (!context.mounted) return;
+      _snack(context, 'MyAnimeList login failed: $e');
+    }
+  }
+
+  Future<void> _logoutAccount(BuildContext context, String name) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text('Log out of $name?'),
+        content: const Text('Your local lists stay on this device.'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Log out'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    if (name == 'AniList') {
+      await store.setAnilistSession(null, null);
+    } else {
+      await store.setMalSession();
+    }
+    if (!context.mounted) return;
+    _snack(context, 'Logged out of $name.');
+  }
+
+  /// Dialog to enter an OAuth client ID, with where-to-create it.
+  Future<String?> _setupClientId(
+    BuildContext context, {
+    required String name,
+    required String instructions,
+    required String? current,
+  }) async {
+    final TextEditingController controller = TextEditingController(
+      text: current ?? '',
+    );
+    final String? result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text('$name Client ID'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(instructions),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                hintText: 'Paste the Client ID',
+              ),
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (result == null || result.isEmpty) return null;
+    return result;
+  }
+
+  // ------------------------------------------------------------ debrid
+
+  /// Verify a saved Debrid key with a real API call and store the
+  /// verified state — "Connected" means the key actually works.
+  Future<void> _verifyDebrid(
+    BuildContext context,
+    String name,
+    String? key,
+  ) async {
+    if (key == null || key.isEmpty) return;
+    _snack(context, 'Verifying $name…');
+    final String? account = name == 'TorBox'
+        ? await services.debrid.verifyTorbox(key)
+        : await services.debrid.verifyRealDebrid(key);
+    if (!context.mounted) return;
+    if (account != null) {
+      if (name == 'TorBox') {
+        await store.setTorboxVerified(true, account);
+      } else {
+        await store.setRealDebridVerified(true, account);
+      }
+      if (!context.mounted) return;
+      _snack(context, '$name connected as $account.');
+    } else {
+      if (name == 'TorBox') {
+        await store.setTorboxVerified(false, null);
+      } else {
+        await store.setRealDebridVerified(false, null);
+      }
+      if (!context.mounted) return;
+      _snack(
+        context,
+        '$name key did not verify — check the key and try again.',
+      );
+    }
   }
 
   Future<void> _pickTheme(BuildContext context) async {
@@ -583,14 +836,16 @@ class _AccountTile extends StatelessWidget {
     required this.color,
     required this.icon,
     required this.status,
-    required this.onLogin,
+    required this.buttonLabel,
+    required this.onButton,
   });
 
   final String name;
   final Color color;
   final String icon;
   final String status;
-  final VoidCallback onLogin;
+  final String buttonLabel;
+  final VoidCallback onButton;
 
   @override
   Widget build(BuildContext context) {
@@ -637,7 +892,7 @@ class _AccountTile extends StatelessWidget {
             ),
           ),
           ElevatedButton(
-            onPressed: onLogin,
+            onPressed: onButton,
             style: ElevatedButton.styleFrom(
               backgroundColor: color,
               foregroundColor: Colors.white,
@@ -645,7 +900,7 @@ class _AccountTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            child: const Text('Login'),
+            child: Text(buttonLabel),
           ),
         ],
       ),
@@ -658,18 +913,24 @@ class _DebridTile extends StatelessWidget {
     required this.name,
     required this.icon,
     required this.apiKey,
+    required this.verified,
+    required this.account,
     required this.onTap,
   });
 
   final String name;
   final String icon;
   final String? apiKey;
+
+  /// True only when the key passed a real API verify call.
+  final bool verified;
+  final String? account;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final bool connected = apiKey != null && apiKey!.isNotEmpty;
+    final bool hasKey = apiKey != null && apiKey!.isNotEmpty;
     return SettingsTile(
       title: name,
       leading: ReiconIcon(
@@ -677,21 +938,23 @@ class _DebridTile extends StatelessWidget {
         size: 18,
         color: isDark ? Colors.white : Theme.of(context).colorScheme.primary,
       ),
-      subtitle: connected
-          ? 'Connected • key saved'
-          : 'Not connected • Tap to add API key',
+      subtitle: verified
+          ? 'Connected${account != null ? ' as $account' : ''}'
+          : hasKey
+              ? 'Key saved • not verified — tap to retry'
+              : 'Not connected • Tap to add API key',
       trailing: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
-          color: connected
+          color: verified
               ? AppTheme.success.withValues(alpha: 0.15)
               : (isDark ? const Color(0xFF2A2A38) : const Color(0xFFE8E8EF)),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Text(
-          connected ? 'Connected' : 'Add key',
+          verified ? 'Connected' : 'Add key',
           style: TextStyle(
-            color: connected
+            color: verified
                 ? AppTheme.success
                 : (isDark
                       ? AppTheme.textSecondaryDark

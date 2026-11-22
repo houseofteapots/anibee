@@ -6,6 +6,8 @@ import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../models.dart';
 import '../player/trailer_player.dart';
+import '../services/app_services.dart';
+import '../services/miruro_resolver.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/episode_list.dart';
@@ -26,11 +28,13 @@ class DetailScreen extends StatefulWidget {
     super.key,
     required this.anime,
     required this.store,
+    required this.services,
     this.autoPlay = false,
   });
 
   final Anime anime;
   final SettingsStore store;
+  final AppServices services;
 
   /// Home "Watch Now" opens straight into the full player.
   final bool autoPlay;
@@ -47,8 +51,13 @@ class _DetailScreenState extends State<DetailScreen> {
   bool _connecting = false;
   Timer? _connectTimer;
 
+  /// Debrid source selected in the server sheet ('torbox' |
+  /// 'realdebrid'), or null for a normal Miruro/Anikoto server.
+  String? _selectedDebrid;
+
   Anime get _anime => widget.anime;
   SettingsStore get _store => widget.store;
+  AppServices get _services => widget.services;
 
   @override
   void initState() {
@@ -74,24 +83,141 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   /// Opens the Anilili-style server sheet; on pick, switches the
-  /// preferred server and shows "Reconnecting..." briefly.
+  /// preferred server and shows "Reconnecting..." briefly. A Debrid
+  /// pick stores the debrid choice instead (playback resolves
+  /// through the debrid API when PLAY is tapped).
   Future<void> _showServerSheet() async {
-    final ({String server, String subDub})? result = await showServerSheet(
-      context: context,
-      store: _store,
-      currentServer: _store.preferredServer,
-      subDub: _subDub,
-    );
+    final ({String server, String subDub, String? debrid})? result =
+        await showServerSheet(
+          context: context,
+          store: _store,
+          currentServer: _store.preferredServer,
+          subDub: _subDub,
+          currentDebrid: _selectedDebrid,
+        );
     if (result == null) return;
-    await _store.setPreferredServer(result.server);
-    setState(() {
-      _subDub = result.subDub;
-      _connecting = true;
-    });
+    if (result.debrid != null) {
+      await _store.setPreferredServer(result.server);
+      setState(() {
+        _subDub = result.subDub;
+        _selectedDebrid = result.debrid;
+        _connecting = true;
+      });
+    } else {
+      await _store.setPreferredServer(result.server);
+      setState(() {
+        _subDub = result.subDub;
+        _selectedDebrid = null;
+        _connecting = true;
+      });
+    }
     _connectTimer?.cancel();
     _connectTimer = Timer(const Duration(milliseconds: 1200), () {
       if (mounted) setState(() => _connecting = false);
     });
+  }
+
+  /// Resolve a real stream for an episode, with a progress dialog
+  /// (status text + Cancel). Returns null when resolve fails or the
+  /// user cancels — the caller shows the error state, never a blank
+  /// player.
+  Future<ResolvedStream?> _resolveForEpisode(Episode episode) async {
+    bool cancelled = false;
+    bool dialogOpen = true;
+    final ValueNotifier<String> status = ValueNotifier<String>(
+      'Finding sources…',
+    );
+    final Future<ResolvedStream?> work = _services.resolveEpisode(
+      anime: _anime,
+      episode: episode.number,
+      subDub: _subDub,
+      store: _store,
+      debrid: _selectedDebrid,
+      onProgress: (String s) {
+        if (!cancelled) status.value = s;
+      },
+      isCancelled: () => cancelled,
+    );
+    // Close the dialog the moment the work finishes.
+    unawaited(
+      work.then((_) {
+        if (dialogOpen && mounted) Navigator.of(context).pop();
+      }),
+    );
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: Text(
+              'Episode ${episode.number}',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            content: ValueListenableBuilder<String>(
+              valueListenable: status,
+              builder: (BuildContext context, String value, Widget? _) {
+                return Row(
+                  children: <Widget>[
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(value)),
+                  ],
+                );
+              },
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () {
+                  cancelled = true;
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    dialogOpen = false;
+    status.dispose();
+    if (cancelled) return null;
+    return work;
+  }
+
+  /// Real-stream error dialog: Retry, Play trailer instead, Close.
+  Future<void> _showResolveError(String message, Episode episode) async {
+    final String? choice = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('Couldn\'t load episode'),
+        content: Text(message),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop('trailer'),
+            child: const Text('Play trailer instead'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop('retry'),
+            child: const Text('Retry'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+    if (choice == 'trailer') {
+      await _openTrailerPlayer(episode: episode);
+    } else if (choice == 'retry') {
+      await _openFullPlayer(episode: episode);
+    }
   }
 
   Future<void> _openFullPlayer({
@@ -104,10 +230,29 @@ class _DetailScreenState extends State<DetailScreen> {
           (Episode e) => e.number == (_anime.currentEpisode ?? 1),
           orElse: () => _episodes.first,
         );
+    // M2: resolve a REAL stream first — never open the player on the
+    // sample trailer for an episode tap.
+    final ResolvedStream? stream = await _resolveForEpisode(initial);
+    if (stream == null) {
+      if (!mounted) return;
+      await _showResolveError(
+        _services.miruro.lastError ??
+            'No sources found for episode ${initial.number}. '
+                'Check your connection or try another server.',
+        initial,
+      );
+      return;
+    }
     if (markPlayed) {
       _store.markProgress(_anime.id, initial.number);
       _autoStatus(initial);
     }
+    await _openPlayerWithStream(stream: stream, initial: initial);
+  }
+
+  /// Opens the full player on the sample trailer (fallback when a
+  /// real stream cannot be resolved and the user picks it).
+  Future<void> _openTrailerPlayer({required Episode episode}) async {
     await _trailer.expandToFull();
     if (!mounted) return;
     await Navigator.of(context).push(
@@ -117,12 +262,42 @@ class _DetailScreenState extends State<DetailScreen> {
           store: _store,
           anime: _anime,
           episodes: _episodes,
-          initialEpisode: initial,
+          initialEpisode: episode,
           onEpisodeChanged: _onPlayerEpisodeChanged,
         ),
       ),
     );
     await _trailer.backToInline();
+  }
+
+  Future<void> _openPlayerWithStream({
+    required ResolvedStream stream,
+    required Episode initial,
+  }) async {
+    await Navigator.of(context).push(
+      SmoothPageRoute<void>(
+        builder: (BuildContext context) => FullPlayerScreen(
+          trailer: _trailer,
+          store: _store,
+          anime: _anime,
+          episodes: _episodes,
+          initialEpisode: initial,
+          stream: stream,
+          onEpisodeChanged: _onPlayerEpisodeChanged,
+          onResolveEpisode: (Episode episode) async {
+            return _services.resolveEpisode(
+              anime: _anime,
+              episode: episode.number,
+              subDub: _subDub,
+              store: _store,
+              debrid: _selectedDebrid,
+            );
+          },
+        ),
+      ),
+    );
+    // Back from a real stream: restore the trailer in the hero.
+    await _trailer.loadInline(_anime.trailerUrl);
   }
 
   void _onPlayerEpisodeChanged(Episode episode) {
@@ -131,13 +306,20 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   /// Playing an episode puts it in the Collection lists automatically:
-  /// last episode → Finished, anything else → Watching.
+  /// last episode → Finished, anything else → Watching. The status is
+  /// also pushed to AniList + MAL when the user is logged in (M2).
   void _autoStatus(Episode episode) {
-    if (episode.number >= _anime.episodeCount) {
-      _store.setListStatus(_anime.id, 'finished');
-    } else {
-      _store.setListStatus(_anime.id, 'watching');
-    }
+    final String status = episode.number >= _anime.episodeCount
+        ? 'finished'
+        : 'watching';
+    _store.setListStatus(_anime.id, status);
+    unawaited(
+      _services.pushListStatus(
+        store: _store,
+        anime: _anime,
+        status: status,
+      ),
+    );
   }
 
   String _statusLabel(String? status) {
@@ -189,6 +371,13 @@ class _DetailScreenState extends State<DetailScreen> {
       _store.setListStatus(_anime.id, null);
     } else {
       _store.setListStatus(_anime.id, picked);
+      unawaited(
+        _services.pushListStatus(
+          store: _store,
+          anime: _anime,
+          status: picked,
+        ),
+      );
     }
   }
 

@@ -8,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../models.dart';
 import '../player/trailer_player.dart';
+import '../services/miruro_resolver.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/poster.dart';
@@ -33,6 +34,12 @@ import '../widgets/poster.dart';
 /// M1.1 plays the sample trailer for every episode; full episode streams
 /// arrive with milestone 2 (real Miruro resolve). The menus are fully
 /// wired to libmpv and work against whatever tracks the stream has.
+///
+/// M2: [stream] is the resolved real stream for [initialEpisode]
+/// (Miruro/Anikoto or a Debrid direct link). When the user switches
+/// episode inside the player, [onResolveEpisode] resolves the new
+/// episode's stream (null = keep playing the current episode). When
+/// both are null the player falls back to the sample trailer.
 class FullPlayerScreen extends StatefulWidget {
   const FullPlayerScreen({
     super.key,
@@ -42,6 +49,8 @@ class FullPlayerScreen extends StatefulWidget {
     required this.episodes,
     required this.initialEpisode,
     this.onEpisodeChanged,
+    this.stream,
+    this.onResolveEpisode,
   });
 
   final TrailerPlayer trailer;
@@ -54,6 +63,12 @@ class FullPlayerScreen extends StatefulWidget {
   /// (Detail marks progress + list status).
   final ValueChanged<Episode>? onEpisodeChanged;
 
+  /// Resolved real stream for the initial episode (M2).
+  final ResolvedStream? stream;
+
+  /// Resolve the stream for a newly selected episode (M2).
+  final Future<ResolvedStream?> Function(Episode episode)? onResolveEpisode;
+
   @override
   State<FullPlayerScreen> createState() => _FullPlayerScreenState();
 }
@@ -65,6 +80,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   late Episode _currentEpisode;
   bool _controlsVisible = true;
   Timer? _hideTimer;
+
+  /// The stream currently playing (M2, null = sample trailer).
+  ResolvedStream? _currentStream;
+
+  /// True while a new episode's stream is resolving.
+  bool _resolving = false;
   final ValueNotifier<double> _videoScale = ValueNotifier<double>(1.0);
   final ValueNotifier<String?> _gestureHint = ValueNotifier<String?>(null);
   double _brightness = 0; // mpv brightness -100..100
@@ -126,6 +147,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     unawaited(widget.trailer.expandToFull());
     unawaited(widget.trailer.applyHwdec(_store.hwDecoding));
     _applySubtitleStyle();
+    // M2: load the resolved real stream (unmuted) once the surface
+    // is ours; the trailer path loads nothing extra.
+    if (widget.stream != null) {
+      _currentStream = widget.stream;
+      unawaited(_loadStream(widget.stream!));
+    }
 
     _positionSub = _player.stream.position.listen(_onPosition);
     _scheduleHide();
@@ -298,14 +325,56 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _pokeControls();
   }
 
+  /// Load a resolved stream into the shared player (unmuted).
+  Future<void> _loadStream(ResolvedStream stream) async {
+    await widget.trailer.loadStream(stream);
+    _applySubtitleStyle();
+  }
+
   void _selectEpisode(Episode episode) {
     if (episode.number == _currentEpisode.number) return;
+    final Episode previous = _currentEpisode;
     setState(() {
       _currentEpisode = episode;
       _autoplayShown = false;
       _resumeApplied = true; // resume handled inline below
     });
     widget.onEpisodeChanged?.call(episode);
+    // M2: a real stream per episode — resolve the new one. Failure
+    // keeps the current episode playing (never a blank screen).
+    if (widget.onResolveEpisode != null) {
+      unawaited(_switchToEpisode(episode, previous));
+      return;
+    }
+    final double? saved =
+        _store.resumeSeconds['${widget.anime.id}:${episode.number}'];
+    unawaited(
+      _player.seek(
+        saved != null && saved > 10
+            ? Duration(seconds: saved.round())
+            : Duration.zero,
+      ),
+    );
+    unawaited(_player.play());
+    _pokeControls();
+  }
+
+  Future<void> _switchToEpisode(Episode episode, Episode previous) async {
+    setState(() => _resolving = true);
+    final ResolvedStream? stream = await widget.onResolveEpisode!(episode);
+    if (!mounted) return;
+    if (stream == null) {
+      setState(() {
+        _currentEpisode = previous;
+        _resolving = false;
+      });
+      _snack('Could not find sources for episode ${episode.number}');
+      return;
+    }
+    _currentStream = stream;
+    await _loadStream(stream);
+    if (!mounted) return;
+    setState(() => _resolving = false);
     final double? saved =
         _store.resumeSeconds['${widget.anime.id}:${episode.number}'];
     unawaited(
@@ -365,7 +434,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         ),
       );
       await _setMpvProperty(pipPlayer, 'hwdec', 'videotoolbox-copy');
-      await pipPlayer.open(Media(url));
+      await pipPlayer.open(
+        Media(url, httpHeaders: _currentStream?.headers ?? const <String, String>{}),
+      );
       await pipPlayer.seek(pos);
       await pipPlayer.setVolume(_player.state.volume);
       await pipPlayer.setRate(_rate);
@@ -500,6 +571,79 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   }
 
   Future<void> _showQualitySheet() async {
+    // M2: real streams carry quality variants — picking one reloads
+    // the same stream at that rendition, keeping the position.
+    final ResolvedStream? stream = _currentStream;
+    if (stream != null && stream.variants.isNotEmpty) {
+      final Color accent = Theme.of(context).colorScheme.primary;
+      final Duration pos = _player.state.position;
+      final String? picked = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: const Color(0xFF17171F),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (BuildContext context) {
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Text(
+                    'Quality',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: <Widget>[
+                      for (final StreamVariant v in stream.variants)
+                        ListTile(
+                          title: Text(
+                            v.qualityLabel,
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          trailing: v.url == stream.url
+                              ? Icon(Icons.check_rounded, color: accent)
+                              : null,
+                          onTap: () => Navigator.of(context).pop(v.url),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          );
+        },
+      );
+      if (picked != null && picked != stream.url) {
+        final StreamVariant variant = stream.variants.firstWhere(
+          (StreamVariant v) => v.url == picked,
+          orElse: () => stream.variants.first,
+        );
+        _currentStream = ResolvedStream(
+          url: variant.url,
+          label: '${stream.source} ${variant.qualityLabel}',
+          source: stream.source,
+          headers: stream.headers,
+          variants: stream.variants,
+          subtitles: stream.subtitles,
+        );
+        await _loadStream(_currentStream!);
+        unawaited(_player.seek(pos));
+        unawaited(_player.play());
+        _pokeControls();
+      }
+      return;
+    }
     final Tracks tracks = _player.state.tracks;
     final String currentId = _player.state.track.video.id;
     final List<VideoTrack> list = tracks.video
@@ -858,6 +1002,33 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 _ErrorState(
                   accent: accent,
                   onRetry: () => unawaited(widget.trailer.retry()),
+                ),
+              if (_resolving)
+                Container(
+                  color: Colors.black54,
+                  alignment: Alignment.center,
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(width: 12),
+                      Text(
+                        'Finding sources…',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               if (!hasError) _buildGestures(),
               if (!hasError && _controlsVisible) _buildControls(accent),

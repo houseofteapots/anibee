@@ -27,6 +27,8 @@ class Anime {
     required this.gradient,
     this.posterUrl,
     this.trailerUrl,
+    this.anilistId,
+    this.malId,
     this.currentEpisode,
     this.minutesLeft,
     this.isSaved = false,
@@ -50,6 +52,14 @@ class Anime {
 
   final String? trailerUrl;
 
+  /// AniList media id (from the s4 poster URL where known, else
+  /// resolved at play time via AniList search). Needed for Miruro
+  /// resolve (justanime API) and list sync.
+  final int? anilistId;
+
+  /// MyAnimeList id (from AniList idMal). Needed for MAL list sync.
+  final int? malId;
+
   /// Continue Watching state (null = not started).
   final int? currentEpisode;
   final int? minutesLeft;
@@ -68,6 +78,8 @@ class Anime {
 
   Anime copyWith({
     bool? isSaved,
+    int? anilistId,
+    int? malId,
     int? currentEpisode,
     int? minutesLeft,
     int? nextEpisode,
@@ -85,6 +97,8 @@ class Anime {
       gradient: gradient,
       posterUrl: posterUrl,
       trailerUrl: trailerUrl,
+      anilistId: anilistId ?? this.anilistId,
+      malId: malId ?? this.malId,
       currentEpisode: currentEpisode ?? this.currentEpisode,
       minutesLeft: minutesLeft ?? this.minutesLeft,
       isSaved: isSaved ?? this.isSaved,
@@ -157,6 +171,7 @@ List<Anime> mockCatalogue() {
       genres: <String>['Action', 'Fantasy', 'Adventure'],
       synopsis: 'They say whatever doesn’t kill you makes you stronger, but that’s not the case for the world’s weakest hunter Sung Jinwoo. After being brutally slaughtered by monsters in a high-ranking dungeon, Jinwoo came back with...',
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151807-it355ZgzquUd.png',
+      anilistId: 151807,
       gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
       trailerUrl: kSampleTrailerUrl,
       currentEpisode: 7,
@@ -171,6 +186,7 @@ List<Anime> mockCatalogue() {
       genres: <String>['Action', 'Supernatural', 'Fantasy'],
       synopsis: 'Yuji Itadori is a boy with tremendous physical strength, though he lives a completely ordinary high school life. One day, to save a classmate who has been attacked by curses, he eats the finger of Ryomen Sukuna,...',
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx113415-LHBAeoZDIsnF.jpg',
+      anilistId: 113415,
       gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
       trailerUrl: kSampleTrailerUrl,
       currentEpisode: 5,
@@ -185,6 +201,7 @@ List<Anime> mockCatalogue() {
       genres: <String>['Action', 'Fantasy', 'Supernatural'],
       synopsis: 'After a demon attack leaves his family slain and his sister cursed, Tanjiro embarks upon a perilous journey to find a cure and avenge those he\'s lost.',
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101922-WBsBl0ClmgYL.jpg',
+      anilistId: 101922,
       gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
       trailerUrl: kSampleTrailerUrl,
       currentEpisode: 5,
@@ -199,6 +216,7 @@ List<Anime> mockCatalogue() {
       genres: <String>['Action', 'Fantasy', 'Horror'],
       synopsis: 'Denji has a simple dream—to live a happy and peaceful life, spending time with a girl he likes. This is a far cry from reality, however, as Denji is forced by the yakuza into killing devils in order to pay off his...',
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx127230-DdP4vAdssLoz.png',
+      anilistId: 127230,
       gradient: <Color>[Color(0xFF0B4D5C), Color(0xFF0A0A13)],
       trailerUrl: kSampleTrailerUrl,
       currentEpisode: 2,
@@ -213,6 +231,7 @@ List<Anime> mockCatalogue() {
       genres: <String>['Action', 'Adventure', 'Comedy'],
       synopsis: 'Years ago, the fearsome Pirate King, Gol D. Roger was executed leaving a huge pile of treasure and the famous "One Piece" behind. Whoever claims the "One Piece" will be named the new King of the Pirates.  Monkey D....',
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21-ELSYx3yMPcKM.jpg',
+      anilistId: 21,
       gradient: <Color>[Color(0xFF3A6EA5), Color(0xFF12233D)],
       trailerUrl: kSampleTrailerUrl,
       currentEpisode: 10,
@@ -240,6 +259,7 @@ List<Anime> mockCatalogue() {
       genres: <String>['Adventure', 'Drama', 'Fantasy'],
       synopsis: 'After the party of heroes defeated the Demon King, they restored peace to the land and returned to lives of solitude. Generations pass, and the elven mage Frieren comes face to face with humanity\'s mortality. She...',
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx154587-qQTzQnEJJ3oB.jpg',
+      anilistId: 154587,
       gradient: <Color>[Color(0xFF7A5A8C), Color(0xFF241A2E)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -252,6 +272,7 @@ List<Anime> mockCatalogue() {
       genres: <String>['Action', 'Drama', 'Fantasy'],
       synopsis: '100 years ago, the last remnants of humanity were forced to retreat behind the towering walls of a fortified city to escape the massive, man-eating Titans that roamed the land outside their fortress. Only the members...',
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-buvcRTBx4NSm.jpg',
+      anilistId: 16498,
       gradient: <Color>[Color(0xFF2E1A4D), Color(0xFF0E0A18)],
       trailerUrl: kSampleTrailerUrl,
     ),

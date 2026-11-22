@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'models.dart';
+import 'services/app_services.dart';
 import 'services/provider_config.dart';
 import 'settings_store.dart';
 import 'screens/collection_screen.dart';
@@ -16,10 +17,16 @@ import 'widgets/page_route.dart';
 /// The pill is Positioned directly on the Stack (never wrapped in
 /// Transform/Padding — Zeus b90 lesson).
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.store, required this.configService});
+  const AppShell({
+    super.key,
+    required this.store,
+    required this.configService,
+    required this.services,
+  });
 
   final SettingsStore store;
   final ProviderConfigService configService;
+  final AppServices services;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -31,8 +38,12 @@ class _AppShellState extends State<AppShell> {
   void _openAnime(Anime anime, {bool autoPlay = false}) {
     Navigator.of(context).push(
       SmoothPageRoute<void>(
-        builder: (BuildContext context) =>
-            DetailScreen(anime: anime, store: widget.store, autoPlay: autoPlay),
+        builder: (BuildContext context) => DetailScreen(
+          anime: anime,
+          store: widget.store,
+          services: widget.services,
+          autoPlay: autoPlay,
+        ),
       ),
     );
   }
@@ -60,7 +71,10 @@ class _AppShellState extends State<AppShell> {
               ),
               _TabFade(
                 active: _tab == 1,
-                child: SearchScreen(onOpenAnime: _openAnime),
+                child: SearchScreen(
+                  onOpenAnime: _openAnime,
+                  anilist: widget.services.anilist,
+                ),
               ),
               _TabFade(
                 active: _tab == 2,
@@ -79,6 +93,7 @@ class _AppShellState extends State<AppShell> {
                 child: SettingsScreen(
                   store: widget.store,
                   configService: widget.configService,
+                  services: widget.services,
                 ),
               ),
             ],

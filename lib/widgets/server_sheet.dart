@@ -20,13 +20,20 @@ import '../widgets/reicon_icon.dart';
 /// M1.1: the server list comes from the store's sources; the SUB/DUB
 /// and language filters work over mock per-server language data. Real
 /// on-device resolving arrives with milestone 2.
-Future<({String server, String subDub})?> showServerSheet({
+///
+/// M2: a Debrid section (TorBox / Real-Debrid cards) appears when the
+/// user has saved a key for that service — picking one resolves the
+/// episode through the debrid API (cached torrents) instead of Miruro.
+/// The returned record carries `debrid` ('torbox' | 'realdebrid') or
+/// null for a normal provider server.
+Future<({String server, String subDub, String? debrid})?> showServerSheet({
   required BuildContext context,
   required SettingsStore store,
   required String currentServer,
   required String subDub,
+  String? currentDebrid,
 }) {
-  return showModalBottomSheet<({String server, String subDub})>(
+  return showModalBottomSheet<({String server, String subDub, String? debrid})>(
     context: context,
     isScrollControlled: true,
     backgroundColor: const Color(0xFF17171F),
@@ -38,6 +45,7 @@ Future<({String server, String subDub})?> showServerSheet({
         store: store,
         currentServer: currentServer,
         subDub: subDub,
+        currentDebrid: currentDebrid,
       );
     },
   );
@@ -72,11 +80,13 @@ class _ServerSheet extends StatefulWidget {
     required this.store,
     required this.currentServer,
     required this.subDub,
+    this.currentDebrid,
   });
 
   final SettingsStore store;
   final String currentServer;
   final String subDub;
+  final String? currentDebrid;
 
   @override
   State<_ServerSheet> createState() => _ServerSheetState();
@@ -196,6 +206,65 @@ class _ServerSheetState extends State<_ServerSheet> {
               ),
             ),
             const SizedBox(height: 16),
+            // Debrid section (M2): cached-torrent sources, shown only
+            // when the user has saved a key for that service.
+            if (widget.store.torboxApiKey != null ||
+                widget.store.realDebridApiKey != null) ...<Widget>[
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  'DEBRID — CACHED TORRENTS',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: <Widget>[
+                    if (widget.store.torboxApiKey != null)
+                      Expanded(
+                        child: _DebridCard(
+                          name: 'TorBox',
+                          selected: widget.currentDebrid == 'torbox',
+                          accent: accent,
+                          onTap: () => Navigator.of(context).pop((
+                            server: 'TorBox',
+                            subDub: _filter == 'All'
+                                ? widget.subDub
+                                : _filter,
+                            debrid: 'torbox',
+                          )),
+                        ),
+                      ),
+                    if (widget.store.torboxApiKey != null &&
+                        widget.store.realDebridApiKey != null)
+                      const SizedBox(width: 10),
+                    if (widget.store.realDebridApiKey != null)
+                      Expanded(
+                        child: _DebridCard(
+                          name: 'Real-Debrid',
+                          selected: widget.currentDebrid == 'realdebrid',
+                          accent: accent,
+                          onTap: () => Navigator.of(context).pop((
+                            server: 'Real-Debrid',
+                            subDub: _filter == 'All'
+                                ? widget.subDub
+                                : _filter,
+                            debrid: 'realdebrid',
+                          )),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
             // All / Sub / Dub filter pills.
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -293,8 +362,11 @@ class _ServerSheetState extends State<_ServerSheet> {
                           variant: card.variant,
                           selected: isSelected,
                           accent: accent,
-                          onTap: () => Navigator.of(context)
-                              .pop((server: card.server, subDub: card.variant)),
+                          onTap: () => Navigator.of(context).pop((
+                            server: card.server,
+                            subDub: card.variant,
+                            debrid: null,
+                          )),
                         );
                       },
                     ),
@@ -369,6 +441,88 @@ class _Pill extends StatelessWidget {
             fontSize: 13,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Debrid source card (TorBox / Real-Debrid): name + "Cached" pill,
+/// accent-filled when selected.
+class _DebridCard extends StatelessWidget {
+  const _DebridCard({
+    required this.name,
+    required this.selected,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final String name;
+  final bool selected;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+        decoration: BoxDecoration(
+          color: selected ? accent : const Color(0xFF23232F),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                ReiconIcon(
+                  Reicon.outline.bolt,
+                  size: 16,
+                  color: selected ? Colors.white : accent,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (selected)
+                  const Icon(
+                    Icons.check_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: selected
+                    ? Colors.white.withValues(alpha: 0.22)
+                    : Colors.black.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'CACHED',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -4,19 +4,55 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models.dart';
+import 'services/secure_store.dart';
 
 /// App-wide settings, persisted in SharedPreferences.
+/// Secrets (Debrid keys, OAuth tokens, client IDs) live in secure
+/// storage (M2) — migrated from prefs on first load.
 /// Every screen reads from this store; the Settings screens write to it.
 class SettingsStore extends ChangeNotifier {
-  SettingsStore._(this._prefs);
+  SettingsStore._(this._prefs, this._secure);
 
   final SharedPreferences _prefs;
+  final SecureStore _secure;
 
   static Future<SettingsStore> load() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final SettingsStore store = SettingsStore._(prefs);
+    final SecureStore secure = SecureStore();
+    final SettingsStore store = SettingsStore._(prefs, secure);
+    await store._migrateSecrets();
     store._readAll();
+    await store._readSecrets();
     return store;
+  }
+
+  /// M2: move Debrid keys out of SharedPreferences plaintext into
+  /// the Keychain (iOS). Runs once — old prefs keys are deleted after.
+  Future<void> _migrateSecrets() async {
+    final String? torbox = _prefs.getString('torbox_api_key');
+    if (torbox != null && torbox.isNotEmpty) {
+      await _secure.write(SecureStore.torboxApiKey, torbox);
+      await _prefs.remove('torbox_api_key');
+    }
+    final String? rd = _prefs.getString('realdebrid_api_key');
+    if (rd != null && rd.isNotEmpty) {
+      await _secure.write(SecureStore.realDebridApiKey, rd);
+      await _prefs.remove('realdebrid_api_key');
+    }
+  }
+
+  Future<void> _readSecrets() async {
+    torboxApiKey = await _secure.read(SecureStore.torboxApiKey);
+    realDebridApiKey = await _secure.read(SecureStore.realDebridApiKey);
+    anilistClientId = await _secure.read(SecureStore.anilistClientId);
+    anilistToken = await _secure.read(SecureStore.anilistAccessToken);
+    malClientId = await _secure.read(SecureStore.malClientId);
+    malAccessToken = await _secure.read(SecureStore.malAccessToken);
+    malRefreshToken = await _secure.read(SecureStore.malRefreshToken);
+    final String? expiry = await _secure.read(SecureStore.malTokenExpiry);
+    malTokenExpiry = expiry == null
+        ? null
+        : DateTime.tryParse(expiry);
   }
 
   // --- Appearance ---
@@ -66,11 +102,30 @@ class SettingsStore extends ChangeNotifier {
   Map<String, String> downloadStatus = <String, String>{};
   Map<String, double> downloadProgress = <String, double>{};
 
-  // --- Debrid (M1: Settings UI only — key entry + connected state.
-  /// No real API calls yet; the user connects his own paid account later.
-  /// M2 must move these keys to secure storage (flutter_secure_storage).
+  // --- Debrid (M2: keys in secure storage; verified with a real
+  /// API call on save — "Connected" means the key actually works.)
   String? torboxApiKey;
   String? realDebridApiKey;
+  bool torboxVerified = false;
+  String? torboxAccount;
+  bool realDebridVerified = false;
+  String? realDebridAccount;
+
+  // --- Accounts (M2: real OAuth). Client IDs are user-entered
+  /// (created at anilist.co/settings/developer and
+  /// myanimelist.net/apiconfig) so no rebuild is needed.
+  String? anilistClientId;
+  String? anilistToken;
+  String? anilistUsername;
+  String? malClientId;
+  String? malAccessToken;
+  String? malRefreshToken;
+  DateTime? malTokenExpiry;
+  String? malUsername;
+
+  bool get anilistConnected => anilistToken != null && anilistToken!.isNotEmpty;
+  bool get malConnected =>
+      malAccessToken != null && malAccessToken!.isNotEmpty;
 
   // --- App lock ---
   bool appLockEnabled = false;
@@ -151,8 +206,12 @@ class SettingsStore extends ChangeNotifier {
         downloadProgress = <String, double>{};
       }
     }
-    torboxApiKey = _prefs.getString('torbox_api_key');
-    realDebridApiKey = _prefs.getString('realdebrid_api_key');
+    torboxVerified = _prefs.getBool('torbox_verified') ?? false;
+    torboxAccount = _prefs.getString('torbox_account');
+    realDebridVerified = _prefs.getBool('realdebrid_verified') ?? false;
+    realDebridAccount = _prefs.getString('realdebrid_account');
+    anilistUsername = _prefs.getString('anilist_username');
+    malUsername = _prefs.getString('mal_username');
     appLockEnabled = _prefs.getBool('app_lock') ?? false;
     faceIdEnabled = _prefs.getBool('face_id') ?? false;
     pinHash = _prefs.getString('pin_hash');
@@ -390,20 +449,125 @@ class SettingsStore extends ChangeNotifier {
 
   Future<void> setTorboxApiKey(String? key) async {
     torboxApiKey = key;
+    torboxVerified = false;
+    torboxAccount = null;
     if (key == null || key.isEmpty) {
-      await _prefs.remove('torbox_api_key');
+      await _secure.delete(SecureStore.torboxApiKey);
     } else {
-      await _prefs.setString('torbox_api_key', key);
+      await _secure.write(SecureStore.torboxApiKey, key);
     }
+    await _prefs.setBool('torbox_verified', false);
+    await _prefs.remove('torbox_account');
     notifyListeners();
   }
 
   Future<void> setRealDebridApiKey(String? key) async {
     realDebridApiKey = key;
+    realDebridVerified = false;
+    realDebridAccount = null;
     if (key == null || key.isEmpty) {
-      await _prefs.remove('realdebrid_api_key');
+      await _secure.delete(SecureStore.realDebridApiKey);
     } else {
-      await _prefs.setString('realdebrid_api_key', key);
+      await _secure.write(SecureStore.realDebridApiKey, key);
+    }
+    await _prefs.setBool('realdebrid_verified', false);
+    await _prefs.remove('realdebrid_account');
+    notifyListeners();
+  }
+
+  /// Result of a real API verify call (GET /user/me, GET /user).
+  Future<void> setTorboxVerified(bool verified, String? account) async {
+    torboxVerified = verified;
+    torboxAccount = account;
+    await _prefs.setBool('torbox_verified', verified);
+    if (account == null) {
+      await _prefs.remove('torbox_account');
+    } else {
+      await _prefs.setString('torbox_account', account);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setRealDebridVerified(bool verified, String? account) async {
+    realDebridVerified = verified;
+    realDebridAccount = account;
+    await _prefs.setBool('realdebrid_verified', verified);
+    if (account == null) {
+      await _prefs.remove('realdebrid_account');
+    } else {
+      await _prefs.setString('realdebrid_account', account);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setAnilistClientId(String? id) async {
+    anilistClientId = id;
+    if (id == null || id.isEmpty) {
+      await _secure.delete(SecureStore.anilistClientId);
+    } else {
+      await _secure.write(SecureStore.anilistClientId, id);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setAnilistSession(String? token, String? username) async {
+    anilistToken = token;
+    anilistUsername = username;
+    if (token == null || token.isEmpty) {
+      await _secure.delete(SecureStore.anilistAccessToken);
+    } else {
+      await _secure.write(SecureStore.anilistAccessToken, token);
+    }
+    if (username == null) {
+      await _prefs.remove('anilist_username');
+    } else {
+      await _prefs.setString('anilist_username', username);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setMalClientId(String? id) async {
+    malClientId = id;
+    if (id == null || id.isEmpty) {
+      await _secure.delete(SecureStore.malClientId);
+    } else {
+      await _secure.write(SecureStore.malClientId, id);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setMalSession({
+    String? accessToken,
+    String? refreshToken,
+    DateTime? expiry,
+    String? username,
+  }) async {
+    malAccessToken = accessToken;
+    malRefreshToken = refreshToken;
+    malTokenExpiry = expiry;
+    malUsername = username;
+    if (accessToken == null || accessToken.isEmpty) {
+      await _secure.delete(SecureStore.malAccessToken);
+    } else {
+      await _secure.write(SecureStore.malAccessToken, accessToken);
+    }
+    if (refreshToken == null || refreshToken.isEmpty) {
+      await _secure.delete(SecureStore.malRefreshToken);
+    } else {
+      await _secure.write(SecureStore.malRefreshToken, refreshToken);
+    }
+    if (expiry == null) {
+      await _secure.delete(SecureStore.malTokenExpiry);
+    } else {
+      await _secure.write(
+        SecureStore.malTokenExpiry,
+        expiry.toIso8601String(),
+      );
+    }
+    if (username == null) {
+      await _prefs.remove('mal_username');
+    } else {
+      await _prefs.setString('mal_username', username);
     }
     notifyListeners();
   }
