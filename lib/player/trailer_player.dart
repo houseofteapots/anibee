@@ -7,6 +7,28 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../models.dart';
 import '../services/miruro_resolver.dart';
 
+/// Default subtitle track for a freshly loaded stream: prefer English
+/// (matching the SUB selection) — sources list tracks in their own
+/// order and Arabic can come first, so taking `.first` wrongly showed
+/// Arabic subtitles (0.2.1, Chainsaw Man EP 2). Falls back to the
+/// first track when no English track exists. [tracks] must be non-empty.
+SubtitleTrack pickDefaultSubtitleTrack(List<SubtitleTrack> tracks) {
+  for (final SubtitleTrack track in tracks) {
+    final String label = (track.title ?? '').trim().toLowerCase();
+    if (label.contains('english') ||
+        label == 'en' ||
+        label == 'eng' ||
+        label.startsWith('en ') ||
+        label.startsWith('en-') ||
+        label.startsWith('eng ') ||
+        label.startsWith('[en') ||
+        label.startsWith('(en')) {
+      return track;
+    }
+  }
+  return tracks.first;
+}
+
 /// The ONE libmpv player shared by the Detail inline trailer and the full
 /// player screen — same engine, same Player instance, handed between the
 /// two Video widgets.
@@ -123,7 +145,9 @@ class TrailerPlayer extends ChangeNotifier {
       _loadError = null;
       if (_streamSubtitles.isNotEmpty) {
         try {
-          await _player.setSubtitleTrack(_streamSubtitles.first);
+          await _player.setSubtitleTrack(
+            pickDefaultSubtitleTrack(_streamSubtitles),
+          );
         } catch (_) {
           // Subtitles are best-effort; playback continues without them.
         }

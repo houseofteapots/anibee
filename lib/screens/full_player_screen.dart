@@ -981,6 +981,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                       child: Video(
                         controller: widget.trailer.controller,
                         fit: BoxFit.contain,
+                        // No built-in controls: the vendored media_kit_video
+                        // defaults to AdaptiveVideoControls, whose bottom
+                        // bar (duplicate time + fullscreen button) renders
+                        // UNDER the custom controls — the extra strip the
+                        // user reported (0.2.1, Chainsaw Man EP 2).
+                        // `NoVideoControls` is `null`, which disables the
+                        // built-in controls entirely.
+                        controls: NoVideoControls,
                       ),
                     );
                   },
