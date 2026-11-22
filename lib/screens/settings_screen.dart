@@ -256,7 +256,7 @@ class SettingsScreen extends StatelessWidget {
               children: <Widget>[
                 SettingsTile(
                   title: 'Downloads',
-                  leading: _icon(Reicon.outline.folder, context),
+                  leading: _icon(Reicon.outline.download, context),
                   showChevron: true,
                   onTap: () => Navigator.of(context).push(
                     SmoothPageRoute<void>(

@@ -34,7 +34,7 @@ class GlassNavBar extends StatelessWidget {
     _NavItem(Reicon.outline.home, 'Home'),
     _NavItem(Reicon.outline.search, 'Search'),
     _NavItem(Reicon.outline.bookmark, 'Collection'),
-    _NavItem(Reicon.outline.folder, 'Downloads'),
+    _NavItem(Reicon.outline.download, 'Downloads'),
     _NavItem(Reicon.outline.settings, 'Settings'),
   ];
 
