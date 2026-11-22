@@ -7,6 +7,12 @@
 # No code signing anywhere: the IPA is unsigned and the user signs it with
 # ESign, exactly like the MLBB IPA and Zeus. No secrets are used.
 #
+# Delivery: the IPA is published as a Release asset (v0.1.0) AND uploaded
+# as a workflow artifact. The Release path exists because the Actions
+# artifact storage quota was hit 2026-11-23 (usage recalculates every
+# 6-12h) — releases do not count against that quota, so the IPA always
+# gets out even while the artifact upload is blocked.
+#
 # Trigger: every push to main, or manual Run workflow.
 
 name: Build AniBee iOS (Unsigned IPA)
@@ -17,7 +23,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   FLUTTER_VERSION: 3.47.7
@@ -56,8 +62,25 @@ jobs:
           zip -r "AniBee-${VERSION}-unsigned.ipa" Payload
           ls -lh *.ipa
 
+      - name: Publish IPA to Release v0.1.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          IPA=$(ls AniBee-*-unsigned.ipa)
+          if gh release view v0.1.0 >/dev/null 2>&1; then
+            gh release upload v0.1.0 --clobber "$IPA"
+          else
+            gh release create v0.1.0 --title "AniBee 0.1.0 (M1)" \
+              --notes "AniBee milestone 1 — UI shell + navigation + settings state. Unsigned IPA for eSign sideload." \
+              "$IPA"
+          fi
+
+      # Best-effort: artifact storage quota was hit 2026-11-23 (usage
+      # recalculates every 6-12h). The Release above is the delivery
+      # path; this step must not fail the run while quota is blocked.
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: AniBee-iOS-unsigned
           path: AniBee-*-unsigned.ipa
