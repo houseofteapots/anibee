@@ -94,8 +94,12 @@ class _DetailScreenState extends State<DetailScreen> {
     });
   }
 
-  Future<void> _openFullPlayer({Episode? episode, bool markPlayed = true}) async {
-    final Episode initial = episode ??
+  Future<void> _openFullPlayer({
+    Episode? episode,
+    bool markPlayed = true,
+  }) async {
+    final Episode initial =
+        episode ??
         _episodes.firstWhere(
           (Episode e) => e.number == (_anime.currentEpisode ?? 1),
           orElse: () => _episodes.first,
@@ -157,8 +161,7 @@ class _DetailScreenState extends State<DetailScreen> {
       builder: (BuildContext context) => SimpleDialog(
         title: const Text('My List'),
         children: <Widget>[
-          for (final (String value, String label)
-              in <(String, String)>[
+          for (final (String value, String label) in <(String, String)>[
             ('plan', 'To Be Watched'),
             ('watching', 'Watching'),
             ('finished', 'Finished'),
@@ -203,29 +206,30 @@ class _DetailScreenState extends State<DetailScreen> {
     _store.setDownloadStatus(key, 'downloading');
     _store.setDownloadProgress(key, 0);
     double progress = 0;
-    _downloadTimers[key] = Timer.periodic(
-      const Duration(milliseconds: 300),
-      (Timer timer) {
-        progress += 0.12;
-        if (progress >= 1) {
-          timer.cancel();
-          _downloadTimers.remove(key);
-          _store.setDownloadStatus(key, 'downloaded');
-        } else {
-          _store.setDownloadProgress(key, progress);
-        }
-      },
-    );
+    _downloadTimers[key] = Timer.periodic(const Duration(milliseconds: 300), (
+      Timer timer,
+    ) {
+      progress += 0.12;
+      if (progress >= 1) {
+        timer.cancel();
+        _downloadTimers.remove(key);
+        _store.setDownloadStatus(key, 'downloaded');
+      } else {
+        _store.setDownloadProgress(key, progress);
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color accent = Theme.of(context).colorScheme.primary;
-    final Color primaryText =
-        isDark ? AppTheme.textPrimaryDark : AppTheme.textPrimaryLight;
-    final Color secondaryText =
-        isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
+    final Color primaryText = isDark
+        ? AppTheme.textPrimaryDark
+        : AppTheme.textPrimaryLight;
+    final Color secondaryText = isDark
+        ? AppTheme.textSecondaryDark
+        : AppTheme.textSecondaryLight;
 
     return Scaffold(
       body: ListenableBuilder(
@@ -249,7 +253,7 @@ class _DetailScreenState extends State<DetailScreen> {
                   _anime.title,
                   style: TextStyle(
                     color: primaryText,
-                    fontSize: 24,
+                    fontSize: 20,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -274,7 +278,7 @@ class _DetailScreenState extends State<DetailScreen> {
                     Text(
                       '${_anime.rating} • ${_anime.year} • '
                       '${_anime.episodeCount} eps • TV-13',
-                      style: TextStyle(color: secondaryText, fontSize: 13),
+                      style: TextStyle(color: secondaryText, fontSize: 12),
                     ),
                   ],
                 ),
@@ -283,47 +287,73 @@ class _DetailScreenState extends State<DetailScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
                 child: Row(
                   children: <Widget>[
-                    ..._anime.genres.map(
-                      (String g) => Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? AppTheme.cardDark
-                                : AppTheme.cardLight,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            g,
-                            style: TextStyle(
-                              color: primaryText,
-                              fontWeight: FontWeight.w600,
+                    // PLAY first (leftmost), same height as the genre
+                    // pills — compact, fits the row.
+                    InkWell(
+                      onTap: () => _openFullPlayer(),
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: accent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Icon(
+                              Icons.play_arrow_rounded,
+                              size: 16,
+                              color: Colors.white,
                             ),
-                          ),
+                            SizedBox(width: 4),
+                            Text(
+                              'PLAY',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                    const Spacer(),
-                    ElevatedButton.icon(
-                      onPressed: () => _openFullPlayer(),
-                      icon: const Icon(Icons.play_arrow_rounded, size: 20),
-                      label: const Text(
-                        'PLAY',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: accent,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: <Widget>[
+                            ..._anime.genres.map(
+                              (String g) => Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? AppTheme.cardDark
+                                        : AppTheme.cardLight,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    g,
+                                    style: TextStyle(
+                                      color: primaryText,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -355,16 +385,13 @@ class _DetailScreenState extends State<DetailScreen> {
                           style: TextStyle(
                             color: primaryText,
                             fontWeight: FontWeight.w700,
-                            fontSize: 15,
+                            fontSize: 14,
                           ),
                         ),
                         const Spacer(),
                         Text(
                           _statusLabel(_store.statusOf(_anime)),
-                          style: TextStyle(
-                            color: secondaryText,
-                            fontSize: 14,
-                          ),
+                          style: TextStyle(color: secondaryText, fontSize: 13),
                         ),
                         const SizedBox(width: 4),
                         Icon(
@@ -383,7 +410,7 @@ class _DetailScreenState extends State<DetailScreen> {
                   'SYNOPSIS',
                   style: TextStyle(
                     color: secondaryText,
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.5,
                   ),
@@ -395,7 +422,7 @@ class _DetailScreenState extends State<DetailScreen> {
                   _anime.synopsis,
                   style: TextStyle(
                     color: primaryText,
-                    fontSize: 15,
+                    fontSize: 14,
                     height: 1.5,
                   ),
                 ),
@@ -433,7 +460,7 @@ class _DetailScreenState extends State<DetailScreen> {
                               _store.preferredServer,
                               style: TextStyle(
                                 color: primaryText,
-                                fontSize: 15,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -450,9 +477,7 @@ class _DetailScreenState extends State<DetailScreen> {
                     const SizedBox(width: 8),
                     Container(
                       decoration: BoxDecoration(
-                        color: isDark
-                            ? AppTheme.cardDark
-                            : AppTheme.cardLight,
+                        color: isDark ? AppTheme.cardDark : AppTheme.cardLight,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
@@ -479,7 +504,7 @@ class _DetailScreenState extends State<DetailScreen> {
                                     color: _subDub == v
                                         ? Colors.white
                                         : secondaryText,
-                                    fontSize: 13,
+                                    fontSize: 12,
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
@@ -510,7 +535,7 @@ class _DetailScreenState extends State<DetailScreen> {
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       color: secondaryText,
-                                      fontSize: 13,
+                                      fontSize: 12,
                                     ),
                                   ),
                                 ),
@@ -529,7 +554,7 @@ class _DetailScreenState extends State<DetailScreen> {
                                   'Connected',
                                   style: TextStyle(
                                     color: secondaryText,
-                                    fontSize: 13,
+                                    fontSize: 12,
                                   ),
                                 ),
                               ],
@@ -593,7 +618,13 @@ class _TrailerHero extends StatelessWidget {
               if (trailer.inlineActive && trailer.loaded) {
                 return GestureDetector(
                   onTap: onExpand,
-                  child: Video(controller: trailer.controller),
+                  // BoxFit.cover: the 16:9 trailer fills the hero
+                  // edge-to-edge — the default contain letterboxed it,
+                  // leaving the black band at the top (M1.1 phone test).
+                  child: Video(
+                    controller: trailer.controller,
+                    fit: BoxFit.cover,
+                  ),
                 );
               }
               return PosterArt(anime: anime, borderRadius: 0, showTitle: false);
@@ -629,9 +660,7 @@ class _TrailerHero extends StatelessWidget {
             right: 12,
             child: IconButton(
               icon: Icon(
-                saved
-                    ? Icons.bookmark_rounded
-                    : Icons.bookmark_border_rounded,
+                saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
                 color: Colors.white,
               ),
               onPressed: onToggleSaved,
@@ -642,10 +671,7 @@ class _TrailerHero extends StatelessWidget {
             left: 16,
             bottom: 16,
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 4,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: Colors.black.withValues(alpha: 0.55),
                 borderRadius: BorderRadius.circular(8),
@@ -685,7 +711,9 @@ class _TrailerHero extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.55),
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.4)),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.4),
+                  ),
                 ),
                 child: const Icon(
                   Icons.fullscreen_rounded,

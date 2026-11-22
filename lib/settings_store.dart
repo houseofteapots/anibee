@@ -25,7 +25,7 @@ class SettingsStore extends ChangeNotifier {
 
   /// Bottom nav pill style: 'glass' (Liquid Glass, default) or 'blurry'
   /// (frosted blur). Applied to the nav pill immediately on change.
-  String navStyle = 'glass';
+  String navStyle = 'blurry';
 
   // --- Player: subtitles ---
   String subFont = 'Inter Semibold';
@@ -98,7 +98,7 @@ class SettingsStore extends ChangeNotifier {
       _ => ThemeMode.dark,
     };
     accentIndex = _prefs.getInt('accent_index') ?? 0;
-    navStyle = _prefs.getString('nav_style') ?? 'glass';
+    navStyle = _prefs.getString('nav_style') ?? 'blurry';
     subFont = _prefs.getString('sub_font') ?? 'Inter Semibold';
     subSize = _prefs.getDouble('sub_size') ?? 18;
     subColorIndex = _prefs.getInt('sub_color') ?? 0;
@@ -337,14 +337,18 @@ class SettingsStore extends ChangeNotifier {
   }
 
   Future<void> _saveSources() async {
-    final String json = jsonEncode(sources
-        .map((ProviderSource s) => <String, Object>{
+    final String json = jsonEncode(
+      sources
+          .map(
+            (ProviderSource s) => <String, Object>{
               'name': s.name,
               'tagline': s.tagline,
               'enabled': s.enabled,
               'preferred': s.preferred,
-            })
-        .toList());
+            },
+          )
+          .toList(),
+    );
     await _prefs.setString('sources', json);
   }
 

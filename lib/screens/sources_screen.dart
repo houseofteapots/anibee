@@ -15,8 +15,9 @@ class SourcesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color accent = Theme.of(context).colorScheme.primary;
-    final Color secondaryText =
-        isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
+    final Color secondaryText = isDark
+        ? AppTheme.textSecondaryDark
+        : AppTheme.textSecondaryLight;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Sources')),
@@ -30,7 +31,7 @@ class SourcesScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 child: Text(
                   'Choose which providers to use',
-                  style: TextStyle(color: secondaryText, fontSize: 15),
+                  style: TextStyle(color: secondaryText, fontSize: 14),
                 ),
               ),
               Expanded(
@@ -38,8 +39,9 @@ class SourcesScreen extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemCount: sources.length,
                   onReorderItem: (int oldIndex, int newIndex) async {
-                    final List<ProviderSource> next =
-                        List<ProviderSource>.of(sources);
+                    final List<ProviderSource> next = List<ProviderSource>.of(
+                      sources,
+                    );
                     final ProviderSource moved = next.removeAt(oldIndex);
                     next.insert(newIndex, moved);
                     await store.setSources(next);
@@ -50,8 +52,7 @@ class SourcesScreen extends StatelessWidget {
                       key: ValueKey<String>(source.name),
                       margin: const EdgeInsets.only(bottom: 8),
                       decoration: BoxDecoration(
-                        color:
-                            isDark ? AppTheme.cardDark : AppTheme.cardLight,
+                        color: isDark ? AppTheme.cardDark : AppTheme.cardLight,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: ListTile(
@@ -73,7 +74,7 @@ class SourcesScreen extends StatelessWidget {
                                 style: TextStyle(
                                   color: accent,
                                   fontWeight: FontWeight.w900,
-                                  fontSize: 16,
+                                  fontSize: 14,
                                 ),
                               ),
                             ),
@@ -85,7 +86,7 @@ class SourcesScreen extends StatelessWidget {
                               source.name,
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
-                                fontSize: 16,
+                                fontSize: 14,
                               ),
                             ),
                             if (source.preferred) ...<Widget>[
@@ -127,8 +128,7 @@ class SourcesScreen extends StatelessWidget {
                               onChanged: (bool value) async {
                                 final List<ProviderSource> next =
                                     List<ProviderSource>.of(sources);
-                                next[index] =
-                                    source.copyWith(enabled: value);
+                                next[index] = source.copyWith(enabled: value);
                                 await store.setSources(next);
                               },
                             ),
@@ -143,7 +143,7 @@ class SourcesScreen extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 24),
                 child: Text(
                   'Drag to reorder priority',
-                  style: TextStyle(color: secondaryText, fontSize: 13),
+                  style: TextStyle(color: secondaryText, fontSize: 12),
                 ),
               ),
             ],

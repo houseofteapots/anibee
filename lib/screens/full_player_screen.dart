@@ -189,9 +189,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     final Duration pos = _player.state.position;
     final Duration dur = _player.state.duration;
     if (pos.inSeconds > 10 && pos < dur - const Duration(seconds: 20)) {
-      unawaited(
-        _store.setResumeSeconds(_resumeKey, pos.inSeconds.toDouble()),
-      );
+      unawaited(_store.setResumeSeconds(_resumeKey, pos.inSeconds.toDouble()));
     } else {
       unawaited(_store.clearResumeSeconds(_resumeKey));
     }
@@ -218,12 +216,19 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   }
 
   void _applySubtitleStyle() {
-    final Color color = kSubtitleColors[
-        _store.subColorIndex.clamp(0, kSubtitleColors.length - 1)];
+    final Color color =
+        kSubtitleColors[_store.subColorIndex.clamp(
+          0,
+          kSubtitleColors.length - 1,
+        )];
     final String hex =
         '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
     unawaited(
-      _setMpvProperty(_player, 'sub-font-size', (_store.subSize * 2).toString()),
+      _setMpvProperty(
+        _player,
+        'sub-font-size',
+        (_store.subSize * 2).toString(),
+      ),
     );
     unawaited(_setMpvProperty(_player, 'sub-color', hex));
     unawaited(
@@ -387,9 +392,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       };
       bridge.onPipSkip = (int seconds) {
         unawaited(
-          pipPlayer.seek(
-            pipPlayer.state.position + Duration(seconds: seconds),
-          ),
+          pipPlayer.seek(pipPlayer.state.position + Duration(seconds: seconds)),
         );
       };
       await bridge.prepare(
@@ -508,9 +511,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       entries: <({String id, String label, VideoTrack? track})>[
         (
           id: 'auto',
-          label: list.isEmpty
-              ? 'Auto (single quality in this sample)'
-              : 'Auto',
+          label: list.isEmpty ? 'Auto (single quality in this sample)' : 'Auto',
           track: VideoTrack.auto(),
         ),
         ...list.map(
@@ -684,8 +685,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                       children: <Widget>[
                         const Text(
                           'Position',
-                          style:
-                              TextStyle(color: Colors.white70, fontSize: 14),
+                          style: TextStyle(color: Colors.white70, fontSize: 14),
                         ),
                         const SizedBox(width: 12),
                         for (final String pos in <String>['Bottom', 'Top'])
@@ -712,8 +712,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     const SizedBox(height: 8),
                     Text(
                       'Delay: ${(_store.subDelayMs / 1000).toStringAsFixed(1)}s',
-                      style:
-                          const TextStyle(color: Colors.white70, fontSize: 14),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
                     ),
                     Slider(
                       value: _store.subDelayMs.toDouble(),
@@ -769,16 +771,15 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     padding: const EdgeInsets.all(16),
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 5,
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: 1.6,
-                    ),
+                          crossAxisCount: 5,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: 1.6,
+                        ),
                     itemCount: widget.episodes.length,
                     itemBuilder: (BuildContext context, int index) {
                       final Episode ep = widget.episodes[index];
-                      final bool selected =
-                          ep.number == _currentEpisode.number;
+                      final bool selected = ep.number == _currentEpisode.number;
                       return InkWell(
                         onTap: () {
                           Navigator.of(context).pop();
@@ -788,16 +789,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                         child: Container(
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: selected
-                                ? accent
-                                : const Color(0xFF23232F),
+                            color: selected ? accent : const Color(0xFF23232F),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
                             '${ep.number}',
                             style: TextStyle(
-                              color:
-                                  selected ? Colors.white : Colors.white70,
+                              color: selected ? Colors.white : Colors.white70,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -970,8 +968,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         final double w = MediaQuery.of(context).size.width;
         final bool rightSide = details.globalPosition.dx > w / 2;
         if (rightSide) {
-          final double v =
-              (_dragStartVolume - details.delta.dy * 0.5).clamp(0, 100);
+          final double v = (_dragStartVolume - details.delta.dy * 0.5).clamp(
+            0,
+            100,
+          );
           unawaited(_player.setVolume(v));
           _gestureHint.value = 'Volume ${v.round()}%';
         } else {
@@ -1019,7 +1019,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               builder: (BuildContext context, AsyncSnapshot<Duration> snap) {
                 final Duration pos = snap.data ?? Duration.zero;
                 final Duration dur = _player.state.duration;
-                final bool showSkip = _store.skipIntro &&
+                final bool showSkip =
+                    _store.skipIntro &&
                     dur.inSeconds > 120 &&
                     pos.inSeconds < 95;
                 if (!showSkip) return const SizedBox.shrink();
@@ -1029,9 +1030,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     padding: const EdgeInsets.only(right: 16, bottom: 12),
                     child: ElevatedButton(
                       onPressed: () {
-                        unawaited(
-                          _player.seek(const Duration(seconds: 85)),
-                        );
+                        unawaited(_player.seek(const Duration(seconds: 85)));
                         _pokeControls();
                       },
                       style: ElevatedButton.styleFrom(
@@ -1086,10 +1085,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     'Episode ${_currentEpisode.number} · ${_currentEpisode.title}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 13,
-                    ),
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                 ],
               ),
@@ -1132,14 +1128,15 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               builder: (BuildContext context, AsyncSnapshot<Duration> snap) {
                 final Duration pos = snap.data ?? Duration.zero;
                 final Duration dur = _player.state.duration;
-                final double max =
-                    dur.inMilliseconds.toDouble().clamp(1, double.infinity);
+                final double max = dur.inMilliseconds.toDouble().clamp(
+                  1,
+                  double.infinity,
+                );
                 return Row(
                   children: <Widget>[
                     Text(
                       _formatDuration(pos),
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 12),
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
                     Expanded(
                       child: SliderTheme(
@@ -1156,14 +1153,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                           ),
                         ),
                         child: Slider(
-                          value:
-                              pos.inMilliseconds.toDouble().clamp(0, max),
+                          value: pos.inMilliseconds.toDouble().clamp(0, max),
                           max: max,
                           onChanged: (double v) {
                             unawaited(
-                              _player.seek(
-                                Duration(milliseconds: v.round()),
-                              ),
+                              _player.seek(Duration(milliseconds: v.round())),
                             );
                           },
                         ),
@@ -1171,8 +1165,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     ),
                     Text(
                       _formatDuration(dur),
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 12),
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
                   ],
                 );

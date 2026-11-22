@@ -133,13 +133,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   anime.title,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 17,
+                    fontSize: 15,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
-              for (final (String value, String label)
-                  in <(String, String)>[
+              for (final (String value, String label) in <(String, String)>[
                 ('watching', 'Move to Watching'),
                 ('finished', 'Move to Finished'),
                 ('plan', 'Move to To Be Watched'),
@@ -179,17 +178,20 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color accent = Theme.of(context).colorScheme.primary;
-    final Color primaryText =
-        isDark ? AppTheme.textPrimaryDark : AppTheme.textPrimaryLight;
-    final Color secondaryText =
-        isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
+    final Color primaryText = isDark
+        ? AppTheme.textPrimaryDark
+        : AppTheme.textPrimaryLight;
+    final Color secondaryText = isDark
+        ? AppTheme.textSecondaryDark
+        : AppTheme.textSecondaryLight;
     final Color card = isDark ? AppTheme.cardDark : AppTheme.cardLight;
 
     final List<Anime> gridItems = _gridItems;
     final List<Anime> cw = _continueWatching;
 
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 110),
+    // Header + genre chips are PINNED: they stay fixed at the top
+    // while only the content below scrolls (Anilili home behaviour).
+    return Column(
       children: <Widget>[
         // Header: AniBee wordmark left, bell + search right.
         Padding(
@@ -203,7 +205,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       text: 'Ani',
                       style: TextStyle(
                         color: primaryText,
-                        fontSize: 26,
+                        fontSize: 22,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
@@ -211,7 +213,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       text: 'Bee',
                       style: TextStyle(
                         color: accent,
-                        fontSize: 26,
+                        fontSize: 22,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
@@ -262,8 +264,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 onTap: () => setState(() => _genre = genre),
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 9,
+                  ),
                   decoration: BoxDecoration(
                     color: selected ? accent : card,
                     borderRadius: BorderRadius.circular(20),
@@ -275,11 +279,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: selected
                           ? Colors.white
                           : (isDark
-                              ? AppTheme.textSecondaryDark
-                              : AppTheme.textSecondaryLight),
-                      fontSize: 14,
-                      fontWeight:
-                          selected ? FontWeight.w700 : FontWeight.w500,
+                                ? AppTheme.textSecondaryDark
+                                : AppTheme.textSecondaryLight),
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                     ),
                   ),
                 ),
@@ -288,163 +291,168 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 14),
-        // Hero carousel.
-        SizedBox(
-          height: 360,
-          child: PageView.builder(
-            controller: _pageController,
-            itemCount: _heroItems.length,
-            onPageChanged: (int i) => setState(() => _page = i),
-            itemBuilder: (BuildContext context, int index) {
-              final Anime anime = _heroItems[index];
-              return _HeroPage(
-                anime: anime,
-                index: index,
-                total: _heroItems.length,
-                accent: accent,
-                onDetails: () => widget.onOpenAnime(anime),
-                onWatchNow: () => widget.onWatchNow(anime),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 10),
-        // Carousel dots.
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            for (int i = 0; i < _heroItems.length; i++)
-              Container(
-                width: i == _page ? 16 : 6,
-                height: 6,
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                decoration: BoxDecoration(
-                  color: i == _page
-                      ? accent
-                      : (isDark
-                          ? const Color(0xFF3A3A48)
-                          : const Color(0xFFD5D5DE)),
-                  borderRadius: BorderRadius.circular(3),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.only(bottom: 110),
+            children: <Widget>[
+              // Hero carousel.
+              SizedBox(
+                height: 360,
+                child: PageView.builder(
+                  controller: _pageController,
+                  itemCount: _heroItems.length,
+                  onPageChanged: (int i) => setState(() => _page = i),
+                  itemBuilder: (BuildContext context, int index) {
+                    final Anime anime = _heroItems[index];
+                    return _HeroPage(
+                      anime: anime,
+                      index: index,
+                      total: _heroItems.length,
+                      accent: accent,
+                      onDetails: () => widget.onOpenAnime(anime),
+                      onWatchNow: () => widget.onWatchNow(anime),
+                    );
+                  },
                 ),
               ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        // Continue Watching.
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Text(
-            'Continue Watching',
-            style: TextStyle(
-              color: primaryText,
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-          child: Text(
-            'Long-press a title to remove it or move it on your anime list',
-            style: TextStyle(color: secondaryText, fontSize: 13),
-          ),
-        ),
-        SizedBox(
-          height: 172,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: cw.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 12),
-            itemBuilder: (BuildContext context, int index) {
-              final Anime anime = cw[index];
-              return _ContinueWatchingCard(
-                anime: anime,
-                onTap: () => widget.onOpenAnime(anime),
-                onLongPress: () => _showListSheet(anime),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 24),
-        // NEWEST / POPULAR / TRENDING / TOP RATED tab bar.
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: <Widget>[
-              for (int i = 0; i < _tabs.length; i++)
-                Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                      left: i == 0 ? 0 : 3,
-                      right: i == _tabs.length - 1 ? 0 : 3,
+              const SizedBox(height: 10),
+              // Carousel dots.
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  for (int i = 0; i < _heroItems.length; i++)
+                    Container(
+                      width: i == _page ? 16 : 6,
+                      height: 6,
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      decoration: BoxDecoration(
+                        color: i == _page
+                            ? accent
+                            : (isDark
+                                  ? const Color(0xFF3A3A48)
+                                  : const Color(0xFFD5D5DE)),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
                     ),
-                    child: InkWell(
-                      onTap: () => setState(() => _tab = i),
-                      borderRadius: BorderRadius.circular(10),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        decoration: BoxDecoration(
-                          color: i == _tab
-                              ? accent
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          _tabs[i],
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: i == _tab
-                                ? Colors.white
-                                : secondaryText,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                ],
+              ),
+              const SizedBox(height: 24),
+              // Continue Watching.
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Continue Watching',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                child: Text(
+                  'Long-press a title to remove it or move it on your anime list',
+                  style: TextStyle(color: secondaryText, fontSize: 12),
+                ),
+              ),
+              SizedBox(
+                height: 172,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: cw.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 12),
+                  itemBuilder: (BuildContext context, int index) {
+                    final Anime anime = cw[index];
+                    return _ContinueWatchingCard(
+                      anime: anime,
+                      onTap: () => widget.onOpenAnime(anime),
+                      onLongPress: () => _showListSheet(anime),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 24),
+              // NEWEST / POPULAR / TRENDING / TOP RATED tab bar.
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: <Widget>[
+                    for (int i = 0; i < _tabs.length; i++)
+                      Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            left: i == 0 ? 0 : 3,
+                            right: i == _tabs.length - 1 ? 0 : 3,
+                          ),
+                          child: InkWell(
+                            onTap: () => setState(() => _tab = i),
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              decoration: BoxDecoration(
+                                color: i == _tab ? accent : Colors.transparent,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                _tabs[i],
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: i == _tab
+                                      ? Colors.white
+                                      : secondaryText,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Poster grid with score badges.
+              if (gridItems.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 32),
+                  child: Center(
+                    child: Text(
+                      'No $_genre titles here yet',
+                      style: TextStyle(color: secondaryText, fontSize: 14),
                     ),
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: 0.66,
+                        ),
+                    itemCount: gridItems.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      final Anime anime = gridItems[index];
+                      return _GridCard(
+                        anime: anime,
+                        onTap: () => widget.onOpenAnime(anime),
+                      );
+                    },
                   ),
                 ),
             ],
           ),
         ),
-        const SizedBox(height: 16),
-        // Poster grid with score badges.
-        if (gridItems.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 32),
-            child: Center(
-              child: Text(
-                'No $_genre titles here yet',
-                style: TextStyle(color: secondaryText, fontSize: 15),
-              ),
-            ),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate:
-                  const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 16,
-                crossAxisSpacing: 12,
-                childAspectRatio: 0.62,
-              ),
-              itemCount: gridItems.length,
-              itemBuilder: (BuildContext context, int index) {
-                final Anime anime = gridItems[index];
-                return _GridCard(
-                  anime: anime,
-                  onTap: () => widget.onOpenAnime(anime),
-                );
-              },
-            ),
-          ),
       ],
     );
   }
@@ -472,8 +480,9 @@ class _HeroPage extends StatelessWidget {
     final String epBadge = anime.nextEpisode != null
         ? 'EP ${anime.nextEpisode} ${(anime.nextEpisodeIn ?? '').toUpperCase()}'
         : 'EP ${anime.currentEpisode ?? anime.episodeCount}';
-    final String durationMin =
-        mockEpisodes(anime).first.duration.split(':').first;
+    final String durationMin = mockEpisodes(anime).first.duration
+        .split(':')
+        .first;
     final String meta =
         'TV  •  ★ ${anime.rating.toStringAsFixed(1)}  •  $durationMin min';
     final String genrePill = anime.genres.take(3).join('  •  ');
@@ -506,8 +515,10 @@ class _HeroPage extends StatelessWidget {
               top: 12,
               left: 12,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.55),
                   borderRadius: BorderRadius.circular(8),
@@ -538,8 +549,10 @@ class _HeroPage extends StatelessWidget {
               top: 12,
               right: 12,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.55),
                   borderRadius: BorderRadius.circular(8),
@@ -566,7 +579,7 @@ class _HeroPage extends StatelessWidget {
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: Colors.white70,
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -578,7 +591,7 @@ class _HeroPage extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 26,
+                      fontSize: 22,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -607,17 +620,13 @@ class _HeroPage extends StatelessWidget {
                     children: <Widget>[
                       ElevatedButton.icon(
                         onPressed: onDetails,
-                        icon: const Icon(
-                          Icons.info_outline_rounded,
-                          size: 18,
-                        ),
+                        icon: const Icon(Icons.info_outline_rounded, size: 18),
                         label: const Text(
                           'Details',
                           style: TextStyle(fontWeight: FontWeight.w700),
                         ),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor:
-                              Colors.black.withValues(alpha: 0.55),
+                          backgroundColor: Colors.black.withValues(alpha: 0.55),
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(24),
@@ -697,14 +706,8 @@ class _ContinueWatchingCard extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: <Widget>[
-                    PosterArt(
-                      anime: anime,
-                      borderRadius: 0,
-                      showTitle: false,
-                    ),
-                    Container(
-                      color: Colors.black.withValues(alpha: 0.18),
-                    ),
+                    PosterArt(anime: anime, borderRadius: 0, showTitle: false),
+                    Container(color: Colors.black.withValues(alpha: 0.18)),
                     Center(
                       child: Container(
                         width: 40,
@@ -733,7 +736,7 @@ class _ContinueWatchingCard extends StatelessWidget {
                 color: isDark
                     ? AppTheme.textPrimaryDark
                     : AppTheme.textPrimaryLight,
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -744,7 +747,7 @@ class _ContinueWatchingCard extends StatelessWidget {
                 color: isDark
                     ? AppTheme.textSecondaryDark
                     : AppTheme.textSecondaryLight,
-                fontSize: 12,
+                fontSize: 11,
               ),
             ),
           ],
@@ -775,11 +778,7 @@ class _GridCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: <Widget>[
-                  PosterArt(
-                    anime: anime,
-                    borderRadius: 0,
-                    showTitle: false,
-                  ),
+                  PosterArt(anime: anime, borderRadius: 0, showTitle: false),
                   Positioned(
                     top: 8,
                     left: 8,
@@ -826,7 +825,7 @@ class _GridCard extends StatelessWidget {
               color: isDark
                   ? AppTheme.textPrimaryDark
                   : AppTheme.textPrimaryLight,
-              fontSize: 14,
+              fontSize: 13,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -837,7 +836,7 @@ class _GridCard extends StatelessWidget {
               color: isDark
                   ? AppTheme.textSecondaryDark
                   : AppTheme.textSecondaryLight,
-              fontSize: 12,
+              fontSize: 11,
             ),
           ),
         ],

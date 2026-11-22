@@ -6,10 +6,7 @@ import '../widgets/poster.dart';
 
 /// Search: field + genre chips + poster grid (mock catalogue, M1).
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({
-    super.key,
-    required this.onOpenAnime,
-  });
+  const SearchScreen({super.key, required this.onOpenAnime});
 
   final ValueChanged<Anime> onOpenAnime;
 
@@ -42,18 +39,20 @@ class _SearchScreenState extends State<SearchScreen> {
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color accent = Theme.of(context).colorScheme.primary;
-    final Color primaryText =
-        isDark ? AppTheme.textPrimaryDark : AppTheme.textPrimaryLight;
-    final Color secondaryText =
-        isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
+    final Color primaryText = isDark
+        ? AppTheme.textPrimaryDark
+        : AppTheme.textPrimaryLight;
+    final Color secondaryText = isDark
+        ? AppTheme.textSecondaryDark
+        : AppTheme.textSecondaryLight;
 
     final String q = _query.toLowerCase();
     final List<Anime> results = mockCatalogue().where((Anime a) {
-      final bool matchesQuery = _query.isEmpty ||
+      final bool matchesQuery =
+          _query.isEmpty ||
           a.title.toLowerCase().contains(q) ||
           a.genres.any((String g) => g.toLowerCase().contains(q));
-      final bool matchesGenre =
-          _genre == 'All' || a.genres.contains(_genre);
+      final bool matchesGenre = _genre == 'All' || a.genres.contains(_genre);
       return matchesQuery && matchesGenre;
     }).toList();
 
@@ -66,7 +65,7 @@ class _SearchScreenState extends State<SearchScreen> {
             'Search',
             style: TextStyle(
               color: primaryText,
-              fontSize: 24,
+              fontSize: 20,
               fontWeight: FontWeight.w900,
             ),
           ),
@@ -105,8 +104,9 @@ class _SearchScreenState extends State<SearchScreen> {
                 label: Text(genre),
                 selected: selected,
                 selectedColor: accent,
-                backgroundColor:
-                    isDark ? AppTheme.cardDark : AppTheme.cardLight,
+                backgroundColor: isDark
+                    ? AppTheme.cardDark
+                    : AppTheme.cardLight,
                 labelStyle: TextStyle(
                   color: selected ? Colors.white : primaryText,
                   fontWeight: FontWeight.w600,
@@ -154,7 +154,7 @@ class _SearchScreenState extends State<SearchScreen> {
             child: Text(
               'No anime found. Try another search.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: secondaryText, fontSize: 15),
+              style: TextStyle(color: secondaryText, fontSize: 14),
             ),
           ),
       ],

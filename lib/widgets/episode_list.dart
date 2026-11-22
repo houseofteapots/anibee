@@ -67,8 +67,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
 
   int get _total => widget.episodes.length;
 
-  int? get _lastWatched =>
-      widget.store.progressEpisodes[widget.anime.id];
+  int? get _lastWatched => widget.store.progressEpisodes[widget.anime.id];
 
   bool _isWatched(Episode ep) =>
       _lastWatched != null && ep.number <= _lastWatched!;
@@ -88,8 +87,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
   void didUpdateWidget(covariant EpisodeSection oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Parent (Detail server row) changed the Sub/Dub pill.
-    if (widget.audioFilter != null &&
-        widget.audioFilter != _audioFilter) {
+    if (widget.audioFilter != null && widget.audioFilter != _audioFilter) {
       _audioFilter = widget.audioFilter!;
     }
   }
@@ -115,8 +113,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
     return _visibleEpisodes
         .where(
           (Episode ep) =>
-              ep.number >= _rangeStart &&
-              ep.number < _rangeStart + kRangeSize,
+              ep.number >= _rangeStart && ep.number < _rangeStart + kRangeSize,
         )
         .toList();
   }
@@ -148,10 +145,12 @@ class _EpisodeSectionState extends State<EpisodeSection> {
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color accent = Theme.of(context).colorScheme.primary;
-    final Color primaryText =
-        isDark ? AppTheme.textPrimaryDark : AppTheme.textPrimaryLight;
-    final Color secondaryText =
-        isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
+    final Color primaryText = isDark
+        ? AppTheme.textPrimaryDark
+        : AppTheme.textPrimaryLight;
+    final Color secondaryText = isDark
+        ? AppTheme.textSecondaryDark
+        : AppTheme.textSecondaryLight;
     final Color card = isDark ? AppTheme.cardDark : AppTheme.cardLight;
 
     return Column(
@@ -166,7 +165,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                 'EPISODES',
                 style: TextStyle(
                   color: secondaryText,
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.5,
                 ),
@@ -175,7 +174,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                 '$_total Episodes',
                 style: TextStyle(
                   color: accent,
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -206,9 +205,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
               ),
               const SizedBox(width: 8),
               _ControlButton(
-                icon: _gridMode
-                    ? Icons.list_rounded
-                    : Icons.grid_view_rounded,
+                icon: _gridMode ? Icons.list_rounded : Icons.grid_view_rounded,
                 tooltip: _gridMode ? 'Show as cards' : 'Show as grid',
                 active: false,
                 onTap: () => setState(() => _gridMode = !_gridMode),
@@ -224,10 +221,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 12,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: card,
                 borderRadius: BorderRadius.circular(12),
@@ -248,7 +242,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                       '${widget.anime.nextEpisodeAt}',
                       style: TextStyle(
                         color: primaryText,
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -278,14 +272,12 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                   Icons.keyboard_arrow_down_rounded,
                   color: secondaryText,
                 ),
-                style: TextStyle(color: primaryText, fontSize: 14),
+                style: TextStyle(color: primaryText, fontSize: 13),
                 dropdownColor: card,
                 items: const <String>['Sub & Dub', 'Sub', 'Dub']
                     .map(
-                      (String v) => DropdownMenuItem<String>(
-                        value: v,
-                        child: Text(v),
-                      ),
+                      (String v) =>
+                          DropdownMenuItem<String>(value: v, child: Text(v)),
                     )
                     .toList(),
                 onChanged: (String? v) {
@@ -307,7 +299,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                   Icons.keyboard_arrow_down_rounded,
                   color: secondaryText,
                 ),
-                style: TextStyle(color: primaryText, fontSize: 14),
+                style: TextStyle(color: primaryText, fontSize: 13),
                 dropdownColor: card,
                 items: _rangeStarts
                     .map(
@@ -330,10 +322,10 @@ class _EpisodeSectionState extends State<EpisodeSection> {
               keyboardType: TextInputType.number,
               textInputAction: TextInputAction.search,
               onSubmitted: _findEpisode,
-              style: TextStyle(color: primaryText, fontSize: 14),
+              style: TextStyle(color: primaryText, fontSize: 13),
               decoration: InputDecoration(
                 hintText: 'Find number',
-                hintStyle: TextStyle(color: secondaryText, fontSize: 14),
+                hintStyle: TextStyle(color: secondaryText, fontSize: 13),
                 filled: true,
                 fillColor: card,
                 contentPadding: const EdgeInsets.symmetric(
@@ -411,7 +403,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                 color: highlighted
                     ? Colors.white
                     : (watched ? secondaryText : primaryText),
-                fontSize: 16,
+                fontSize: 14,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -500,7 +492,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: primaryText,
-                              fontSize: 15,
+                              fontSize: 14,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -511,7 +503,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: secondaryText,
-                              fontSize: 13,
+                              fontSize: 12,
                               height: 1.35,
                             ),
                           ),
@@ -528,7 +520,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                                 ep.airDate,
                                 style: TextStyle(
                                   color: secondaryText,
-                                  fontSize: 13,
+                                  fontSize: 12,
                                 ),
                               ),
                               const SizedBox(width: 2),
@@ -536,8 +528,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                                 status: status,
                                 progress: progress,
                                 accent: accent,
-                                onTap: () =>
-                                    widget.onToggleDownload(ep),
+                                onTap: () => widget.onToggleDownload(ep),
                               ),
                             ],
                           ),
@@ -593,8 +584,8 @@ class _ControlButton extends StatelessWidget {
             color: active
                 ? accent
                 : (isDark
-                    ? AppTheme.textPrimaryDark
-                    : AppTheme.textPrimaryLight),
+                      ? AppTheme.textPrimaryDark
+                      : AppTheme.textPrimaryLight),
           ),
         ),
       ),

@@ -114,8 +114,9 @@ class _ServerSheetState extends State<_ServerSheet> {
   List<({String server, String variant})> get _cards {
     final List<({String server, String variant})> out =
         <({String server, String variant})>[];
-    final List<String> variants =
-        _filter == 'All' ? <String>['Sub', 'Dub'] : <String>[_filter];
+    final List<String> variants = _filter == 'All'
+        ? <String>['Sub', 'Dub']
+        : <String>[_filter];
     for (final ProviderSource source in widget.store.sources) {
       if (!source.enabled) continue;
       final List<String> langs =
@@ -157,7 +158,7 @@ class _ServerSheetState extends State<_ServerSheet> {
                 'Server for this episode',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 21,
+                  fontSize: 18,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -173,7 +174,7 @@ class _ServerSheetState extends State<_ServerSheet> {
                     'Finding sources... ${cards.length} so far',
                     style: TextStyle(
                       color: accent,
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -185,15 +186,11 @@ class _ServerSheetState extends State<_ServerSheet> {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
                 children: <Widget>[
-                  ReiconIcon(
-                    Reicon.outline.bolt,
-                    size: 16,
-                    color: accent,
-                  ),
+                  ReiconIcon(Reicon.outline.bolt, size: 16, color: accent),
                   const SizedBox(width: 6),
                   const Text(
                     'Fast servers usually start quickest',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ],
               ),
@@ -238,10 +235,7 @@ class _ServerSheetState extends State<_ServerSheet> {
                     _checking
                         ? 'Checking servers for languages...'
                         : 'Servers checked',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 13,
-                    ),
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ],
               ),
@@ -273,35 +267,34 @@ class _ServerSheetState extends State<_ServerSheet> {
                   ? const Center(
                       child: Text(
                         'No servers for this language yet',
-                        style: TextStyle(color: Colors.white70, fontSize: 14),
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
                       ),
                     )
                   : GridView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       gridDelegate:
                           const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        mainAxisSpacing: 10,
-                        crossAxisSpacing: 10,
-                        childAspectRatio: 2.1,
-                      ),
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 10,
+                            crossAxisSpacing: 10,
+                            childAspectRatio: 2.1,
+                          ),
                       itemCount: cards.length,
                       itemBuilder: (BuildContext context, int index) {
                         final ({String server, String variant}) card =
                             cards[index];
                         final bool isSelected =
                             card.server == _selectedServer &&
-                                ((_filter == 'All' &&
-                                        card.variant == widget.subDub) ||
-                                    _filter == card.variant);
+                            ((_filter == 'All' &&
+                                    card.variant == widget.subDub) ||
+                                _filter == card.variant);
                         return _ServerCard(
                           server: card.server,
                           variant: card.variant,
                           selected: isSelected,
                           accent: accent,
-                          onTap: () => Navigator.of(context).pop(
-                            (server: card.server, subDub: card.variant),
-                          ),
+                          onTap: () => Navigator.of(context)
+                              .pop((server: card.server, subDub: card.variant)),
                         );
                       },
                     ),
@@ -318,7 +311,7 @@ class _ServerSheetState extends State<_ServerSheet> {
                       'Retry ${widget.currentServer} servers',
                       style: TextStyle(
                         color: accent,
-                        fontSize: 15,
+                        fontSize: 14,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -329,7 +322,7 @@ class _ServerSheetState extends State<_ServerSheet> {
                       'Close',
                       style: TextStyle(
                         color: Colors.white70,
-                        fontSize: 15,
+                        fontSize: 14,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -373,7 +366,7 @@ class _Pill extends StatelessWidget {
           label,
           style: TextStyle(
             color: selected ? Colors.white : Colors.white70,
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
           ),
         ),
@@ -423,7 +416,7 @@ class _ServerCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: selected ? Colors.white : Colors.white,
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -431,9 +424,7 @@ class _ServerCard extends StatelessWidget {
                 ReiconIcon(
                   Reicon.outline.download,
                   size: 16,
-                  color: selected
-                      ? Colors.white70
-                      : Colors.white54,
+                  color: selected ? Colors.white70 : Colors.white54,
                 ),
                 if (selected) ...<Widget>[
                   const SizedBox(width: 4),

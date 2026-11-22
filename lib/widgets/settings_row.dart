@@ -28,7 +28,7 @@ class SettingsSection extends StatelessWidget {
               color: isDark
                   ? AppTheme.textSecondaryDark
                   : AppTheme.textSecondaryLight,
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.5,
             ),
@@ -70,10 +70,12 @@ class SettingsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color titleColor =
-        isDark ? AppTheme.textPrimaryDark : AppTheme.textPrimaryLight;
-    final Color subColor =
-        isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
+    final Color titleColor = isDark
+        ? AppTheme.textPrimaryDark
+        : AppTheme.textPrimaryLight;
+    final Color subColor = isDark
+        ? AppTheme.textSecondaryDark
+        : AppTheme.textSecondaryLight;
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -85,9 +87,8 @@ class SettingsTile extends StatelessWidget {
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary.withValues(
-                        alpha: 0.14,
-                      ),
+                  color: Theme.of(context).colorScheme.primary
+                      .withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(9),
                 ),
                 alignment: Alignment.center,
@@ -103,7 +104,7 @@ class SettingsTile extends StatelessWidget {
                     title,
                     style: TextStyle(
                       color: titleColor,
-                      fontSize: 16,
+                      fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -111,15 +112,14 @@ class SettingsTile extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       subtitle!,
-                      style: TextStyle(color: subColor, fontSize: 13),
+                      style: TextStyle(color: subColor, fontSize: 12),
                     ),
                   ],
                 ],
               ),
             ),
             if (trailing case final Widget value) value,
-            if (showChevron)
-              Icon(Icons.chevron_right_rounded, color: subColor),
+            if (showChevron) Icon(Icons.chevron_right_rounded, color: subColor),
           ],
         ),
       ),

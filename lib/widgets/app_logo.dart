@@ -32,20 +32,20 @@ class AppLogo extends StatelessWidget {
         width: size,
         height: size,
         fit: BoxFit.cover,
-        loadingBuilder: (
-          BuildContext context,
-          Widget child,
-          ImageChunkEvent? loadingProgress,
-        ) {
-          if (loadingProgress == null) return child;
-          return fallback;
-        },
+        loadingBuilder:
+            (
+              BuildContext context,
+              Widget child,
+              ImageChunkEvent? loadingProgress,
+            ) {
+              if (loadingProgress == null) return child;
+              return fallback;
+            },
         errorBuilder: (
           BuildContext context,
           Object error,
           StackTrace? stackTrace,
-        ) =>
-            fallback,
+        ) => fallback,
       ),
     );
   }

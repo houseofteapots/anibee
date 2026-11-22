@@ -49,15 +49,22 @@ class PosterArt extends StatelessWidget {
                 // While the poster loads (or if it fails), the gradient
                 // underneath shows — never a blank tile.
                 loadingBuilder:
-                    (BuildContext context, Widget child,
-                        ImageChunkEvent? progress) {
-                  if (progress == null) return child;
-                  return const SizedBox.shrink();
-                },
-                errorBuilder: (BuildContext context, Object error,
-                    StackTrace? stackTrace) {
-                  return const SizedBox.shrink();
-                },
+                    (
+                      BuildContext context,
+                      Widget child,
+                      ImageChunkEvent? progress,
+                    ) {
+                      if (progress == null) return child;
+                      return const SizedBox.shrink();
+                    },
+                errorBuilder:
+                    (
+                      BuildContext context,
+                      Object error,
+                      StackTrace? stackTrace,
+                    ) {
+                      return const SizedBox.shrink();
+                    },
               ),
             if (url == null)
               Positioned(
@@ -156,7 +163,7 @@ class PosterCard extends StatelessWidget {
                 color: isDark
                     ? AppTheme.textPrimaryDark
                     : AppTheme.textPrimaryLight,
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -183,7 +190,7 @@ class PosterCard extends StatelessWidget {
                   color: isDark
                       ? AppTheme.textSecondaryDark
                       : AppTheme.textSecondaryLight,
-                  fontSize: 12,
+                  fontSize: 11,
                 ),
               ),
             ],
@@ -224,7 +231,7 @@ class AnimeRow extends StatelessWidget {
                   color: isDark
                       ? AppTheme.textPrimaryDark
                       : AppTheme.textPrimaryLight,
-                  fontSize: 20,
+                  fontSize: 17,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -234,7 +241,7 @@ class AnimeRow extends StatelessWidget {
                   color: isDark
                       ? AppTheme.textSecondaryDark
                       : AppTheme.textSecondaryLight,
-                  fontSize: 14,
+                  fontSize: 13,
                 ),
               ),
             ],

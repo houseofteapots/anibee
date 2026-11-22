@@ -43,10 +43,12 @@ class _CollectionScreenState extends State<CollectionScreen> {
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color accent = Theme.of(context).colorScheme.primary;
-    final Color primaryText =
-        isDark ? AppTheme.textPrimaryDark : AppTheme.textPrimaryLight;
-    final Color secondaryText =
-        isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
+    final Color primaryText = isDark
+        ? AppTheme.textPrimaryDark
+        : AppTheme.textPrimaryLight;
+    final Color secondaryText = isDark
+        ? AppTheme.textSecondaryDark
+        : AppTheme.textSecondaryLight;
 
     return ListenableBuilder(
       listenable: widget.store,
@@ -54,9 +56,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
         final List<Anime> catalogue = mockCatalogue();
         List<Anime> inList(String status) {
           return catalogue
-              .where(
-                (Anime a) => widget.store.statusOf(a) == status,
-              )
+              .where((Anime a) => widget.store.statusOf(a) == status)
               .toList();
         }
 
@@ -76,7 +76,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
                 'Collection',
                 style: TextStyle(
                   color: primaryText,
-                  fontSize: 24,
+                  fontSize: 20,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -93,8 +93,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
                           right: i == _tabs.length - 1 ? 0 : 4,
                         ),
                         child: _ListTab(
-                          label:
-                              '${_tabs[i].label} (${lists[i].length})',
+                          label: '${_tabs[i].label} (${lists[i].length})',
                           selected: i == _tab,
                           accent: accent,
                           onTap: () => setState(() => _tab = i),
@@ -122,11 +121,11 @@ class _CollectionScreenState extends State<CollectionScreen> {
                         physics: const NeverScrollableScrollPhysics(),
                         gridDelegate:
                             const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 3,
-                          mainAxisSpacing: 16,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.62,
-                        ),
+                              crossAxisCount: 3,
+                              mainAxisSpacing: 16,
+                              crossAxisSpacing: 12,
+                              childAspectRatio: 0.62,
+                            ),
                         itemCount: current.length,
                         itemBuilder: (BuildContext context, int index) {
                           final Anime anime = current[index];
@@ -182,8 +181,8 @@ class _ListTab extends StatelessWidget {
             color: selected
                 ? Colors.white
                 : (isDark
-                    ? AppTheme.textSecondaryDark
-                    : AppTheme.textSecondaryLight),
+                      ? AppTheme.textSecondaryDark
+                      : AppTheme.textSecondaryLight),
             fontSize: 12,
             fontWeight: FontWeight.w700,
           ),
@@ -214,18 +213,21 @@ class _EmptyList extends StatelessWidget {
       case 'finished':
         icon = Reicon.outline.check;
         title = 'Nothing finished yet';
-        body = 'When you finish a series it lands here. '
+        body =
+            'When you finish a series it lands here. '
             'You can also mark any title Finished from its page.';
       case 'plan':
         icon = Reicon.outline.bookmark;
         title = 'Nothing saved yet';
-        body = 'Tap the bookmark on any anime to add it to '
+        body =
+            'Tap the bookmark on any anime to add it to '
             'your To Be Watched list.';
       case 'watching':
       default:
         icon = Reicon.outline.eye;
         title = 'Nothing in progress';
-        body = 'Start watching any anime and it shows up here '
+        body =
+            'Start watching any anime and it shows up here '
             'with your progress.';
     }
     return Padding(
@@ -240,7 +242,7 @@ class _EmptyList extends StatelessWidget {
               color: Theme.of(context).brightness == Brightness.dark
                   ? AppTheme.textPrimaryDark
                   : AppTheme.textPrimaryLight,
-              fontSize: 17,
+              fontSize: 15,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -248,7 +250,7 @@ class _EmptyList extends StatelessWidget {
           Text(
             body,
             textAlign: TextAlign.center,
-            style: TextStyle(color: secondaryText, fontSize: 14, height: 1.5),
+            style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
           ),
           const SizedBox(height: 20),
           ElevatedButton(

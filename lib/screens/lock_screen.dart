@@ -164,7 +164,7 @@ class _LockScreenState extends State<LockScreen> {
             const SizedBox(height: 24),
             Text(
               title,
-              style: const TextStyle(color: Colors.white70, fontSize: 18),
+              style: const TextStyle(color: Colors.white70, fontSize: 16),
             ),
             const SizedBox(height: 20),
             Row(
@@ -300,7 +300,7 @@ class _KeyButton extends StatelessWidget {
                 label!,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 28,
+                  fontSize: 24,
                   fontWeight: FontWeight.w500,
                 ),
               )

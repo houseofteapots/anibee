@@ -14,8 +14,9 @@ class PlayerSettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color secondaryText =
-        isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
+    final Color secondaryText = isDark
+        ? AppTheme.textSecondaryDark
+        : AppTheme.textSecondaryLight;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Player Settings')),
@@ -35,10 +36,7 @@ class PlayerSettingsScreen extends StatelessWidget {
                     gradient: const LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: <Color>[
-                        Color(0xFF1B2A3A),
-                        Color(0xFF0A0A13),
-                      ],
+                      colors: <Color>[Color(0xFF1B2A3A), Color(0xFF0A0A13)],
                     ),
                   ),
                   child: Stack(
@@ -94,7 +92,7 @@ class PlayerSettingsScreen extends StatelessWidget {
                     title: 'Font',
                     trailing: Text(
                       store.subFont,
-                      style: TextStyle(color: secondaryText, fontSize: 15),
+                      style: TextStyle(color: secondaryText, fontSize: 14),
                     ),
                     showChevron: true,
                     onTap: () => _pickFont(context),
@@ -157,7 +155,7 @@ class PlayerSettingsScreen extends StatelessWidget {
                     title: 'Position',
                     trailing: Text(
                       store.subPosition,
-                      style: TextStyle(color: secondaryText, fontSize: 15),
+                      style: TextStyle(color: secondaryText, fontSize: 14),
                     ),
                     showChevron: true,
                     onTap: () => _pickPosition(context),
@@ -167,7 +165,7 @@ class PlayerSettingsScreen extends StatelessWidget {
                     title: 'Delay',
                     trailing: Text(
                       '${store.subDelayMs}ms',
-                      style: TextStyle(color: secondaryText, fontSize: 15),
+                      style: TextStyle(color: secondaryText, fontSize: 14),
                     ),
                   ),
                   Padding(
@@ -177,8 +175,7 @@ class PlayerSettingsScreen extends StatelessWidget {
                       min: -1000,
                       max: 1000,
                       divisions: 20,
-                      onChanged: (double v) =>
-                          store.setSubDelayMs(v.toInt()),
+                      onChanged: (double v) => store.setSubDelayMs(v.toInt()),
                     ),
                   ),
                 ],
@@ -190,7 +187,7 @@ class PlayerSettingsScreen extends StatelessWidget {
                     title: 'Double-tap seek',
                     trailing: Text(
                       '${store.doubleTapSeek} seconds',
-                      style: TextStyle(color: secondaryText, fontSize: 15),
+                      style: TextStyle(color: secondaryText, fontSize: 14),
                     ),
                     showChevron: true,
                     onTap: () => _pickSeek(context),
@@ -200,7 +197,7 @@ class PlayerSettingsScreen extends StatelessWidget {
                     title: 'Playback speed',
                     trailing: Text(
                       '${store.playbackSpeed}x',
-                      style: TextStyle(color: secondaryText, fontSize: 15),
+                      style: TextStyle(color: secondaryText, fontSize: 14),
                     ),
                     showChevron: true,
                     onTap: () => _pickSpeed(context),
@@ -228,7 +225,7 @@ class PlayerSettingsScreen extends StatelessWidget {
                 child: Text(
                   'Font: ${store.subFont} • '
                   'Color: ${kSubtitleColorNames[store.subColorIndex]}',
-                  style: TextStyle(color: secondaryText, fontSize: 13),
+                  style: TextStyle(color: secondaryText, fontSize: 12),
                 ),
               ),
             ],

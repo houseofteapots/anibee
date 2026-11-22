@@ -84,8 +84,9 @@ class ProviderConfigService extends ChangeNotifier {
     }
     // 3. Bundled fallback.
     try {
-      final String bundled =
-          await rootBundle.loadString('assets/providers.json');
+      final String bundled = await rootBundle.loadString(
+        'assets/providers.json',
+      );
       _config = ProviderConfig.fromJson(
         jsonDecode(bundled) as Map<String, dynamic>,
       );
@@ -101,8 +102,9 @@ class ProviderConfigService extends ChangeNotifier {
     final HttpClient client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 5);
     try {
-      final HttpClientRequest request =
-          await client.getUrl(Uri.parse(remoteUrl));
+      final HttpClientRequest request = await client.getUrl(
+        Uri.parse(remoteUrl),
+      );
       request.headers.set('User-Agent', 'AniBee/0.1.0');
       final HttpClientResponse response = await request.close();
       if (response.statusCode != 200) return null;
@@ -200,20 +202,23 @@ class ProviderConfig {
   });
 
   factory ProviderConfig.fromJson(Map<String, dynamic> json) {
-    final List<dynamic> raw = json['providers'] as List<dynamic>? ?? <dynamic>[];
+    final List<dynamic> raw =
+        json['providers'] as List<dynamic>? ?? <dynamic>[];
     return ProviderConfig(
       version: (json['version'] as num?)?.toInt() ?? 0,
       updatedAt: json['updated_at'] as String? ?? '',
       providers: raw
-          .map(
-            (dynamic e) => ProviderDef.fromJson(e as Map<String, dynamic>),
-          )
+          .map((dynamic e) => ProviderDef.fromJson(e as Map<String, dynamic>))
           .toList(),
     );
   }
 
   factory ProviderConfig.empty() {
-    return const ProviderConfig(version: 0, updatedAt: '', providers: <ProviderDef>[]);
+    return const ProviderConfig(
+      version: 0,
+      updatedAt: '',
+      providers: <ProviderDef>[],
+    );
   }
 
   final int version;
@@ -252,8 +257,9 @@ class ProviderDef {
       mirrors: (json['mirrors'] as List<dynamic>? ?? <dynamic>[])
           .map((dynamic e) => e as String)
           .toList(),
-      endpoints: (json['endpoints'] as Map<String, dynamic>? ?? <String, dynamic>{})
-          .map((String k, dynamic v) => MapEntry(k, v as String)),
+      endpoints:
+          (json['endpoints'] as Map<String, dynamic>? ?? <String, dynamic>{})
+              .map((String k, dynamic v) => MapEntry(k, v as String)),
       note: json['note'] as String? ?? '',
     );
   }

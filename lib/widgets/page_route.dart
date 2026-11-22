@@ -1,33 +1,11 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 
-/// One smooth page transition for the whole app (M1.1): a short
-/// slide-from-right + fade, eased — never an abrupt jump. Used for every
-/// push: Detail, Settings sub-screens, Player, Lock setup.
-class SmoothPageRoute<T> extends PageRouteBuilder<T> {
-  SmoothPageRoute({required WidgetBuilder builder})
-      : super(
-          pageBuilder:
-              (BuildContext context, Animation<double> animation,
-                      Animation<double> secondaryAnimation) =>
-                  builder(context),
-          transitionsBuilder:
-              (BuildContext context, Animation<double> animation,
-                  Animation<double> secondaryAnimation, Widget child) {
-            final Animation<double> curved = CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
-              reverseCurve: Curves.easeInCubic,
-            );
-            return SlideTransition(
-              position:
-                  Tween<Offset>(
-                    begin: const Offset(0.06, 0),
-                    end: Offset.zero,
-                  ).animate(curved),
-              child: FadeTransition(opacity: curved, child: child),
-            );
-          },
-          transitionDuration: const Duration(milliseconds: 320),
-          reverseTransitionDuration: const Duration(milliseconds: 280),
-        );
+/// App-wide push route: the standard iOS push (slide from right) via
+/// CupertinoPageRoute, which ALSO gives the native left-edge swipe-back
+/// gesture for free — interactive, follows the finger, cancels on
+/// release — on every pushed screen (Detail, Player, Settings
+/// sub-screens, Lock setup). The back arrow button stays as well.
+/// (The old PageRouteBuilder slide+fade had no swipe-back at all.)
+class SmoothPageRoute<T> extends CupertinoPageRoute<T> {
+  SmoothPageRoute({required super.builder});
 }

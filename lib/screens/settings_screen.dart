@@ -25,19 +25,25 @@ class SettingsScreen extends StatelessWidget {
   final SettingsStore store;
   final ProviderConfigService configService;
 
+  /// Row icons: white in dark mode, accent in light mode — full
+  /// contrast on the tinted tile (the M1.1 icons rendered dark-on-dark
+  /// because the Reicon colour never reached the stroke; see
+  /// ReiconIcon's colorFilter fix).
   Widget _icon(String pathData, BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
     return ReiconIcon(
       pathData,
       size: 18,
-      color: Theme.of(context).colorScheme.primary,
+      color: isDark ? Colors.white : Theme.of(context).colorScheme.primary,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color primaryText =
-        isDark ? AppTheme.textPrimaryDark : AppTheme.textPrimaryLight;
+    final Color primaryText = isDark
+        ? AppTheme.textPrimaryDark
+        : AppTheme.textPrimaryLight;
 
     return ListenableBuilder(
       listenable: store,
@@ -51,7 +57,7 @@ class SettingsScreen extends StatelessWidget {
                 'Settings',
                 style: TextStyle(
                   color: primaryText,
-                  fontSize: 24,
+                  fontSize: 20,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -72,8 +78,7 @@ class SettingsScreen extends StatelessWidget {
                   color: const Color(0xFFEC5A9E),
                   icon: Reicon.outline.star,
                   status: 'Not synced • Tap to link account',
-                  onLogin: () =>
-                      _showComingSoon(context, 'MyAnimeList login'),
+                  onLogin: () => _showComingSoon(context, 'MyAnimeList login'),
                 ),
               ],
             ),
@@ -93,7 +98,7 @@ class SettingsScreen extends StatelessWidget {
                       color: isDark
                           ? AppTheme.textSecondaryDark
                           : AppTheme.textSecondaryLight,
-                      fontSize: 15,
+                      fontSize: 14,
                     ),
                   ),
                   showChevron: true,
@@ -119,10 +124,7 @@ class SettingsScreen extends StatelessWidget {
                                 color: kAccentOptions[i].color,
                                 shape: BoxShape.circle,
                                 border: i == store.accentIndex
-                                    ? Border.all(
-                                        color: Colors.white,
-                                        width: 2,
-                                      )
+                                    ? Border.all(color: Colors.white, width: 2)
                                     : null,
                               ),
                               child: i == store.accentIndex
@@ -220,7 +222,7 @@ class SettingsScreen extends StatelessWidget {
                       color: isDark
                           ? AppTheme.textSecondaryDark
                           : AppTheme.textSecondaryLight,
-                      fontSize: 15,
+                      fontSize: 14,
                     ),
                   ),
                   showChevron: true,
@@ -273,7 +275,7 @@ class SettingsScreen extends StatelessWidget {
                       color: isDark
                           ? AppTheme.textSecondaryDark
                           : AppTheme.textSecondaryLight,
-                      fontSize: 15,
+                      fontSize: 14,
                     ),
                   ),
                   showChevron: true,
@@ -326,8 +328,7 @@ class SettingsScreen extends StatelessWidget {
                   leading: _icon(Reicon.outline.lock, context),
                   trailing: Switch(
                     value: store.appLockEnabled,
-                    onChanged: (bool value) =>
-                        _toggleAppLock(context, value),
+                    onChanged: (bool value) => _toggleAppLock(context, value),
                   ),
                 ),
                 if (store.appLockEnabled) ...<Widget>[
@@ -365,12 +366,12 @@ class SettingsScreen extends StatelessWidget {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      'AniBee 0.1.1 (M1.1) • Personal build',
+                      'AniBee 0.1.2 (M1.2) • Personal build',
                       style: TextStyle(
                         color: isDark
                             ? AppTheme.textSecondaryDark
                             : AppTheme.textSecondaryLight,
-                        fontSize: 12,
+                        fontSize: 11,
                       ),
                     ),
                   ],
@@ -390,7 +391,7 @@ class SettingsScreen extends StatelessWidget {
                         color: isDark
                             ? AppTheme.textSecondaryDark
                             : AppTheme.textSecondaryLight,
-                        fontSize: 12,
+                        fontSize: 11,
                       ),
                     );
                   },
@@ -404,9 +405,9 @@ class SettingsScreen extends StatelessWidget {
   }
 
   void _showComingSoon(BuildContext context, String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature arrives in milestone 2.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$feature arrives in milestone 2.')));
   }
 
   Future<void> _pickTheme(BuildContext context) async {
@@ -473,8 +474,9 @@ class SettingsScreen extends StatelessWidget {
     required String? currentKey,
     required Future<void> Function(String?) onSave,
   }) async {
-    final TextEditingController controller =
-        TextEditingController(text: currentKey ?? '');
+    final TextEditingController controller = TextEditingController(
+      text: currentKey ?? '',
+    );
     final String? result = await showDialog<String>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
@@ -482,9 +484,7 @@ class SettingsScreen extends StatelessWidget {
         content: TextField(
           controller: controller,
           obscureText: true,
-          decoration: const InputDecoration(
-            hintText: 'Paste your API key',
-          ),
+          decoration: const InputDecoration(hintText: 'Paste your API key'),
         ),
         actions: <Widget>[
           TextButton(
@@ -514,10 +514,8 @@ class SettingsScreen extends StatelessWidget {
     }
     final bool? set = await Navigator.of(context).push<bool>(
       SmoothPageRoute<bool>(
-        builder: (BuildContext context) => LockScreen(
-          mode: LockMode.setup,
-          store: store,
-        ),
+        builder: (BuildContext context) =>
+            LockScreen(mode: LockMode.setup, store: store),
       ),
     );
     if (set == true) {
@@ -528,10 +526,8 @@ class SettingsScreen extends StatelessWidget {
   Future<void> _changePasscode(BuildContext context) async {
     await Navigator.of(context).push(
       SmoothPageRoute<void>(
-        builder: (BuildContext context) => LockScreen(
-          mode: LockMode.setup,
-          store: store,
-        ),
+        builder: (BuildContext context) =>
+            LockScreen(mode: LockMode.setup, store: store),
       ),
     );
   }
@@ -570,8 +566,8 @@ class _NavStylePill extends StatelessWidget {
             color: selected
                 ? Colors.white
                 : (isDark
-                    ? AppTheme.textSecondaryDark
-                    : AppTheme.textSecondaryLight),
+                      ? AppTheme.textSecondaryDark
+                      : AppTheme.textSecondaryLight),
             fontSize: 12,
             fontWeight: FontWeight.w700,
           ),
@@ -624,7 +620,7 @@ class _AccountTile extends StatelessWidget {
                     color: isDark
                         ? AppTheme.textPrimaryDark
                         : AppTheme.textPrimaryLight,
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -634,7 +630,7 @@ class _AccountTile extends StatelessWidget {
                     color: isDark
                         ? AppTheme.textSecondaryDark
                         : AppTheme.textSecondaryLight,
-                    fontSize: 13,
+                    fontSize: 12,
                   ),
                 ),
               ],
@@ -679,7 +675,7 @@ class _DebridTile extends StatelessWidget {
       leading: ReiconIcon(
         icon,
         size: 18,
-        color: Theme.of(context).colorScheme.primary,
+        color: isDark ? Colors.white : Theme.of(context).colorScheme.primary,
       ),
       subtitle: connected
           ? 'Connected • key saved'
@@ -689,9 +685,7 @@ class _DebridTile extends StatelessWidget {
         decoration: BoxDecoration(
           color: connected
               ? AppTheme.success.withValues(alpha: 0.15)
-              : (isDark
-                  ? const Color(0xFF2A2A38)
-                  : const Color(0xFFE8E8EF)),
+              : (isDark ? const Color(0xFF2A2A38) : const Color(0xFFE8E8EF)),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Text(
@@ -700,9 +694,9 @@ class _DebridTile extends StatelessWidget {
             color: connected
                 ? AppTheme.success
                 : (isDark
-                    ? AppTheme.textSecondaryDark
-                    : AppTheme.textSecondaryLight),
-            fontSize: 12,
+                      ? AppTheme.textSecondaryDark
+                      : AppTheme.textSecondaryLight),
+            fontSize: 11,
             fontWeight: FontWeight.w700,
           ),
         ),

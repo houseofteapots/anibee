@@ -226,7 +226,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 37,
       genres: <String>['Action', 'Comedy', 'Supernatural'],
       synopsis: 'Shigeo Kageyama, a.k.a. "Mob," is a boy who has trouble expressing himself, but who happens to be a powerful esper. Mob is determined to live a normal life and keeps his ESP suppressed, but when his emotions surge to...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/vR7hwaGQ0ySRoq1WobiNRaPs4WO.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/vR7hwaGQ0ySRoq1WobiNRaPs4WO.jpg',
       gradient: <Color>[Color(0xFF4D4D5C), Color(0xFF14141C)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -262,7 +263,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 48,
       genres: <String>['Action', 'Adventure', 'Drama'],
       synopsis: 'For a thousand years, the Vikings have made quite a name and reputation for themselves as the strongest families with a thirst for violence. Thorfinn, the son of one of the Vikings\' greatest warriors, spends his...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/vUHlpA5c1NXkds59reY3HMb4Abs.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/vUHlpA5c1NXkds59reY3HMb4Abs.jpg',
       gradient: <Color>[Color(0xFF5C3A1A), Color(0xFF1C120A)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -274,7 +276,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 12,
       genres: <String>['Comedy', 'Fantasy', 'Romance'],
       synopsis: 'Amona, a dark summoner and demi-human girl who\'s too weak to resist her desires, and Roni, an overly serious priest! Roni welcomes Amona as a new member to his adventuring party. Everyone expected the two would clash...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/xD8bCXGlwC98mFq8mDyB15grUts.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/xD8bCXGlwC98mFq8mDyB15grUts.jpg',
       gradient: <Color>[Color(0xFF1F4D3A), Color(0xFF0A1A12)],
       trailerUrl: kSampleTrailerUrl,
       nextEpisode: 9,
@@ -289,7 +292,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 220,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'Naruto Uzumaki, a mischievous adolescent ninja, struggles as he searches for recognition and dreams of becoming the Hokage, the village\'s leader and strongest ninja.',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/xppeysfvDKVx775MFuH8Z9BlpMk.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/xppeysfvDKVx775MFuH8Z9BlpMk.jpg',
       gradient: <Color>[Color(0xFF6B1F2A), Color(0xFF1F0A0E)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -301,7 +305,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 366,
       genres: <String>['Action', 'Adventure', 'Supernatural'],
       synopsis: 'For as long as he can remember, Ichigo Kurosaki has been able to see ghosts. But when he meets Rukia, a Soul Reaper who battles evil spirits known as Hollows, he finds his life is changed forever. Now, with a...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/2EewmxXe72ogD0EaWM8gqa0ccIw.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/2EewmxXe72ogD0EaWM8gqa0ccIw.jpg',
       gradient: <Color>[Color(0xFF1A3A6B), Color(0xFF0A1220)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -313,7 +318,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 291,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'Now happily married and with a son, martial arts champion Goku must defend Earth from a series of extraterrestrial invaders bent on destruction.',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/oQ5CnVj3TRifXl2bIOri6H6rfNe.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/oQ5CnVj3TRifXl2bIOri6H6rfNe.jpg',
       gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -325,7 +331,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 37,
       genres: <String>['Thriller', 'Supernatural', 'Mystery'],
       synopsis: 'Light Yagami is an ace student with great prospects—and he’s bored out of his mind. But all that changes when he finds the Death Note, a notebook dropped by a rogue Shinigami death god. Any human whose name is...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/tCZFfYTIwrR7n94J6G14Y4hAFU6.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/tCZFfYTIwrR7n94J6G14Y4hAFU6.jpg',
       gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -337,7 +344,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 64,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'Disregard for alchemy’s laws ripped half of Edward Elric’s limbs from his body and left his brother Alphonse’s soul clinging to a suit of armor. To restore what was lost, the brothers seek the Philosopher’s Stone....',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/5ZFUEOULaVml7pQuXxhpR2SmVUw.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/5ZFUEOULaVml7pQuXxhpR2SmVUw.jpg',
       gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -349,7 +357,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 138,
       genres: <String>['Action', 'Adventure', 'Superhero'],
       synopsis: 'Izuku has dreamt of being a hero all his life—a lofty goal for anyone, but especially challenging for a kid with no superpowers. That’s right, in a world where eighty percent of the population has some kind of...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/phuYuzqWW9ru8EA3HVjE9W2Rr3M.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/phuYuzqWW9ru8EA3HVjE9W2Rr3M.jpg',
       gradient: <Color>[Color(0xFF0B4D5C), Color(0xFF0A0A13)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -361,7 +370,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 148,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'Gon, a young boy who lives on Whale Island, dreams of becoming a Hunter like his father, who left when Gon was still young.',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/i2EEr2uBvRlAwJ8d8zTG2Y19mIa.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/i2EEr2uBvRlAwJ8d8zTG2Y19mIa.jpg',
       gradient: <Color>[Color(0xFF3A6EA5), Color(0xFF12233D)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -373,7 +383,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 48,
       genres: <String>['Action', 'Horror', 'Supernatural'],
       synopsis: 'Ken Kaneki, a bookworm college student, meets Rize, a girl his own age with whom he shares many interests.',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/1m4RlC9BTCbyY549TOdVQ5NRPcR.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/1m4RlC9BTCbyY549TOdVQ5NRPcR.jpg',
       gradient: <Color>[Color(0xFF4D4D5C), Color(0xFF14141C)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -385,7 +396,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 96,
       genres: <String>['Action', 'Adventure', 'Sci-Fi'],
       synopsis: 'In the near future, a Virtual Reality Massive Multiplayer Online Role-Playing Game (VRMMORPG) called Sword Art Online has been released where players control their avatars with their bodies using a piece of...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/9m8bFIXPg26taNrFSXGwEORVACD.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/9m8bFIXPg26taNrFSXGwEORVACD.jpg',
       gradient: <Color>[Color(0xFF7A5A8C), Color(0xFF241A2E)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -397,7 +409,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 50,
       genres: <String>['Action', 'Drama', 'Fantasy'],
       synopsis: 'Natsuki Subaru, an ordinary high school  student, is on his way home from the convenience store when he finds  himself transported to another world. As he\'s lost and confused in a new  world where he doesn\'t even...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/oHqYrPAsIiTD5m4DuxumV4er8BU.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/oHqYrPAsIiTD5m4DuxumV4er8BU.jpg',
       gradient: <Color>[Color(0xFF2E1A4D), Color(0xFF0E0A18)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -409,7 +422,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 26,
       genres: <String>['Action', 'Adventure', 'Sci-Fi'],
       synopsis: 'In 2071, roughly fifty years after an accident with a hyperspace gateway made the Earth almost uninhabitable, humanity has colonized most of the rocky planets and moons of the Solar System. Amid a rising crime rate,...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/xDiXDfZwC6XYC6fxHI1jl3A3Ill.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/xDiXDfZwC6XYC6fxHI1jl3A3Ill.jpg',
       gradient: <Color>[Color(0xFF5C3A1A), Color(0xFF1C120A)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -421,7 +435,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 26,
       genres: <String>['Action', 'Drama', 'Sci-Fi'],
       synopsis: 'At the turn of the century, the Angels returned to Earth, seeking to wipe out humanity in an apocalyptic fury. Devastated, mankind\'s last remnants moved underground to wait for the day when the Angels would come back...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/y2ah9t0navXyIvoHg1uIbIHO3tt.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/y2ah9t0navXyIvoHg1uIbIHO3tt.jpg',
       gradient: <Color>[Color(0xFF1F4D3A), Color(0xFF0A1A12)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -433,7 +448,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 50,
       genres: <String>['Action', 'Drama', 'Sci-Fi'],
       synopsis: 'Japan has been invaded and conquered by the Britannian Empire. Japan is now known as Area 11 and its citizens known as Elevens. The Britannian Empire takes away Japan\'s autonomous power and imposes its rule through...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/1cFqtyKUbdo1IurdpkK4tDthUJO.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/1cFqtyKUbdo1IurdpkK4tDthUJO.jpg',
       gradient: <Color>[Color(0xFF6B1F2A), Color(0xFF1F0A0E)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -445,7 +461,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 24,
       genres: <String>['Drama', 'Sci-Fi', 'Thriller'],
       synopsis: 'A group of friends have customized their microwave so that it can send text messages to the past. As they perform different experiments, an organization named SERN who has been doing their own research on time travel...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/96R4bV7dB8ramaWceNKsxvJgCUd.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/96R4bV7dB8ramaWceNKsxvJgCUd.jpg',
       gradient: <Color>[Color(0xFF1A3A6B), Color(0xFF0A1220)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -457,7 +474,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 24,
       genres: <String>['Action', 'Comedy', 'Superhero'],
       synopsis: 'Saitama is a hero who only became a hero for fun. After three years of “special” training, though, he’s become so strong that he’s practically invincible. In fact, he’s too strong—even his mightiest opponents are...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/dT10AxJIXVvRwFAew4tt2RhzJrD.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/dT10AxJIXVvRwFAew4tt2RhzJrD.jpg',
       gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -469,7 +487,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 85,
       genres: <String>['Comedy', 'Drama', 'Sports'],
       synopsis: 'Inspired by a small-statured pro volleyball player, Hinata creates a volleyball team in his last year of middle school. Unfortunately the team is matched up against the "King of the Court" Tobio Kageyama’s team in...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/8WEr48swcqe89Zsy5sdrGCASlIg.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/8WEr48swcqe89Zsy5sdrGCASlIg.jpg',
       gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -481,7 +500,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 170,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'Asta and Yuno are two orphans who want the same thing: to become the Wizard King. Locked in a friendly rivalry, they work hard towards their goal. While Yuno excels at magic, Asta has a problem uncommon in this...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/uZUtoVChBGhNj9OfrM2LYpwBm8E.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/uZUtoVChBGhNj9OfrM2LYpwBm8E.jpg',
       gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -493,7 +513,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 328,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'Lucy is a 17-year-old girl, who wants to be a full-fledged mage. One day when visiting Harujion Town, she meets Natsu, a young man who gets sick easily by any type of transportation. But Natsu isn\'t just any ordinary...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/AsfCVSHnFnUnbepLucvIB1N30Il.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/AsfCVSHnFnUnbepLucvIB1N30Il.jpg',
       gradient: <Color>[Color(0xFF0B4D5C), Color(0xFF0A0A13)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -505,7 +526,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 367,
       genres: <String>['Action', 'Comedy', 'Sci-Fi'],
       synopsis: 'In a world where aliens have invaded Edo Period Japan, skyscrapers, trains and motor bikes have replaced the simple life of Earth inhabitants. One man however, still carries the soul of a samurai, Gintoki Sakata,...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/f7vK8pzZIqhyA8sYmBpWmp9Ae7.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/f7vK8pzZIqhyA8sYmBpWmp9Ae7.jpg',
       gradient: <Color>[Color(0xFF3A6EA5), Color(0xFF12233D)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -517,7 +539,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 190,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'Follow the intergenerational feud between the Joestar Family and various forces of evil, the most prominent of which is Dio Brando and his followers.',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/ogAWwbh3frWtiTyyXrZaVFtqCgp.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/ogAWwbh3frWtiTyyXrZaVFtqCgp.jpg',
       gradient: <Color>[Color(0xFF4D4D5C), Color(0xFF14141C)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -529,7 +552,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 37,
       genres: <String>['Action', 'Comedy', 'Family'],
       synopsis: 'A spy, an assassin and a telepath come together to pose as a family, each for their own reasons, while hiding their true identities from each other.',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/7NAvPYPAu7MeHwP8E9sn81PqsRh.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/7NAvPYPAu7MeHwP8E9sn81PqsRh.jpg',
       gradient: <Color>[Color(0xFF7A5A8C), Color(0xFF241A2E)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -541,7 +565,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 38,
       genres: <String>['Action', 'Drama', 'Sports'],
       synopsis: 'High school soccer players from across Japan gather for a controversial project designed to create the best — and most egoistic — striker in the world.',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/fcKH1NQzoTXiYO1OrhaFFwTKhBp.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/fcKH1NQzoTXiYO1OrhaFFwTKhBp.jpg',
       gradient: <Color>[Color(0xFF2E1A4D), Color(0xFF0E0A18)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -553,7 +578,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 57,
       genres: <String>['Adventure', 'Comedy', 'Sci-Fi'],
       synopsis: 'One fateful day, all of humanity was petrified by a blinding flash of light. After several millennia, high schooler Taiju awakens and finds himself lost in a world of statues. However, he’s not alone! His...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/xbZQ3fDl0y5mt0ARwfeyrgQ4JTw.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/xbZQ3fDl0y5mt0ARwfeyrgQ4JTw.jpg',
       gradient: <Color>[Color(0xFF5C3A1A), Color(0xFF1C120A)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -565,7 +591,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 48,
       genres: <String>['Action', 'Fantasy', 'Supernatural'],
       synopsis: 'Year 198 of the Solar Era in Tokyo, special fire brigades are fighting against a phenomenon called spontaneous human combustion where humans beings are turned into living infernos called "Infernals". While the...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/96jrp8XIEPKC7xHhbkpWLD15oYW.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/96jrp8XIEPKC7xHhbkpWLD15oYW.jpg',
       gradient: <Color>[Color(0xFF1F4D3A), Color(0xFF0A1A12)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -577,7 +604,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 48,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'Corporate worker Mikami Satoru is stabbed by a random killer, and is reborn to an alternate world. But he turns out to be reborn a slime! Thrown into this new world with the name Rimuru, he begins his quest to create...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/pzujcdPAoH361NObVrtbA7zACE7.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/pzujcdPAoH361NObVrtbA7zACE7.jpg',
       gradient: <Color>[Color(0xFF6B1F2A), Color(0xFF1F0A0E)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -589,7 +617,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 52,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'In the year 2138, virtual reality gaming is booming. Yggdrasil, a popular online game is quietly shut down one day. However, one player named Momonga decides to not log out. Momonga is then transformed into the image...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/K8ZUjxaj9F0t3AwJDz8ypzBynM.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/K8ZUjxaj9F0t3AwJDz8ypzBynM.jpg',
       gradient: <Color>[Color(0xFF1A3A6B), Color(0xFF0A1220)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -601,7 +630,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 48,
       genres: <String>['Action', 'Adventure', 'Fantasy'],
       synopsis: 'When a 34-year-old underachiever gets run over by a truck, his story doesn\'t end there. Reincarnated in a new world as an infant, Rudy will seize every opportunity to live the life he\'s always wanted. Armed with new...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/lDS7WuWrq6i1XC1AaKlf9qvJBVi.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/lDS7WuWrq6i1XC1AaKlf9qvJBVi.jpg',
       gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -613,7 +643,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 26,
       genres: <String>['Adventure', 'Drama', 'Fantasy'],
       synopsis: 'Located in the center of a remote island, the Abyss is the last unexplored region, a huge and treacherous fathomless hole inhabited by strange creatures where only the bravest adventurers descend in search of ancient...',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/n30CBH4BoN5Z34tCpOWIPGJYOaS.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/n30CBH4BoN5Z34tCpOWIPGJYOaS.jpg',
       gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -625,7 +656,8 @@ List<Anime> mockCatalogue() {
       episodeCount: 13,
       genres: <String>['Drama', 'Fantasy', 'Romance'],
       synopsis: 'The war is over, and Violet Evergarden needs a job. Scarred and emotionless, she takes a job as a letter writer to understand herself and her past.',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/61EwFPqc0r1uJo6la49J55F8bQ8.jpg',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/61EwFPqc0r1uJo6la49J55F8bQ8.jpg',
       gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
       trailerUrl: kSampleTrailerUrl,
     ),
@@ -666,21 +698,18 @@ List<Episode> mockEpisodes(Anime anime) {
     'Two rivals share one room for the night. Neither one sleeps.',
   ];
   final int count = anime.episodeCount;
-  return List<Episode>.generate(
-    count,
-    (int i) {
-      final int n = i + 1;
-      return Episode(
-        number: n,
-        title: titles[i % titles.length],
-        duration: durations[i % durations.length],
-        synopsis: synopses[i % synopses.length],
-        airDate: _mockAirDate(n),
-        // Dubbed tracks lag behind: every 3rd episode is sub-only in M1.
-        hasDub: n % 3 != 0,
-      );
-    },
-  );
+  return List<Episode>.generate(count, (int i) {
+    final int n = i + 1;
+    return Episode(
+      number: n,
+      title: titles[i % titles.length],
+      duration: durations[i % durations.length],
+      synopsis: synopses[i % synopses.length],
+      airDate: _mockAirDate(n),
+      // Dubbed tracks lag behind: every 3rd episode is sub-only in M1.
+      hasDub: n % 3 != 0,
+    );
+  });
 }
 
 /// Weekly air date starting Sep 5, 2026 (M1 mock): "Oct 4, 2026".
@@ -699,8 +728,11 @@ String _mockAirDate(int episodeNumber) {
     'Nov',
     'Dec',
   ];
-  final DateTime d =
-      DateTime(2026, 9, 5).add(Duration(days: (episodeNumber - 1) * 7));
+  final DateTime d = DateTime(
+    2026,
+    9,
+    5,
+  ).add(Duration(days: (episodeNumber - 1) * 7));
   return '${months[d.month - 1]} ${d.day}, ${d.year}';
 }
 
@@ -731,15 +763,7 @@ List<ProviderSource> defaultSources() {
       tagline: '1080p • Sub • Backup',
       enabled: true,
     ),
-    ProviderSource(
-      name: 'ReAnime',
-      tagline: '720p • Sub',
-      enabled: false,
-    ),
-    ProviderSource(
-      name: 'AniZone',
-      tagline: '1080p • Sub',
-      enabled: false,
-    ),
+    ProviderSource(name: 'ReAnime', tagline: '720p • Sub', enabled: false),
+    ProviderSource(name: 'AniZone', tagline: '1080p • Sub', enabled: false),
   ];
 }

@@ -34,29 +34,60 @@ class GlassNavBar extends StatelessWidget {
     _NavItem(Reicon.outline.home, 'Home'),
     _NavItem(Reicon.outline.search, 'Search'),
     _NavItem(Reicon.outline.bookmark, 'Collection'),
+    _NavItem(Reicon.outline.download, 'Downloads'),
     _NavItem(Reicon.outline.settings, 'Settings'),
   ];
 
   @override
   Widget build(BuildContext context) {
     final bool glass = navStyle != 'blurry';
-    // Liquid Glass: clearly translucent, light blur, bright sheen edge.
+    // Liquid Glass (crystal clear, Zeus-style): the composed
+    // colour-matrix + blur filter from Zeus's MatteGlassPill keeps the
+    // scene's colour and brightness beneath the diffusion, over a very
+    // low-alpha dark surface — genuinely translucent glass, content
+    // behind stays sharp and readable, never a muddy wash.
     // Blurry: frosted — heavy blur + much more opaque, matte.
-    final double blurSigma = glass ? 18 : 32;
+    final ImageFilter filter = glass
+        ? ImageFilter.compose(
+            outer: const ColorFilter.matrix(<double>[
+              0.724,
+              0.250,
+              0.026,
+              0,
+              0,
+              0.074,
+              0.900,
+              0.026,
+              0,
+              0,
+              0.074,
+              0.250,
+              0.676,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+            ]),
+            inner: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          )
+        : ImageFilter.blur(sigmaX: 32, sigmaY: 32);
     final Color bgColor = isDark
         ? (glass
-            ? Colors.white.withValues(alpha: 0.08)
-            : Colors.white.withValues(alpha: 0.24))
+              ? const Color(0x38181C20)
+              : Colors.white.withValues(alpha: 0.24))
         : (glass
-            ? Colors.white.withValues(alpha: 0.55)
-            : Colors.white.withValues(alpha: 0.82));
+              ? Colors.white.withValues(alpha: 0.30)
+              : Colors.white.withValues(alpha: 0.82));
     final Color borderColor = Colors.white.withValues(
-      alpha: isDark ? (glass ? 0.20 : 0.10) : (glass ? 0.45 : 0.25),
+      alpha: isDark ? (glass ? 0.22 : 0.10) : (glass ? 0.45 : 0.25),
     );
     return ClipRRect(
       borderRadius: BorderRadius.circular(32),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+        filter: filter,
         child: Container(
           height: 64,
           decoration: BoxDecoration(
@@ -119,9 +150,11 @@ class _NavButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Unselected icons are light grey (dark mode) so every icon is
+    // clearly visible on the pill; selected = accent colour.
     final Color color = selected
         ? accent
-        : (isDark ? const Color(0xFF8E8EA3) : const Color(0xFF6E6E80));
+        : (isDark ? const Color(0xFFC7C7D1) : const Color(0xFF6E6E80));
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(32),

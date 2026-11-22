@@ -19,7 +19,11 @@ void main() async {
 }
 
 class AniBeeApp extends StatelessWidget {
-  const AniBeeApp({super.key, required this.store, required this.configService});
+  const AniBeeApp({
+    super.key,
+    required this.store,
+    required this.configService,
+  });
 
   final SettingsStore store;
   final ProviderConfigService configService;
