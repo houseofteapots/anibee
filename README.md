@@ -39,3 +39,20 @@ trailer resolver and episode streams.
 Push to `main` → GitHub Actions builds the unsigned IPA
 (`.github/workflows/ios.yml`, Flutter 3.47.7, Xcode latest-stable).
 Sign the IPA with ESign and install.
+
+## Remote fix system (M1)
+
+Provider definitions (domains, endpoints, mirrors) live in ONE public JSON:
+`https://raw.githubusercontent.com/sezkc16/anibee-config/main/providers.json`
+(repo: `sezkc16/anibee-config`, public — the app repo is private, so its
+raw URL would 404 without auth).
+
+- The app fetches it on launch (5 s timeout), caches the last-good copy,
+  and falls back to the bundled `assets/providers.json` when offline.
+- `lib/services/provider_config.dart` — loader, mirror rotation
+  (next Miruro mirror on failure), provider fallback (Miruro down → next
+  enabled provider). Settings > About shows `Provider config vN • remote|cached|bundled`.
+- **One JSON fix updates every install:** domain/endpoint change → edit
+  `providers.json`, bump `version`, every AniBee install picks it up on
+  next launch, no app update. Big changes (redesign, stricter Cloudflare)
+  still need an app update.

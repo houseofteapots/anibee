@@ -1,3 +1,5 @@
+import 'provider_config.dart';
+
 /// M1 service stubs.
 /// No real network calls happen in milestone 1 — the UI shell runs on mock
 /// data (see models.dart). Milestone 2 wires these up, one at a time.
@@ -11,8 +13,10 @@
 ///
 /// MIRURO — no official API; reverse-engineered SvelteKit endpoints.
 /// Resolve MUST happen on-device: Cloudflare blocks datacenter IPs, so a
-/// server-side fetch gets 403. Mirrors rotate:
-/// miruro.cx / miruro.pw / miruro.ws / miruro.to / miruro.tv / miruro.bz
+/// server-side fetch gets 403. Mirrors + endpoints now live in the REMOTE
+/// provider config (see provider_config.dart): mirror rotation + provider
+/// fallback live there, so a domain change is fixed by one JSON edit,
+/// no app update.
 /// Endpoints (relative to a mirror origin):
 /// - GET `/api/search/browse?q=<query>&limit=8&type=ANIME`
 ///     -> `{data, next_cursor, has_more}`
@@ -23,9 +27,16 @@
 /// Route-data (__data.json) responses need the SvelteKit decoder even when
 /// Content-Type is application/json.
 class MiruroService {
+  MiruroService(this.configService);
+
+  final ProviderConfigService configService;
+
   /// Search the Miruro catalogue. M2.
   Future<List<Map<String, dynamic>>> search(String query) async {
-    // TODO(m2): GET /api/search/browse on the live mirror, SvelteKit decode.
+    // TODO(m2): GET endpointUrl('miruro', 'search', params: {'q': query})
+    // on the live mirror, SvelteKit decode. On failure, mark the mirror
+    // failed (rotation) and retry the next mirror; if all fail, the
+    // caller falls back to the next provider in configService.fallbackOrder().
     return <Map<String, dynamic>>[];
   }
 
@@ -34,7 +45,8 @@ class MiruroService {
     required String id,
     required int episode,
   }) async {
-    // TODO(m2): GET /api/sources?id=<id>&n=<episode>.
+    // TODO(m2): GET endpointUrl('miruro', 'sources',
+    //   params: {'id': id, 'episode': episode.toString()}).
     return null;
   }
 }

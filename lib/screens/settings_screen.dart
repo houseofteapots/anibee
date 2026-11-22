@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/provider_config.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/settings_row.dart';
@@ -11,9 +12,14 @@ import 'sources_screen.dart';
 /// Settings — the full list, matching the approved mockup:
 /// Accounts, Appearance, Player, Servers, Downloads, Debrid, App Lock.
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key, required this.store});
+  const SettingsScreen({
+    super.key,
+    required this.store,
+    required this.configService,
+  });
 
   final SettingsStore store;
+  final ProviderConfigService configService;
 
   @override
   Widget build(BuildContext context) {
@@ -296,6 +302,26 @@ class SettingsScreen extends StatelessWidget {
                         : AppTheme.textSecondaryLight,
                     fontSize: 12,
                   ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Center(
+                child: ListenableBuilder(
+                  listenable: configService,
+                  builder: (BuildContext context, Widget? _) {
+                    return Text(
+                      'Provider config v${configService.version} '
+                      '• ${configService.source.name}',
+                      style: TextStyle(
+                        color: isDark
+                            ? AppTheme.textSecondaryDark
+                            : AppTheme.textSecondaryLight,
+                        fontSize: 12,
+                      ),
+                    );
+                  },
                 ),
               ),
             ),

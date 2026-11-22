@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'models.dart';
+import 'services/provider_config.dart';
 import 'settings_store.dart';
 import 'screens/collection_screen.dart';
 import 'screens/detail_screen.dart';
@@ -13,9 +14,10 @@ import 'widgets/glass_nav.dart';
 /// The pill is Positioned directly on the Stack (never wrapped in
 /// Transform/Padding — Zeus b90 lesson).
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.store});
+  const AppShell({super.key, required this.store, required this.configService});
 
   final SettingsStore store;
+  final ProviderConfigService configService;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -52,7 +54,10 @@ class _AppShellState extends State<AppShell> {
                 store: widget.store,
                 onOpenAnime: _openAnime,
               ),
-              SettingsScreen(store: widget.store),
+              SettingsScreen(
+                store: widget.store,
+                configService: widget.configService,
+              ),
             ],
           ),
           Positioned(
