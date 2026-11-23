@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'airing_format.dart';
 import '../models.dart';
 
 /// AniList GraphQL — metadata, search, lists, progress sync.
@@ -31,6 +33,40 @@ class AnilistIdentity {
   final String? status;
 }
 
+/// What the last AniList search lookup actually did (0.2.13) —
+/// shown on the Search screen so the phone test can tell a dead
+/// lookup from a genuine no-match: `ok: false` = the lookup
+/// itself failed ([error] says why); `rawMediaCount` is what
+/// AniList returned before mapping, `mappedCount` what survived
+/// `animeFromMedia`.
+class SearchDiagnostic {
+  const SearchDiagnostic({
+    required this.query,
+    required this.ok,
+    this.error,
+    this.rawMediaCount = 0,
+    this.mappedCount = 0,
+    required this.attempts,
+  });
+
+  final String query;
+  final bool ok;
+  final String? error;
+  final int rawMediaCount;
+  final int mappedCount;
+  final int attempts;
+
+  /// One short line for the Search screen, e.g. "ok · 12 from
+  /// AniList" / "failed (HTTP 403) · local only".
+  String get summary {
+    if (!ok) return 'failed (${error ?? 'unknown'}) · local only';
+    if (rawMediaCount == mappedCount) {
+      return 'ok · $mappedCount from AniList';
+    }
+    return 'ok · $mappedCount shown ($rawMediaCount from AniList)';
+  }
+}
+
 class AniListService {
   AniListService({http.Client? client}) : _client = client ?? http.Client();
 
@@ -40,6 +76,17 @@ class AniListService {
   static const String _ua =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
       'AppleWebKit/605.1.15 (KHTML, like Gecko) AniBee/0.2.1';
+
+  /// What the LAST AniList search lookup actually did (0.2.13) —
+  /// the phone-visible diagnostic. `ok: false` means the lookup
+  /// itself failed (see [error]); `rawMediaCount` is what AniList
+  /// returned before mapping, `mappedCount` what survived
+  /// `animeFromMedia` — if raw > mapped, entries were dropped by
+  /// the mapper; if raw == 0, AniList genuinely returned nothing.
+  SearchDiagnostic? _lastSearchDiagnostic;
+
+  /// The last search diagnostic, or null before any search.
+  SearchDiagnostic? get lastSearchDiagnostic => _lastSearchDiagnostic;
 
   /// Search AniList by title, with optional filters (0.2.11).
   /// Filters map to AniList's own args: genre, seasonYear, status
@@ -91,8 +138,7 @@ class AniListService {
     String? status,
     String? format,
   }) async {
-    final ({List<Anime> results, bool failed}) primary =
-        await _searchOnce(
+    ({List<Anime> results, bool failed}) primary = await _searchOnce(
       query,
       page: page,
       genre: genre,
@@ -100,6 +146,32 @@ class AniListService {
       status: status,
       format: format,
     );
+    if (primary.failed) {
+      // 0.2.13: one retry — a single dropped request (timeout /
+      // transient block) must not wipe the whole search. The
+      // diagnostic keeps the final attempt's outcome; attempts: 2
+      // tells the phone a retry happened.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      primary = await _searchOnce(
+        query,
+        page: page,
+        genre: genre,
+        year: year,
+        status: status,
+        format: format,
+      );
+      final SearchDiagnostic? d = _lastSearchDiagnostic;
+      if (d != null) {
+        _lastSearchDiagnostic = SearchDiagnostic(
+          query: d.query,
+          ok: d.ok,
+          error: d.error,
+          rawMediaCount: d.rawMediaCount,
+          mappedCount: d.mappedCount,
+          attempts: 2,
+        );
+      }
+    }
     if (primary.failed) {
       return (results: <Anime>[], lookupFailed: true);
     }
@@ -136,6 +208,16 @@ class AniListService {
   /// One AniList search page. Returns `failed: true` (empty
   /// results) when the GraphQL call throws — the caller decides
   /// what the failure means.
+  ///
+  /// 0.2.13: a null `data` (or a missing `Page`) is ALSO a failure.
+  /// Before, `_post` returning null data — a 200 with no `data`
+  /// key — fell through to `media = []` and came back as an empty
+  /// SUCCESS, which is exactly the 0.2.12 phone symptom ("noblesse"
+  /// = 0 results, no "Couldn't reach AniList" banner): the lookup
+  /// had failed, but the screen was told it succeeded with nothing.
+  /// Every call also records a [SearchDiagnostic] (raw media count
+  /// vs mapped count, error) so the phone can show what the API
+  /// actually returned.
   Future<({List<Anime> results, bool failed})> _searchOnce(
     String query, {
     int page = 1,
@@ -157,19 +239,57 @@ class AniListService {
           format: format,
         ),
       );
-    } catch (_) {
+    } catch (e) {
+      _lastSearchDiagnostic = SearchDiagnostic(
+        query: query,
+        ok: false,
+        error: _shortSearchError(e),
+        attempts: 1,
+      );
       return (results: <Anime>[], failed: true);
     }
-    final List<dynamic> media =
-        (data?['Page'] as Map<String, dynamic>?)?['media'] as List<dynamic>? ??
-        <dynamic>[];
-    return (
-      results: media
-          .map((dynamic e) => animeFromMedia(e as Map<String, dynamic>))
-          .whereType<Anime>()
-          .toList(),
-      failed: false,
+    final List<dynamic>? media =
+        (data?['Page'] as Map<String, dynamic>?)?['media']
+            as List<dynamic>?;
+    if (data == null || media == null) {
+      // A 200 with no data / no Page is a broken lookup, not a
+      // genuine no-match — report it as a failure so the screen
+      // shows the "Couldn't reach AniList" banner instead of a
+      // bare "0 results".
+      _lastSearchDiagnostic = SearchDiagnostic(
+        query: query,
+        ok: false,
+        error: 'no data',
+        attempts: 1,
+      );
+      return (results: <Anime>[], failed: true);
+    }
+    final List<Anime> mapped = media
+        .map((dynamic e) => animeFromMedia(e as Map<String, dynamic>))
+        .whereType<Anime>()
+        .toList();
+    _lastSearchDiagnostic = SearchDiagnostic(
+      query: query,
+      ok: true,
+      rawMediaCount: media.length,
+      mappedCount: mapped.length,
+      attempts: 1,
     );
+    return (results: mapped, failed: false);
+  }
+
+  /// Short human-readable cause for a search failure, for the
+  /// phone-visible diagnostic ("HTTP 403", "rate limited",
+  /// "timeout", "network"). Pure.
+  static String _shortSearchError(Object e) {
+    if (e is AniListException) {
+      final String m = e.message;
+      if (m.startsWith('AniList HTTP ')) return m.substring('AniList '.length);
+      if (m.startsWith('Rate limited')) return 'rate limited';
+      return m;
+    }
+    if (e is TimeoutException) return 'timeout';
+    return 'network';
   }
 
   /// Strip a trailing season marker from a search query (0.2.12):
@@ -346,7 +466,7 @@ class AniListService {
     final String q =
         '{Media(id:$anilistId,type:ANIME){id idMal title{romaji english native}'
         ' coverImage{large extraLarge} bannerImage description status episodes'
-        ' nextAiringEpisode{episode} genres seasonYear format averageScore}}';
+        ' nextAiringEpisode{episode airingAt} genres seasonYear format averageScore}}';
     final Map<String, dynamic>? data = await _post(q, <String, Object?>{});
     final Map<String, dynamic>? media = data?['Media'] as Map<String, dynamic>?;
     if (media == null) return null;
@@ -760,7 +880,33 @@ class AniListService {
         cover?['extraLarge'] as String? ?? cover?['large'] as String?;
     final int? score = (m['averageScore'] as num?)?.toInt();
     final String format = (m['format'] as String?) ?? '';
+    // 0.2.13: next-airing info (Detail's upcoming-EP line + the
+    // aired count). AniList `episodes` is null while a series is
+    // still airing, so the aired count is derived — episode N airs
+    // next means N-1 have aired. Without this, every airing title
+    // opened from Search (not just AIRING SOON) arrived at Detail
+    // with 0 episodes and no upcoming info.
+    final Map<String, dynamic>? next =
+        m['nextAiringEpisode'] as Map<String, dynamic>?;
+    int? nextEpisode;
+    String? nextEpisodeIn;
+    String? nextEpisodeAt;
+    if (next != null) {
+      nextEpisode = (next['episode'] as num?)?.toInt();
+      final int? airingAt = (next['airingAt'] as num?)?.toInt();
+      if (airingAt != null) {
+        final DateTime at = DateTime.fromMillisecondsSinceEpoch(
+          airingAt * 1000,
+          isUtc: true,
+        );
+        nextEpisodeIn = formatAiringCountdown(at);
+        nextEpisodeAt = formatAiringDate(at);
+      }
+    }
     int episodes = (m['episodes'] as num?)?.toInt() ?? 0;
+    if (episodes <= 0 && nextEpisode != null && nextEpisode > 1) {
+      episodes = nextEpisode - 1;
+    }
     // 0.2.12: a movie is one "episode" — AniList reports episodes
     // null/0 for some movies (The Garden of Words), and episodeCount
     // 0 made Detail show the dead "No episodes yet" state with no
@@ -786,6 +932,9 @@ class AniListService {
       synopsis: cleanDescription(m['description'] as String?),
       posterUrl: poster,
       gradient: const <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
+      nextEpisode: nextEpisode,
+      nextEpisodeIn: nextEpisodeIn,
+      nextEpisodeAt: nextEpisodeAt,
     );
   }
 

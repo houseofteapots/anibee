@@ -685,6 +685,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         width: 120,
                         child: _AiringCard(
                           entry: entry,
+                          // 0.2.13: the airing info travels WITH the
+                          // Anime into Detail — before, episodeCount
+                          // was AniList `episodes` (null while a
+                          // series airs → 0) and the next EP + air
+                          // date were dropped, so Detail showed the
+                          // generic "No episodes available yet" with
+                          // no upcoming episode and no synopsis.
+                          // Aired count = next episode - 1 (EP 9
+                          // airs next → 8 aired; EP 1 next → 0).
                           onTap: () => widget.onOpenAnime(
                             Anime(
                               id: 'anilist-${entry.anilistId}',
@@ -692,7 +701,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               title: entry.title,
                               rating: 0,
                               year: 0,
-                              episodeCount: entry.episodeCount,
+                              episodeCount: entry.airedCount,
                               genres: const <String>[],
                               synopsis: '',
                               gradient: const <Color>[
@@ -700,6 +709,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                 Color(0xFF120E24),
                               ],
                               posterUrl: entry.posterUrl,
+                              nextEpisode: entry.episode,
+                              nextEpisodeIn:
+                                  formatAiringCountdown(entry.airingAt),
+                              nextEpisodeAt:
+                                  formatAiringDate(entry.airingAt),
                             ),
                           ),
                         ),

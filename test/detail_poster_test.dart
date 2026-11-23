@@ -98,6 +98,13 @@ void main() {
       () => Future.delayed(const Duration(milliseconds: 300)),
     );
     await tester.pump();
+    // 0.2.13: _loadDetails/_loadSeasons resolve the id by title
+    // over the real network (AppServices.create()); a failed
+    // lookup retries once after 300 ms — pump past that window so
+    // no retry Timer is pending at teardown.
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
 
     // The banner is the poster art — exactly one, the hero.
     expect(find.byType(PosterArt), findsOneWidget);

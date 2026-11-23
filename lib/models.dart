@@ -68,6 +68,7 @@ class Anime {
     int? nextEpisode,
     String? nextEpisodeIn,
     String? nextEpisodeAt,
+    String? synopsis,
   }) {
     return Anime(
       id: id,
@@ -76,7 +77,7 @@ class Anime {
       year: year,
       episodeCount: episodeCount ?? this.episodeCount,
       genres: genres,
-      synopsis: synopsis,
+      synopsis: synopsis ?? this.synopsis,
       gradient: gradient,
       posterUrl: posterUrl,
       anilistId: anilistId ?? this.anilistId,

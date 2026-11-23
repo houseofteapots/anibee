@@ -93,6 +93,13 @@ class _EpisodeSectionState extends State<EpisodeSection> {
     if (widget.audioFilter != null && widget.audioFilter != _audioFilter) {
       _audioFilter = widget.audioFilter!;
     }
+    // 0.2.13: Detail can fill the episode count after the airing
+    // fetch (0 → 8 aired) — the grid default follows the new
+    // count instead of staying stuck on the empty-state default.
+    if (widget.anime.episodeCount != oldWidget.anime.episodeCount) {
+      _gridMode = widget.anime.episodeCount > kGridThreshold;
+      if (_rangeStart > _total) _rangeStart = 1;
+    }
   }
 
   @override

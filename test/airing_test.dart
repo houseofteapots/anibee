@@ -39,6 +39,39 @@ void main() {
     });
   });
 
+  group('formatAiringDate (0.2.13)', () {
+    test('renders "Nov 29 at 22:05" shape in local time', () {
+      final DateTime at = DateTime.utc(2026, 11, 29, 16, 35);
+      final String s = formatAiringDate(at);
+      expect(s, matches(RegExp(r'^[A-Z][a-z]{2} \d{1,2} at \d{2}:\d{2}$')));
+      expect(s, contains('at'));
+    });
+  });
+
+  group('AiringEntry.airedCount (0.2.13)', () {
+    test('next EP 9 means 8 aired; next EP 1 means 0 aired', () {
+      final DateTime at = DateTime(2026, 11, 29, 22, 5);
+      expect(
+        AiringEntry(
+          anilistId: 1,
+          title: 'Mid-season',
+          episode: 9,
+          airingAt: at,
+        ).airedCount,
+        8,
+      );
+      expect(
+        AiringEntry(
+          anilistId: 2,
+          title: 'Not started',
+          episode: 1,
+          airingAt: at,
+        ).airedCount,
+        0,
+      );
+    });
+  });
+
   group('sortAiringEntries', () {
     test('soonest first, past dropped, capped at 20', () {
       final DateTime now = DateTime(2026, 11, 23, 12, 0);

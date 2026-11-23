@@ -164,7 +164,14 @@ void main() {
       expect(opened, isNotNull);
       expect(opened!.anilistId, 21);
       expect(opened!.title, 'Airing Show One');
-      expect(opened!.episodeCount, 100);
+      // 0.2.13: the aired count travels with the Anime (EP 12 airs
+      // next → 11 aired), plus the upcoming EP + air date — the
+      // old behaviour passed AniList `episodes` (100) straight
+      // through, which is wrong for a still-airing show.
+      expect(opened!.episodeCount, 11);
+      expect(opened!.nextEpisode, 12);
+      expect(opened!.nextEpisodeIn, 'in 2d 4h');
+      expect(opened!.nextEpisodeAt, isNotNull);
     });
 
     testWidgets('hidden when nothing is airing', (

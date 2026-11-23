@@ -79,6 +79,9 @@ void main() {
   Future<void> search(WidgetTester tester, String query) async {
     await tester.enterText(find.byType(TextField), query);
     // Debounce is 400 ms (fake time) + the mock call settles.
+    // 0.2.13: a failed lookup retries once after 300 ms — pump
+    // past that window too, or the retry never lands in the test.
+    await tester.pump(const Duration(milliseconds: 500));
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pump();
     await tester.pump();
@@ -158,5 +161,53 @@ void main() {
     // Frieren is in the local catalogue — it still shows.
     // (Catalogue title is the full 'Frieren: Beyond Journey's End'.)
     expect(find.text("FRIEREN: BEYOND JOURNEY'S END"), findsWidgets);
+  });
+
+  testWidgets('diagnostic line shows what AniList actually returned',
+      (WidgetTester tester) async {
+    // 0.2.13: the phone must be able to tell a dead lookup from a
+    // genuine no-match — the line under the count says so.
+    final AniListService anilist = AniListService(
+      client: clientFor(<String, List<Map<String, dynamic>>>{
+        'black clover': <Map<String, dynamic>>[
+          media(id: 97940, english: 'Black Clover', episodes: 170),
+          media(
+            id: 142511,
+            english: 'Black Clover: Sword of the Wizard King',
+            format: 'MOVIE',
+            episodes: null,
+          ),
+        ],
+      }),
+    );
+    await pumpSearch(tester, anilist, (_) {});
+    await search(tester, 'black clover');
+    expect(find.text('AniList: ok · 2 from AniList'), findsOneWidget);
+    expect(
+      find.text('BLACK CLOVER: SWORD OF THE WIZARD KING'),
+      findsWidgets,
+    );
+  });
+
+  testWidgets('diagnostic line reports a failed lookup, not bare 0 results',
+      (WidgetTester tester) async {
+    final AniListService anilist = AniListService(
+      client: MockClient((http.Request req) async {
+        return http.Response.bytes(
+          utf8.encode(jsonEncode(<String, dynamic>{'data': null})),
+          200,
+        );
+      }),
+    );
+    await pumpSearch(tester, anilist, (_) {});
+    await search(tester, 'noblesse');
+    expect(
+      find.text("Couldn't reach AniList — showing local results."),
+      findsOneWidget,
+    );
+    expect(
+      find.text('AniList: failed (no data) · local only'),
+      findsOneWidget,
+    );
   });
 }

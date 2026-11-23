@@ -1,7 +1,7 @@
 name: anibee
 description: "aniBee — personal iOS anime app. Miruro-linked, AniList-powered."
 publish_to: 'none'
-version: 0.2.12+16
+version: 0.2.13+17
 
 environment:
   sdk: ^3.13.5
@@ -25,6 +25,17 @@ dependencies:
   # Reicon icons (reicon.dev, MIT) for the Settings screen.
   flutter_svg: ^2.2.3
   reicon_flutter: ^1.0.1
+
+  # 0.2.13: REAL Liquid Glass nav — the same forked package Zeus
+  # uses (liquid_glass_bottom_nav 0.0.14, vendored from
+  # ~/workspace/zeus-v101/packages/liquid_glass_bottom_nav — see
+  # packages/liquid_glass_bottom_nav/FORK.md: only the OpenGL ES
+  # Y-flip guard for engine >= 3.44 differs from pub.dev). 0.2.12
+  # only copied the package's blur/surface VALUES into a hand-rolled
+  # pill, so the phone saw plain transparency, not liquid glass —
+  # the look comes from the package's shader refraction, not values.
+  liquid_glass_bottom_nav:
+    path: packages/liquid_glass_bottom_nav
 
   shared_preferences: ^2.5.4
   local_auth: ^3.0.2
@@ -55,6 +66,9 @@ dependencies:
   share_plus: ^13.3.1
   package_info_plus: ^10.2.2
   url_launcher: ^6.3.3
+
+  # 0.2.13: airing date formatting ("Nov 29 at 22:05").
+  intl: ^0.20.2
 
 dev_dependencies:
   flutter_test:

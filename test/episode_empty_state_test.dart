@@ -116,4 +116,33 @@ void main() {
     expect(find.byTooltip('Show as cards'), findsOneWidget);
     expect(find.text('001-030'), findsOneWidget);
   });
+
+  testWidgets('aired episodes show + upcoming EP banner (0.2.13)',
+      (WidgetTester tester) async {
+    // A currently-airing series: 8 episodes have aired (next EP
+    // is 9), so the list shows 1–8 AND the next-episode countdown
+    // bar — never the empty state.
+    const Anime airingNow = Anime(
+      id: 'airing-now',
+      title: 'Airing Show',
+      rating: 4.2,
+      year: 2026,
+      episodeCount: 8,
+      genres: <String>['Action'],
+      synopsis: 'Currently airing.',
+      gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
+      anilistId: 12345,
+      nextEpisode: 9,
+      nextEpisodeIn: '6d 20h',
+      nextEpisodeAt: 'Nov 29 at 22:05',
+    );
+    await pumpSection(tester, airingNow, mockEpisodes(airingNow));
+    expect(find.text('8 Episodes'), findsOneWidget);
+    expect(find.text('No episodes yet'), findsNothing);
+    expect(find.text('No episodes available yet'), findsNothing);
+    expect(
+      find.text('Episode 9 in 6d 20h · Nov 29 at 22:05'),
+      findsOneWidget,
+    );
+  });
 }

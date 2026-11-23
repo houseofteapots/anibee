@@ -143,6 +143,47 @@ void main() {
         isNull,
       );
     });
+
+    test('still-airing TV derives the aired count from nextAiringEpisode',
+        () {
+      // 0.2.13: AniList `episodes` is null while a series airs —
+      // next EP 9 means 8 have aired, and the upcoming EP + air
+      // date travel with the Anime into Detail.
+      final anime = AniListService.animeFromMedia(<String, dynamic>{
+        'id': 97940,
+        'title': <String, dynamic>{'romaji': 'Black Clover'},
+        'format': 'TV',
+        'episodes': null,
+        'nextAiringEpisode': <String, dynamic>{
+          'episode': 9,
+          'airingAt': 1795739100,
+        },
+      });
+      expect(anime, isNotNull);
+      expect(anime!.episodeCount, 8);
+      expect(anime.nextEpisode, 9);
+      expect(anime.nextEpisodeIn, isNotNull);
+      expect(
+        anime.nextEpisodeAt,
+        matches(RegExp(r'^[A-Z][a-z]{2} \d{1,2} at \d{2}:\d{2}$')),
+      );
+    });
+
+    test('not-yet-aired TV keeps 0 episodes but carries the next EP', () {
+      final anime = AniListService.animeFromMedia(<String, dynamic>{
+        'id': 97941,
+        'title': <String, dynamic>{'romaji': 'Future Season'},
+        'format': 'TV',
+        'episodes': null,
+        'nextAiringEpisode': <String, dynamic>{
+          'episode': 1,
+          'airingAt': 1795739100,
+        },
+      });
+      expect(anime, isNotNull);
+      expect(anime!.episodeCount, 0);
+      expect(anime.nextEpisode, 1);
+    });
   });
 
   group('AniListService.viewer', () {
@@ -392,6 +433,171 @@ void main() {
       final r = await svc.searchAnimeDetailed('zzz-no-such-anime');
       expect(r.results, isEmpty);
       expect(r.lookupFailed, isFalse);
+    });
+  });
+
+  group('search diagnostics + null-data failure (0.2.13, item 3)', () {
+    Map<String, dynamic> pageJson(List<Map<String, dynamic>> m) {
+      return <String, dynamic>{
+        'data': <String, dynamic>{
+          'Page': <String, dynamic>{'media': m},
+        },
+      };
+    }
+
+    Map<String, dynamic> media({
+      required int id,
+      required String english,
+      String format = 'TV',
+      int? episodes = 12,
+    }) {
+      return <String, dynamic>{
+        'id': id,
+        'idMal': null,
+        'title': <String, dynamic>{'romaji': english, 'english': english},
+        'coverImage': <String, dynamic>{
+          'large': 'https://cdn.example.com/large.jpg',
+        },
+        'format': format,
+        'episodes': episodes,
+        'seasonYear': 2023,
+        'averageScore': 80,
+        'genres': <String>['Action'],
+        'description': 'Test title.',
+      };
+    }
+
+    http.Response bytesJson(Object body, int status) =>
+        http.Response.bytes(utf8.encode(jsonEncode(body)), status);
+
+    test('null data is a lookup failure, not an empty success', () async {
+      // 0.2.12 phone symptom: "noblesse" = 0 results with NO
+      // "Couldn't reach AniList" banner — a 200 with no `data`
+      // fell through to media=[] and came back as an empty SUCCESS.
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          return bytesJson(<String, dynamic>{'data': null}, 200);
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('noblesse');
+      expect(r.results, isEmpty);
+      expect(r.lookupFailed, isTrue);
+      final SearchDiagnostic? d = svc.lastSearchDiagnostic;
+      expect(d, isNotNull);
+      expect(d!.ok, isFalse);
+      expect(d.error, 'no data');
+      expect(d.summary, contains('failed (no data)'));
+    });
+
+    test('missing Page is a lookup failure', () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          return bytesJson(<String, dynamic>{
+            'data': <String, dynamic>{},
+          }, 200);
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('noblesse');
+      expect(r.lookupFailed, isTrue);
+      expect(svc.lastSearchDiagnostic?.error, 'no data');
+    });
+
+    test('429 is a lookup failure with a rate-limited diagnostic', () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          return http.Response('rate limited', 429);
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('Frieren');
+      expect(r.lookupFailed, isTrue);
+      expect(svc.lastSearchDiagnostic?.ok, isFalse);
+      expect(svc.lastSearchDiagnostic?.error, 'rate limited');
+      expect(svc.lastSearchDiagnostic?.attempts, 2); // one retry happened
+    });
+
+    test('one retry rescues a transient 429', () async {
+      int calls = 0;
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          calls++;
+          if (calls == 1) return http.Response('rate limited', 429);
+          return bytesJson(
+            pageJson(<Map<String, dynamic>>[
+              media(id: 118586, english: 'Noblesse'),
+            ]),
+            200,
+          );
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('noblesse');
+      expect(calls, 2);
+      expect(r.lookupFailed, isFalse);
+      expect(r.results.map((a) => a.title), contains('Noblesse'));
+      expect(svc.lastSearchDiagnostic?.ok, isTrue);
+      expect(svc.lastSearchDiagnostic?.attempts, 2);
+    });
+
+    test('Black Clover search returns the TV series AND the movie', () async {
+      // 0.2.12 phone: "black clover" = 1 result (TV only, local) —
+      // the 2023 movie "Sword of the Wizard King" never appeared.
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          return bytesJson(
+            pageJson(<Map<String, dynamic>>[
+              media(id: 97940, english: 'Black Clover', episodes: 170),
+              media(
+                id: 142511,
+                english: 'Black Clover: Sword of the Wizard King',
+                format: 'MOVIE',
+                episodes: null,
+              ),
+            ]),
+            200,
+          );
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('black clover');
+      expect(r.lookupFailed, isFalse);
+      expect(r.results.length, 2);
+      expect(
+        r.results.map((a) => a.title),
+        contains('Black Clover: Sword of the Wizard King'),
+      );
+      final movie = r.results.firstWhere(
+        (a) => a.anilistId == 142511,
+      );
+      expect(movie.episodeCount, 1);
+      final SearchDiagnostic? d = svc.lastSearchDiagnostic;
+      expect(d!.ok, isTrue);
+      expect(d.rawMediaCount, 2);
+      expect(d.mappedCount, 2);
+      expect(d.summary, 'ok · 2 from AniList');
+    });
+
+    test('diagnostic counts dropped entries (raw vs mapped)', () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          return bytesJson(
+            pageJson(<Map<String, dynamic>>[
+              media(id: 1, english: 'Good Title'),
+              // No usable title — animeFromMedia drops it.
+              <String, dynamic>{
+                'id': 2,
+                'title': <String, dynamic>{},
+                'format': 'TV',
+                'episodes': 12,
+              },
+            ]),
+            200,
+          );
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('good');
+      expect(r.results.length, 1);
+      final SearchDiagnostic? d = svc.lastSearchDiagnostic;
+      expect(d!.rawMediaCount, 2);
+      expect(d.mappedCount, 1);
+      expect(d.summary, contains('1 shown (2 from AniList)'));
     });
   });
 }

@@ -1,5 +1,11 @@
 import 'anilist_service.dart';
 
+// 0.2.13: the countdown/date formatters live in airing_format.dart
+// (shared with the AniList mapper); re-exported here so existing
+// imports keep working.
+export 'airing_format.dart'
+    show formatAiringCountdown, formatAiringDate;
+
 /// One upcoming airing episode (0.2.10): which anime, which
 /// episode, and exactly when it airs (UTC).
 class AiringEntry {
@@ -46,21 +52,12 @@ class AiringEntry {
   final DateTime airingAt;
   final String? posterUrl;
   final int episodeCount;
-}
 
-/// Live countdown text for an airing episode (pure — unit-tested):
-/// "in 2d 4h", "in 3h 12m", "in 45m", "in 1m", "Airing now".
-String formatAiringCountdown(DateTime airingAt, {DateTime? now}) {
-  final Duration left = airingAt.difference(now ?? DateTime.now());
-  if (left <= Duration.zero) return 'Airing now';
-  if (left.inDays > 0) {
-    return 'in ${left.inDays}d ${left.inHours % 24}h';
-  }
-  if (left.inHours > 0) {
-    return 'in ${left.inHours}h ${left.inMinutes % 60}m';
-  }
-  if (left.inMinutes > 0) return 'in ${left.inMinutes}m';
-  return 'in ${left.inSeconds}s';
+  /// Episodes that HAVE aired (0.2.13): AniList `episodes` is null
+  /// while a series is still airing, so the aired count comes from
+  /// the next episode number — episode N airs next means N-1 have
+  /// aired. 0 for a not-yet-aired season (next episode is 1).
+  int get airedCount => episode > 1 ? episode - 1 : 0;
 }
 
 /// Keep only future airings, soonest first, capped (pure —

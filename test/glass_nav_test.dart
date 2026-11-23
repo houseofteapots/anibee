@@ -1,40 +1,17 @@
 import 'package:anibee/widgets/glass_nav.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_bottom_nav/liquid_glass_bottom_nav.dart';
 
-/// 0.2.12 Liquid Glass nav: the 0.2.9 "fix" (blur sigma 4, dark
-/// surface 0x0A181C20, border 0.28) STILL read as blurry on the
-/// phone, so the looks swapped — what 'glass' rendered in
-/// 0.2.9–0.2.11 became 'blurry', and 'glass' was rebuilt to
-/// crystal clear like Zeus's Frost nav, MEASURED from Zeus
-/// (`~/workspace/zeus-v101` + liquid_glass_bottom_nav 0.0.14):
-/// dark pill = white 0.04 fill, blur sigma 1, white 0.18 rim
-/// (the 0.2.9 comment claiming Zeus uses "blur 5" was wrong —
-/// the package uses blur 1). The numbers below are the proof.
+/// 0.2.13 Liquid Glass nav: 0.2.12 only copied the package's
+/// blur/surface VALUES into a hand-rolled pill, so the phone saw
+/// plain transparency ("transparent toh huwa lekin liquid glass
+/// type nahi huwa"). The look comes from the package's shader
+/// refraction, not values — so 'glass' now renders the REAL
+/// `LiquidGlassNavBar` (same forked 0.0.14 package Zeus uses,
+/// vendored at packages/liquid_glass_bottom_nav), and 'blurry'
+/// keeps the old frosted BackdropFilter pill.
 void main() {
-  Color pillColor(WidgetTester tester) {
-    final Container container = tester.widget<Container>(
-      find.descendant(
-        of: find.byType(BackdropFilter),
-        matching: find.byType(Container),
-      ),
-    );
-    final BoxDecoration decoration = container.decoration as BoxDecoration;
-    return decoration.color!;
-  }
-
-  double borderAlpha(WidgetTester tester) {
-    final Container container = tester.widget<Container>(
-      find.descendant(
-        of: find.byType(BackdropFilter),
-        matching: find.byType(Container),
-      ),
-    );
-    final BoxDecoration decoration = container.decoration as BoxDecoration;
-    final Border border = decoration.border as Border;
-    return border.top.color.a;
-  }
-
   Future<void> pumpNav(
     WidgetTester tester, {
     required String navStyle,
@@ -42,6 +19,9 @@ void main() {
   }) async {
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(
+          brightness: isDark ? Brightness.dark : Brightness.light,
+        ),
         home: Scaffold(
           body: GlassNavBar(
             currentIndex: 0,
@@ -56,62 +36,59 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('glass is crystal clear like Zeus Frost, blurry is frosted (dark)',
+  testWidgets('glass renders the real package bar, not a fake blur',
       (WidgetTester tester) async {
-    // Design values: glass blur 1 (Zeus Frost 1) vs blurry blur 4
-    // (the old glass blur).
-    expect(GlassNavBar.glassBlurSigma, 1.0);
-    expect(GlassNavBar.blurryBlurSigma, 4.0);
+    await pumpNav(tester, navStyle: 'glass', isDark: true);
+    // The package bar itself — shader refraction, not BackdropFilter.
+    expect(find.byType(LiquidGlassNavBar), findsOneWidget);
+    expect(find.byType(BackdropFilter), findsNothing);
+    final LiquidGlassNavBar bar =
+        tester.widget<LiquidGlassNavBar>(find.byType(LiquidGlassNavBar));
+    expect(bar.items.length, 5);
     expect(
-      GlassNavBar.glassBlurSigma,
-      lessThanOrEqualTo(1.0),
+      bar.items.map((LiquidGlassNavItem i) => i.label).toList(),
+      <String>['Home', 'Search', 'Collection', 'Downloads', 'Settings'],
     );
-    // Blurry is exactly the old Liquid Glass surface.
-    expect(GlassNavBar.blurrySurfaceDark, const Color(0x0A181C20));
-
-    await pumpNav(tester, navStyle: 'glass', isDark: true);
-    expect(find.byType(BackdropFilter), findsOneWidget);
-    // Glass surface: white 0x0A (~4%) — near-transparent, and
-    // WHITE, not the old near-black 0x0A181C20 (the "Glass lesson"
-    // failure mode: near-black high-alpha renders as a solid card).
-    expect(pillColor(tester), GlassNavBar.glassSurfaceDark);
-    expect(pillColor(tester).a, closeTo(0x0A / 0xFF, 0.01));
-    expect(pillColor(tester).r, greaterThan(0.9));
-    // Thin bright Zeus rim on the clear glass.
-    expect(borderAlpha(tester), closeTo(0.18, 0.01));
-
-    await pumpNav(tester, navStyle: 'blurry', isDark: true);
-    expect(find.byType(BackdropFilter), findsOneWidget);
-    // Blurry surface == the 0.2.9–0.2.11 glass surface.
-    expect(pillColor(tester), GlassNavBar.blurrySurfaceDark);
-    expect(borderAlpha(tester), closeTo(0.28, 0.01));
+    expect(bar.activeColor, const Color(0xFF34C759));
+    expect(bar.selectedIndex, 0);
+    expect(bar.insets, 0); // shell already insets 16 pt each side
+    expect(bar.borderRadius, GlassNavBar.pillRadius);
+    // The thin white rim sits above the glass.
+    expect(find.byType(IgnorePointer), findsWidgets);
   });
 
-  testWidgets('glass is dark glass in both themes, blurry frosted (light)',
+  testWidgets('glass on a light theme still uses the clear dark pill',
       (WidgetTester tester) async {
-    // The pill is dark glass in BOTH themes when glass is on
-    // (Zeus hands light themes a dark brightness too).
     await pumpNav(tester, navStyle: 'glass', isDark: false);
-    expect(pillColor(tester), GlassNavBar.glassSurfaceDark);
-    expect(pillColor(tester).a, closeTo(0x0A / 0xFF, 0.01));
-    expect(borderAlpha(tester), closeTo(0.18, 0.01));
-
-    await pumpNav(tester, navStyle: 'blurry', isDark: false);
-    expect(pillColor(tester).a, closeTo(0.30, 0.01));
-    expect(borderAlpha(tester), closeTo(0.45, 0.01));
+    expect(find.byType(LiquidGlassNavBar), findsOneWidget);
+    // The bar is wrapped in a dark-brightness Theme (Zeus's
+    // clearNavGlassFor) so the package paints its clear pill
+    // instead of the milky light-mode one.
+    final Iterable<Theme> themes = tester.widgetList<Theme>(
+      find.ancestor(
+        of: find.byType(LiquidGlassNavBar),
+        matching: find.byType(Theme),
+      ),
+    );
+    expect(
+      themes.any((Theme t) => t.data.brightness == Brightness.dark),
+      isTrue,
+    );
   });
 
-  testWidgets('both modes keep the same pill shape and icons',
+  testWidgets('blurry keeps the frosted BackdropFilter pill',
       (WidgetTester tester) async {
-    await pumpNav(tester, navStyle: 'glass', isDark: true);
-    final Size size = tester.getSize(
+    await pumpNav(tester, navStyle: 'blurry', isDark: true);
+    expect(find.byType(LiquidGlassNavBar), findsNothing);
+    expect(find.byType(BackdropFilter), findsOneWidget);
+    final Container container = tester.widget<Container>(
       find.descendant(
         of: find.byType(BackdropFilter),
         matching: find.byType(Container),
       ),
     );
-    expect(size.height, 64);
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Settings'), findsOneWidget);
+    final BoxDecoration decoration = container.decoration as BoxDecoration;
+    expect(decoration.color, GlassNavBar.blurrySurfaceDark);
+    expect(GlassNavBar.blurryBlurSigma, 4.0);
   });
 }

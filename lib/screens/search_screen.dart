@@ -370,6 +370,18 @@ class _SearchScreenState extends State<SearchScreen> {
               style: TextStyle(color: secondaryText, fontSize: 12),
             ),
           ),
+        // 0.2.13: phone-visible search diagnostic — what the last
+        // AniList lookup actually returned ("ok · 12 from AniList"
+        // / "failed (HTTP 403) · local only"). A dead lookup and a
+        // genuine no-match must never look the same again.
+        if (_query.trim().length >= 2 && !_searching)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text(
+              'AniList: ${widget.anilist.lastSearchDiagnostic?.summary ?? 'not searched yet'}',
+              style: TextStyle(color: secondaryText, fontSize: 12),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: GridView.builder(

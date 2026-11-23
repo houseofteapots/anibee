@@ -81,13 +81,56 @@ class _DetailScreenState extends State<DetailScreen> {
     _anime = widget.anime;
     _trailer = widget.player ?? TrailerPlayer();
     _episodes = mockEpisodes(_anime);
+    unawaited(_loadDetails());
     unawaited(_loadSeasons());
     unawaited(_loadEpisodeThumbnails());
     if (widget.autoPlay) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _openFullPlayer();
+        if (mounted && _episodes.isNotEmpty) _openFullPlayer();
       });
     }
+  }
+
+  /// Fill in what the opener didn't know (0.2.13): airing titles
+  /// opened from Home/Search often arrive with an empty synopsis
+  /// and episodeCount 0 (AniList `episodes` is null while a series
+  /// airs), so Detail showed a blank synopsis and the generic "No
+  /// episodes available yet". Fetch the full media entry and merge
+  /// the synopsis, the aired episode count (nextAiringEpisode.episode
+  /// - 1, via [animeFromMedia]) and the upcoming EP + air date.
+  /// Best-effort — failure leaves the opener's data as-is. Runs
+  /// before the thumbnails load so the merged anime is the one the
+  /// thumbnail identity guard sees.
+  Future<void> _loadDetails() async {
+    if (_anime.synopsis.isNotEmpty &&
+        _anime.episodeCount > 0 &&
+        _anime.nextEpisode != null) {
+      return;
+    }
+    final int? anilistId =
+        _anime.anilistId ??
+        await _services.anilist.resolveId(_anime.title);
+    if (anilistId == null) return;
+    final Anime? full = await _services.anilist.mediaById(anilistId);
+    if (!mounted || full == null) return;
+    final bool needsSynopsis =
+        _anime.synopsis.isEmpty && full.synopsis.isNotEmpty;
+    final bool needsEpisodes =
+        _anime.episodeCount == 0 && full.episodeCount > 0;
+    final bool needsAiring =
+        _anime.nextEpisode == null && full.nextEpisode != null;
+    if (!needsSynopsis && !needsEpisodes && !needsAiring) return;
+    setState(() {
+      _anime = _anime.copyWith(
+        synopsis: needsSynopsis ? full.synopsis : null,
+        episodeCount: needsEpisodes ? full.episodeCount : null,
+        nextEpisode: needsAiring ? full.nextEpisode : null,
+        nextEpisodeIn: needsAiring ? full.nextEpisodeIn : null,
+        nextEpisodeAt: needsAiring ? full.nextEpisodeAt : null,
+      );
+      if (needsEpisodes) _episodes = mockEpisodes(_anime);
+    });
+    if (needsEpisodes) unawaited(_loadEpisodeThumbnails());
   }
 
   /// Fetch the season chain for this anime (one GraphQL query when
@@ -306,6 +349,10 @@ class _DetailScreenState extends State<DetailScreen> {
     Episode? episode,
     bool markPlayed = true,
   }) async {
+    // 0.2.13: nothing to play yet (unreleased season) — PLAY is
+    // hidden in that state, but guard here too: `_episodes.first`
+    // would throw on an empty list.
+    if (_episodes.isEmpty) return;
     final Episode initial =
         episode ??
         _episodes.firstWhere(
@@ -542,41 +589,44 @@ class _DetailScreenState extends State<DetailScreen> {
                 child: Row(
                   children: <Widget>[
                     // PLAY first (leftmost), same height as the genre
-                    // pills — compact, fits the row.
-                    InkWell(
-                      onTap: () => _openFullPlayer(),
-                      borderRadius: BorderRadius.circular(10),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: accent,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Icon(
-                              Icons.play_arrow_rounded,
-                              size: 16,
-                              color: Colors.white,
-                            ),
-                            SizedBox(width: 4),
-                            Text(
-                              'PLAY',
-                              style: TextStyle(
+                    // pills — compact, fits the row. Hidden while no
+                    // episodes exist (0.2.13: an unreleased season
+                    // must not offer a PLAY that opens nothing).
+                    if (_episodes.isNotEmpty)
+                      InkWell(
+                        onTap: () => _openFullPlayer(),
+                        borderRadius: BorderRadius.circular(10),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: accent,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(
+                                Icons.play_arrow_rounded,
+                                size: 16,
                                 color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
                               ),
-                            ),
-                          ],
+                              SizedBox(width: 4),
+                              Text(
+                                'PLAY',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
+                    if (_episodes.isNotEmpty) const SizedBox(width: 8),
                     Expanded(
                       child: SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
