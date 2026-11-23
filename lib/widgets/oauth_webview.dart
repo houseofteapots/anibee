@@ -105,7 +105,7 @@ class _OAuthLoginSheetState extends State<_OAuthLoginSheet> {
             // page text and translate it before the raw JSON is shown.
             String? error;
             try {
-              final Object? result = await _controller
+              final Object result = await _controller
                   .runJavaScriptReturningResult('document.body.innerText');
               error = _errorFromPageText(result is String ? result : null);
             } catch (_) {

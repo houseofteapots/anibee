@@ -75,14 +75,17 @@ class HlsVariant {
 /// - Each segment is retried (3 attempts) before the download is
 ///   marked 'failed'; the record is kept so the user can retry.
 class DownloadService {
-  // ignore: prefer_initializing_formals — the parameter name
-  // (baseDirOverride) is public for tests; the field is private.
+  // The base-dir parameter keeps its public name (baseDirOverride)
+  // for tests; it is assigned in the body, not the initializer list,
+  // so prefer_initializing_formals does not apply (the ignore
+  // comment that was here did not cover the initializer line).
   DownloadService({http.Client? client, Directory? baseDirOverride})
-    : _client = client ?? http.Client(),
-      _baseDirOverride = baseDirOverride;
+    : _client = client ?? http.Client() {
+    _baseDirOverride = baseDirOverride;
+  }
 
   final http.Client _client;
-  final Directory? _baseDirOverride;
+  Directory? _baseDirOverride;
 
   static const int _maxSegmentAttempts = 3;
   static const Duration _retryDelay = Duration(seconds: 1);
@@ -96,8 +99,11 @@ class DownloadService {
   bool isActive(String key) => _active.contains(key);
 
   Future<Directory> _downloadsDir() async {
-    if (_baseDirOverride != null) {
-      final Directory dir = Directory('${_baseDirOverride.path}/downloads');
+    // Local copy: the field is mutable (set in the constructor body),
+    // so it does not promote after the null check.
+    final Directory? override = _baseDirOverride;
+    if (override != null) {
+      final Directory dir = Directory('${override.path}/downloads');
       if (!await dir.exists()) await dir.create(recursive: true);
       return dir;
     }
