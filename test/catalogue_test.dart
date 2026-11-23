@@ -79,4 +79,51 @@ void main() {
       expect(onePiece.episodeCount, greaterThanOrEqualTo(300));
     });
   });
+
+  group('anilistId backfill (0.2.12)', () {
+    final List<Anime> catalogue = mockCatalogue();
+
+    test('every catalogue entry carries an anilistId', () {
+      for (final Anime anime in catalogue) {
+        expect(
+          anime.anilistId,
+          isNotNull,
+          reason: '${anime.title} has no anilistId — resolveEpisode '
+              'would depend on the live title lookup',
+        );
+      }
+    });
+
+    test('spot-checks: the three screenshot titles + a sample', () {
+      // The 2026-11-23 screenshots: Vinland Saga, Naruto, Bleach
+      // all showed "Could not find X on AniList" because none of
+      // them carried an id. Every id below was verified against
+      // AniList (api.ani.zip + Kitsu cross-check), 2026-11-23 —
+      // 16498 is Attack on Titan, NOT Vinland Saga.
+      final Map<String, int> expected = <String, int>{
+        'Vinland Saga': 101348,
+        'Naruto': 20,
+        'Bleach': 269,
+        'Attack on Titan': 16498,
+        'Mob Psycho 100': 21507,
+        'Death Note': 1535,
+        'Cowboy Bebop': 1,
+        'Solo Leveling': 151807,
+        'Frieren: Beyond Journey\'s End': 154587,
+        'SPY x FAMILY': 140960,
+        'BLUE LOCK': 137822,
+        'Violet Evergarden': 21827,
+      };
+      for (final MapEntry<String, int> entry in expected.entries) {
+        final Anime anime = catalogue.firstWhere(
+          (Anime a) => a.title == entry.key,
+        );
+        expect(
+          anime.anilistId,
+          entry.value,
+          reason: '${entry.key} anilistId',
+        );
+      }
+    });
+  });
 }

@@ -10,9 +10,10 @@ import 'reicon_icon.dart';
 /// Positioned talks directly to the Stack (never wrap in Transform/Padding).
 ///
 /// [navStyle] (Settings → Appearance): 'glass' = Liquid Glass — crystal
-/// clear, Zeus-style; 'blurry' = the frosted look — heavy blur, milky
-/// surface. (0.2.9: the old 'glass' rendered frosted on the phone, so the
-/// frosted look moved here to 'blurry' and 'glass' became truly clear.)
+/// clear, Zeus-style; 'blurry' = the frosted look. (0.2.12: the old
+/// 'glass' — blur sigma 4 over the dark 0x0A181C20 surface — still
+/// rendered frosted on the phone, so it moved here to 'blurry' and
+/// 'glass' was rebuilt on Zeus's measured Frost values.)
 class GlassNavBar extends StatelessWidget {
   const GlassNavBar({
     super.key,
@@ -29,24 +30,30 @@ class GlassNavBar extends StatelessWidget {
   final bool isDark;
   final String navStyle;
 
-  /// Liquid Glass design values — Zeus's Frost nav
-  /// (packages/liquid_glass_bottom_nav, fork of 0.0.14): its glass
-  /// colour is `Color.fromARGB(0, 255, 255, 255)` — alpha ZERO — with
-  /// blur 5, thickness 20, refractive index 1.2. The glass look
-  /// comes from refraction, not from a milky surface or heavy blur;
-  /// Zeus's own Frost fix (b109, "nav blurry/milky on Frost — pure
-  /// liquid glass, clear not frosted") is the same complaint this
-  /// fixes here. AniBee has no refraction renderer, so the closest
-  /// faithful equivalent is a near-transparent surface + minimal
-  /// blur: the content behind stays SHARP and readable.
-  static const double glassBlurSigma = 4.0;
-  static const Color glassSurfaceDark = Color(0x0A181C20);
+  /// Liquid Glass design values — MEASURED from Zeus's Frost nav
+  /// (2026-11-23, 0.2.12), not guessed: the
+  /// `liquid_glass_bottom_nav` 0.0.14 package paints its dark-mode
+  /// pill with white at 0.04 alpha, blur 1, thickness 32, and a
+  /// white 0.08 border; Zeus overlays its own 1px rim in white at
+  /// 0.18 (`custom_bottom_nav.dart`, `_NavPillRim`) plus black
+  /// shadows (0.08 blur 0, 0.14 blur 20). The glass look comes from
+  /// refraction, not from a milky surface or heavy blur — AniBee
+  /// has no refraction renderer, so the faithful equivalent is a
+  /// near-transparent white surface + minimal blur: the content
+  /// behind stays SHARP and readable, with only the bright thin rim
+  /// marking the pill's edge. The 0.2.9 comment claiming Zeus uses
+  /// "blur 5" was WRONG — the package uses blur 1.
+  static const double glassBlurSigma = 1.0;
+  static const Color glassSurfaceDark = Color(0x0AFFFFFF);
+  static const double glassBorderAlpha = 0.18;
 
-  /// Frosted design values — exactly what the old 'glass' rendered
-  /// (Zeus MatteGlassPill's composed colour-matrix + blur-18 filter
-  /// over the 0x38 dark surface): heavy diffusion, milky surface.
-  static const double blurryBlurSigma = 18.0;
-  static const Color blurrySurfaceDark = Color(0x38181C20);
+  /// Frosted design values — exactly what 'glass' rendered in
+  /// 0.2.9–0.2.11 (blur sigma 4 over the dark 0x0A181C20 surface):
+  /// the frosted look the user sees today, kept as the 'blurry'
+  /// option (the default). The old blurry (colour-matrix + blur 18
+  /// over 0x38) is retired.
+  static const double blurryBlurSigma = 4.0;
+  static const Color blurrySurfaceDark = Color(0x0A181C20);
 
   // Navigation icons are Reicon Outline (reicon.dev, MIT) — no generic
   // Material icons on the nav pill.
@@ -61,50 +68,28 @@ class GlassNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool glass = navStyle != 'blurry';
-    // 'glass' — crystal clear: near-transparent surface + minimal
-    // blur (sigma 4, cf. Zeus's liquid-glass blur 5). The content
-    // behind stays sharp; only a thin bright border + a whisper of
-    // top sheen mark the pill's edge.
-    // 'blurry' — frosted: the composed colour-matrix + blur-18
-    // filter over the 0x38 dark surface (the old 'glass' look).
+    // 'glass' — crystal clear (Zeus Frost, measured): white 0.04
+    // surface + blur sigma 1 + white 0.18 rim. The pill is dark
+    // glass in BOTH themes (Zeus hands light themes a dark
+    // brightness for the same reason), so the icons use the dark
+    // set whenever glass is on. 'blurry' — frosted: plain blur
+    // sigma 4 over the old glass surface (0x0A181C20 dark /
+    // white 0.30 light), exactly the 0.2.9–0.2.11 'glass' look.
     final ImageFilter filter = glass
         ? ImageFilter.blur(sigmaX: glassBlurSigma, sigmaY: glassBlurSigma)
-        : ImageFilter.compose(
-            outer: const ColorFilter.matrix(<double>[
-              0.724,
-              0.250,
-              0.026,
-              0,
-              0,
-              0.074,
-              0.900,
-              0.026,
-              0,
-              0,
-              0.074,
-              0.250,
-              0.676,
-              0,
-              0,
-              0,
-              0,
-              0,
-              1,
-              0,
-            ]),
-            inner: ImageFilter.blur(
-              sigmaX: blurryBlurSigma,
-              sigmaY: blurryBlurSigma,
-            ),
-          );
-    final Color bgColor = isDark
-        ? (glass ? glassSurfaceDark : blurrySurfaceDark)
-        : (glass
-              ? Colors.white.withValues(alpha: 0.06)
+        : ImageFilter.blur(sigmaX: blurryBlurSigma, sigmaY: blurryBlurSigma);
+    final Color bgColor = glass
+        ? glassSurfaceDark
+        : (isDark
+              ? blurrySurfaceDark
               : Colors.white.withValues(alpha: 0.30));
     final Color borderColor = Colors.white.withValues(
-      alpha: isDark ? (glass ? 0.28 : 0.22) : (glass ? 0.50 : 0.45),
+      alpha: glass ? glassBorderAlpha : (isDark ? 0.28 : 0.45),
     );
+    final double sheenAlpha = glass ? 0.05 : (isDark ? 0.08 : 0.20);
+    // Dark-glass pill in both themes when glass is on — the light
+    // icon set would be unreadable on it otherwise.
+    final bool pillDark = isDark || glass;
     return ClipRRect(
       borderRadius: BorderRadius.circular(32),
       child: BackdropFilter(
@@ -119,9 +104,7 @@ class GlassNavBar extends StatelessWidget {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: <Color>[
-                Colors.white.withValues(
-                  alpha: isDark ? (glass ? 0.08 : 0.10) : (glass ? 0.12 : 0.20),
-                ),
+                Colors.white.withValues(alpha: sheenAlpha),
                 Colors.white.withValues(alpha: 0.0),
               ],
             ),
@@ -134,7 +117,7 @@ class GlassNavBar extends StatelessWidget {
                     item: _items[i],
                     selected: i == currentIndex,
                     accent: accent,
-                    isDark: isDark,
+                    isDark: pillDark,
                     onTap: () => onTap(i),
                   ),
                 ),

@@ -69,6 +69,42 @@ Episode? nextEpisodeAfter(List<Episode> episodes, int currentNumber) {
   return episodes[i + 1];
 }
 
+/// Wait until the player reports a real duration (HLS playlist
+/// loaded), polling [readDuration]. False on timeout — the caller
+/// seeks anyway (best-effort). Pure except for the injected reader,
+/// so tests can drive it with a fake.
+///
+/// 0.2.12 (PiP restart): `_enterPip` used to seek the PiP player
+/// immediately after `open`, before the HLS stream had loaded, so
+/// the seek didn't stick and playback started at 0. Now it waits
+/// for a real duration first, then seeks, then reads the position
+/// back and re-seeks once if [seekNeedsRetry] says it didn't stick.
+Future<bool> waitForDuration(
+  Future<Duration> Function() readDuration, {
+  Duration timeout = const Duration(seconds: 10),
+  Duration pollInterval = const Duration(milliseconds: 200),
+}) async {
+  final DateTime deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (await readDuration() > Duration.zero) return true;
+    await Future<void>.delayed(pollInterval);
+  }
+  return await readDuration() > Duration.zero;
+}
+
+/// Whether a seek to [target] needs a retry: after the seek the
+/// player still reports [position]. A seek only "stuck" if the
+/// player is near the target — when the target is well into the
+/// episode but the player sits near 0, the pre-load seek was
+/// dropped and must be issued again. Pure — unit-tested.
+bool seekNeedsRetry({
+  required Duration target,
+  required Duration position,
+}) {
+  return target > const Duration(seconds: 5) &&
+      position < const Duration(seconds: 2);
+}
+
 class FullPlayerScreen extends StatefulWidget {
   const FullPlayerScreen({
     super.key,
@@ -1217,6 +1253,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   @visibleForTesting
   String get pipFailedMessageForTest => _pipFailedMessage;
 
+  /// 0.2.12: PiP seek-after-ready helpers live at top level
+  /// ([waitForDuration], [seekNeedsRetry]) so tests can drive them
+  /// directly — the old `@visibleForTesting` statics sat on the
+  /// private state class and were unreachable from tests.
+
+
   Future<void> _enterPip() async {
     if (_pipBusy || _pipPlayer != null) return;
     final String? url = widget.trailer.url;
@@ -1254,7 +1296,21 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           httpHeaders: _currentStream?.headers ?? const <String, String>{},
         ),
       );
+      // 0.2.12: NEVER seek before the HLS has loaded. The old code
+      // sought immediately after open, while duration was still 0 —
+      // mpv drops that seek and playback starts at 0 (user report:
+      // "PiP on karne se episode start se chalu hota hai"). Wait for
+      // a real duration first, seek, then read the position back and
+      // re-seek once if it didn't stick.
+      await waitForDuration(() async => pipPlayer.state.duration);
       await pipPlayer.seek(pos);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (seekNeedsRetry(
+        target: pos,
+        position: pipPlayer.state.position,
+      )) {
+        await pipPlayer.seek(pos);
+      }
       await pipPlayer.setVolume(_player.state.volume);
       await pipPlayer.setRate(_rate);
       await pipPlayer.play();
@@ -1685,13 +1741,20 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         final String currentId = _player.state.track.subtitle.id;
         // mpv's own tracks (incl. HLS rendition subtitles) + the
         // tracks the resolver fetched for this episode (e.g. English
-        // when the stream only carried Arabic) — deduped by id.
-        final List<SubtitleTrack> list = tracks.subtitle
-            .where((SubtitleTrack t) => t.id != 'auto' && t.id != 'no')
-            .toList();
-        for (final SubtitleTrack t in widget.trailer.streamSubtitles) {
-          if (!list.any((SubtitleTrack m) => m.id == t.id)) list.add(t);
-        }
+        // when the stream only carried Arabic) — deduped by VISIBLE
+        // LABEL, not by id (0.2.12): the same language arrives under
+        // several ids — one per HLS rendition variant, plus the
+        // resolver-fetched copy — and the old id-only dedup listed
+        // "English" 3x / "Portuguese" 3x. Two rows showing the same
+        // label are the same track to the user (mpv reports ISO
+        // 639-2 codes like 'eng', resolver tracks carry no language
+        // at all, so the label is the only reliable key).
+        final List<SubtitleTrack> list = dedupSubtitleTracks(<SubtitleTrack>[
+          ...tracks.subtitle.where(
+            (SubtitleTrack t) => t.id != 'auto' && t.id != 'no',
+          ),
+          ...widget.trailer.streamSubtitles,
+        ]);
         return SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1708,6 +1771,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               ),
               for (final SubtitleTrack t in list)
                 _panelTrackRow(
+                  // Stable key per visible label (0.2.12): without
+                  // keys, Flutter reuses row elements by position
+                  // when the track list mutates mid-playback (HLS
+                  // variant switches), which mis-assigns labels and
+                  // renders rows on top of each other.
+                  key: ValueKey<String>(
+                    'subtitle-${subtitleDedupKey(t)}',
+                  ),
                   label: _trackLabel(t.title, t.language, 'Subtitle'),
                   selected: t.id == currentId,
                   accent: accent,
@@ -2186,12 +2257,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// One selectable row in a panel: label + an accent radio when
   /// selected (never a hardcoded gold).
   Widget _panelTrackRow({
+    Key? key,
     required String label,
     required bool selected,
     required Color accent,
     required VoidCallback onTap,
   }) {
     return ListTile(
+      key: key,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
       title: Text(
         label,

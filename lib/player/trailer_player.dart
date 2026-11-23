@@ -6,6 +6,33 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../services/miruro_resolver.dart';
 
+/// Dedup key for a subtitle track row (0.2.12): the normalized
+/// VISIBLE label — what the user reads. Two tracks with the same
+/// visible label are one row, whatever their ids or language codes:
+/// mpv reports HLS rendition tracks with ISO 639-2 codes ('eng')
+/// under fresh ids on every variant switch, and resolver-fetched
+/// tracks carry no language at all. Pure — unit-tested.
+String subtitleDedupKey(SubtitleTrack t) {
+  final String label = (t.title != null && t.title!.isNotEmpty)
+      ? t.title!
+      : (t.language != null && t.language!.isNotEmpty)
+      ? t.language!
+      : 'Subtitle';
+  return label.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+/// Dedup a subtitle track list by visible label, keeping the first
+/// track per label (mpv's own tracks come first — they are already
+/// loaded in the player). Pure — unit-tested.
+List<SubtitleTrack> dedupSubtitleTracks(Iterable<SubtitleTrack> tracks) {
+  final List<SubtitleTrack> out = <SubtitleTrack>[];
+  final Set<String> seen = <String>{};
+  for (final SubtitleTrack t in tracks) {
+    if (seen.add(subtitleDedupKey(t))) out.add(t);
+  }
+  return out;
+}
+
 /// Pick the subtitle track for the user's preferred language
 /// (Settings → Player → Subtitle language): 'auto' | 'en' | 'hi' |
 /// 'ar' | 'off'. 'auto' means English. A missing language falls back
@@ -153,9 +180,18 @@ class TrailerPlayer extends ChangeNotifier {
     _isStream = true;
     _streamHeaders = stream.headers;
     _subtitleLanguage = subtitleLanguage;
-    _streamSubtitles = stream.subtitles
-        .map((SubtitleInfo s) => SubtitleTrack.uri(s.url, title: s.label))
-        .toList();
+    // 0.2.12: the resolver can return the same label twice (e.g.
+    // English from two subtitle endpoints) — dedup by normalized
+    // label here, so the Subtitles panel never lists one language
+    // twice for the same stream.
+    final Map<String, SubtitleTrack> byLabel = <String, SubtitleTrack>{};
+    for (final SubtitleInfo s in stream.subtitles) {
+      byLabel.putIfAbsent(
+        s.label.toLowerCase().trim(),
+        () => SubtitleTrack.uri(s.url, title: s.label),
+      );
+    }
+    _streamSubtitles = byLabel.values.toList();
     _loadError = null;
     _loaded = false;
     notifyListeners();
@@ -191,7 +227,14 @@ class TrailerPlayer extends ChangeNotifier {
   /// so the sheet lists it and retry() keeps it.
   Future<void> addExternalSubtitle(SubtitleInfo info) async {
     final SubtitleTrack track = SubtitleTrack.uri(info.url, title: info.label);
-    if (_streamSubtitles.any((SubtitleTrack t) => t.id == track.id)) {
+    // 0.2.12: dedup by URL (the id for uri tracks) AND by label —
+    // a re-fetched English track can arrive under a new signed URL
+    // with the same visible label, and the panel must not grow a
+    // second "English" row for it.
+    if (_streamSubtitles.any(
+      (SubtitleTrack t) =>
+          t.id == track.id || subtitleDedupKey(t) == subtitleDedupKey(track),
+    )) {
       return;
     }
     _streamSubtitles = <SubtitleTrack>[..._streamSubtitles, track];

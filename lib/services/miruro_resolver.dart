@@ -195,8 +195,22 @@ class MiruroResolver {
       lastError ??= 'No sources found for episode $episodeNumber.';
       return null;
     }
-    final int? anilistId =
-        anime.anilistId ?? await _anilist.resolveId(anime.title);
+    final int? anilistId;
+    if (anime.anilistId != null) {
+      anilistId = anime.anilistId;
+    } else {
+      // 0.2.12: the lookup can fail two ways — AniList unreachable
+      // (network/rate limit) vs the title genuinely not on AniList —
+      // and the dialog must not blame the title for a dead network.
+      final ({int? id, bool lookupFailed}) detail =
+          await _anilist.resolveIdDetailed(anime.title);
+      if (detail.lookupFailed) {
+        lastError = 'AniList lookup failed — check your connection '
+            'and try again.';
+        return null;
+      }
+      anilistId = detail.id;
+    }
     if (anilistId == null) {
       lastError = 'Could not find "${anime.title}" on AniList.';
       return null;

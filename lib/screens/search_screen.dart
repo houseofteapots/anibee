@@ -107,11 +107,19 @@ class _SearchScreenState extends State<SearchScreen> {
 
   /// Live AniList search with the current filters. Re-runs when a
   /// filter changes while a query is active.
+  ///
+  /// 0.2.12: uses [searchAnimeDetailed] so a dead AniList (network
+  /// / rate limit) shows "Couldn't reach AniList" instead of a
+  /// bare "No anime found" — the old swallowing search made a
+  /// failed remote lookup indistinguishable from no results, which
+  /// is why movies (local-catalogue has almost none) seemed to
+  /// vanish from search whenever the remote call failed.
   Future<void> _runRemoteSearch() async {
     final String q = _controller.text.trim();
     if (q.length < 2) return;
     try {
-      final List<Anime> results = await widget.anilist.searchAnime(
+      final ({List<Anime> results, bool lookupFailed}) r =
+          await widget.anilist.searchAnimeDetailed(
         q,
         genre: _genre == 'All' ? null : _genre,
         year: _year,
@@ -120,9 +128,9 @@ class _SearchScreenState extends State<SearchScreen> {
       );
       if (!mounted || _controller.text.trim() != q) return;
       setState(() {
-        _remote = results;
+        _remote = r.results;
         _searching = false;
-        _remoteFailed = false;
+        _remoteFailed = r.lookupFailed;
       });
     } catch (_) {
       if (!mounted) return;
@@ -144,10 +152,17 @@ class _SearchScreenState extends State<SearchScreen> {
 
   List<Anime> _localResults() {
     final String q = _query.toLowerCase();
+    // 0.2.12: match the season-stripped query too — "Black Clover
+    // S2" must find the local "Black Clover" entry (the raw
+    // `contains` never matches a suffixed query).
+    final String stripped =
+        AniListService.stripSeasonSuffix(_query).toLowerCase();
     return mockCatalogue().where((Anime a) {
+      final String title = a.title.toLowerCase();
       final bool matchesQuery =
           _query.isEmpty ||
-          a.title.toLowerCase().contains(q) ||
+          title.contains(q) ||
+          (stripped != q && title.contains(stripped)) ||
           a.genres.any((String g) => g.toLowerCase().contains(q));
       final bool matchesGenre = _genre == 'All' || a.genres.contains(_genre);
       final bool matchesYear = _year == null || a.year == _year;

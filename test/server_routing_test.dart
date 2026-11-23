@@ -9,6 +9,7 @@ import 'package:anibee/services/miruro_resolver.dart';
 import 'package:anibee/services/oauth_service.dart';
 import 'package:anibee/services/reanime_resolver.dart';
 import 'package:anibee/settings_store.dart';
+import 'package:anibee/widgets/server_sheet.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -111,11 +112,39 @@ void main() {
     await store.setPreferredServer('Miruro');
   });
 
+  test('server=AniZone routes to AniZone (miruro/reanime untouched)',
+      () async {
+    final AppServices svc = await services();
+    final SettingsStore store = await SettingsStore.load();
+    final stream = await svc.resolveEpisode(
+      anime: jjk,
+      episode: 1,
+      subDub: 'Sub',
+      store: store,
+      server: 'AniZone',
+    );
+    expect(stream, isNull);
+    expect(svc.anizone.lastError, isNotNull);
+    expect(svc.miruro.lastError, isNull);
+    expect(svc.reanime.lastError, isNull);
+  });
+
   test('default sources have no AllAnime / AnimeKai', () {
     final List<String> names =
         defaultSources().map((ProviderSource s) => s.name).toList();
     expect(names, containsAll(<String>['Miruro', 'AniKoto', 'ReAnime']));
     expect(names, isNot(contains('AllAnime')));
     expect(names, isNot(contains('AnimeKai')));
+  });
+
+  test('default sources include AniZone, enabled (0.2.12)', () {
+    final List<ProviderSource> sources = defaultSources();
+    final ProviderSource anizone = sources.firstWhere(
+      (ProviderSource s) => s.name == 'AniZone',
+    );
+    expect(anizone.enabled, isTrue);
+    // The picker language map: AniZone is Sub-only English
+    // (the 0.2.11 Spanish entry was placeholder data).
+    expect(kServerLanguages['AniZone'], <String>['English']);
   });
 }

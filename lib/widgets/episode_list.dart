@@ -130,6 +130,12 @@ class _EpisodeSectionState extends State<EpisodeSection> {
   }
 
   String _rangeLabel(int start) {
+    // 0.2.12: with zero episodes `(start + 99).clamp(1, 0)` THROWS
+    // ArgumentError — that throw inside the grid controls is what
+    // blanked the whole section (release-mode grey area + endless
+    // scroll) when the user tapped the grid toggle on an unreleased
+    // season. Never throw here; the empty state handles 0.
+    if (_total == 0) return '000-000';
     final int end = (start + kRangeSize - 1).clamp(1, _total);
     return '${start.toString().padLeft(3, '0')}'
         '-${end.toString().padLeft(3, '0')}';
@@ -172,6 +178,46 @@ class _EpisodeSectionState extends State<EpisodeSection> {
         ? AppTheme.textSecondaryDark
         : AppTheme.textSecondaryLight;
     final Color card = isDark ? AppTheme.cardDark : AppTheme.cardLight;
+
+    // 0.2.12: zero episodes (AniList `episodes` is null for
+    // unreleased seasons — e.g. Black Clover Season 2 from AIRING
+    // SOON) — no grid, no cards, no grid toggle: the toggle used to
+    // build the grid controls with 0 episodes and crash the section.
+    // Show the airing empty state instead: the upcoming episode
+    // number + air date when known, never a dead "0 Episodes".
+    if (_total == 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: <Widget>[
+                Text(
+                  'EPISODES',
+                  style: TextStyle(
+                    color: secondaryText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Text(
+                  'No episodes yet',
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _buildEmptyState(isDark, card, primaryText, secondaryText),
+        ],
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -272,6 +318,80 @@ class _EpisodeSectionState extends State<EpisodeSection> {
             ),
           ),
       ],
+    );
+  }
+
+  /// Empty state for unreleased seasons (0.2.12): the upcoming
+  /// episode number + air date from the airing info when known,
+  /// otherwise a neutral "not out yet" — never a dead "0 Episodes"
+  /// section and never the grid toggle.
+  Widget _buildEmptyState(
+    bool isDark,
+    Color card,
+    Color primaryText,
+    Color secondaryText,
+  ) {
+    final int? next = widget.anime.nextEpisode;
+    final String title = next != null
+        ? 'Episode $next hasn\'t aired yet'
+        : 'No episodes available yet';
+    final List<String> parts = <String>[];
+    if (widget.anime.nextEpisodeAt != null &&
+        widget.anime.nextEpisodeAt!.isNotEmpty) {
+      parts.add('Airs ${widget.anime.nextEpisodeAt}');
+    }
+    if (widget.anime.nextEpisodeIn != null &&
+        widget.anime.nextEpisodeIn!.isNotEmpty) {
+      parts.add('in ${widget.anime.nextEpisodeIn}');
+    }
+    final String detail = next != null
+        ? (parts.isEmpty
+              ? 'Check back after it airs.'
+              : parts.join(' · '))
+        : 'This title hasn\'t released any episodes.';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        decoration: BoxDecoration(
+          color: card,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(
+                  Icons.schedule_rounded,
+                  size: 18,
+                  color: secondaryText,
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      color: primaryText,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(left: 26),
+              child: Text(
+                detail,
+                style: TextStyle(color: secondaryText, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

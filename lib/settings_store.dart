@@ -550,6 +550,28 @@ class SettingsStore extends ChangeNotifier {
             ),
           );
         }
+        // 0.2.12 migration: AniZone has a real resolver now — add it
+        // when missing, and re-enable it when a persisted list still
+        // carries the 0.2.11 disabled flag (no resolver then). The
+        // picker only lists enabled sources, so a stale disabled
+        // flag would hide a working source forever.
+        if (!sources.any((ProviderSource s) => s.name == 'AniZone')) {
+          sources.add(
+            const ProviderSource(
+              name: 'AniZone',
+              tagline: '1080p • Sub',
+              enabled: true,
+            ),
+          );
+        } else {
+          sources = sources
+              .map(
+                (ProviderSource s) => s.name == 'AniZone' && !s.enabled
+                    ? s.copyWith(enabled: true)
+                    : s,
+              )
+              .toList();
+        }
         if (preferredServer == 'AllAnime' ||
             preferredServer == 'AnimeKai') {
           preferredServer = 'Miruro';

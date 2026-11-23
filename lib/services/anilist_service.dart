@@ -12,6 +12,25 @@ import '../models.dart';
 /// One entry of the user's AniList list (0.2.11 two-way sync).
 typedef AnilistListEntry = ({Anime anime, String status, int progress});
 
+/// Title variants + year + format for one AniList id (0.2.12) —
+/// what the AniZone matcher needs (see [AniListService.mediaIdentity]).
+class AnilistIdentity {
+  const AnilistIdentity({
+    required this.titles,
+    this.year,
+    this.format,
+    this.episodes,
+    this.status,
+  });
+
+  /// romaji / english / native, in that order, non-empty only.
+  final List<String> titles;
+  final int? year;
+  final String? format;
+  final int? episodes;
+  final String? status;
+}
+
 class AniListService {
   AniListService({http.Client? client}) : _client = client ?? http.Client();
 
@@ -28,6 +47,14 @@ class AniListService {
   /// Null = no filter. Returns Anime objects with anilistId,
   /// poster, rating, year, episode count, genres, synopsis (HTML
   /// stripped) and MAL id when present.
+  ///
+  /// 0.2.12: a season suffix in the query ("Black Clover S2",
+  /// "Jujutsu Kaisen Season 2") matches poorly on AniList AND in
+  /// the local catalogue — so when the first search finds no
+  /// result for the base title, the stripped query is searched too
+  /// and the results merged (dedup by anilistId). Never throws:
+  /// on any failure it returns an empty list (see
+  /// [searchAnimeDetailed] for the honest variant).
   Future<List<Anime>> searchAnime(
     String query, {
     int page = 1,
@@ -36,24 +63,147 @@ class AniListService {
     String? status,
     String? format,
   }) async {
-    final Map<String, dynamic>? data = await _postSafe(
-      _searchQuery,
-      searchVariables(
-        query,
-        page: page,
-        genre: genre,
-        year: year,
-        status: status,
-        format: format,
-      ),
+    final ({List<Anime> results, bool lookupFailed}) r =
+        await searchAnimeDetailed(
+      query,
+      page: page,
+      genre: genre,
+      year: year,
+      status: status,
+      format: format,
     );
+    return r.results;
+  }
+
+  /// Like [searchAnime] but honest about WHY it failed (0.2.12):
+  /// [lookupFailed] is true when the AniList call itself could not
+  /// be reached (network / rate limit / Cloudflare), so the search
+  /// screen can say so instead of showing a bare "No anime found".
+  /// A genuine no-match returns `lookupFailed: false` with empty
+  /// results. The season-suffix fallback (see [searchAnime]) runs
+  /// inside here too — it only fires when the primary search
+  /// succeeded but found nothing for the base title.
+  Future<({List<Anime> results, bool lookupFailed})> searchAnimeDetailed(
+    String query, {
+    int page = 1,
+    String? genre,
+    int? year,
+    String? status,
+    String? format,
+  }) async {
+    final ({List<Anime> results, bool failed}) primary =
+        await _searchOnce(
+      query,
+      page: page,
+      genre: genre,
+      year: year,
+      status: status,
+      format: format,
+    );
+    if (primary.failed) {
+      return (results: <Anime>[], lookupFailed: true);
+    }
+    final List<Anime> results = primary.results;
+    final String stripped = stripSeasonSuffix(query);
+    if (stripped != query.trim()) {
+      final String base = normalizeTitle(stripped);
+      final bool hasBase = results.any((Anime a) {
+        final String n = normalizeTitle(a.title);
+        return n.contains(base) || base.contains(n);
+      });
+      if (!hasBase) {
+        final ({List<Anime> results, bool failed}) extra =
+            await _searchOnce(
+          stripped,
+          page: page,
+          genre: genre,
+          year: year,
+          status: status,
+          format: format,
+        );
+        if (!extra.failed) {
+          final Set<int?> seen =
+              results.map((Anime a) => a.anilistId).toSet();
+          for (final Anime a in extra.results) {
+            if (seen.add(a.anilistId)) results.add(a);
+          }
+        }
+      }
+    }
+    return (results: results, lookupFailed: false);
+  }
+
+  /// One AniList search page. Returns `failed: true` (empty
+  /// results) when the GraphQL call throws — the caller decides
+  /// what the failure means.
+  Future<({List<Anime> results, bool failed})> _searchOnce(
+    String query, {
+    int page = 1,
+    String? genre,
+    int? year,
+    String? status,
+    String? format,
+  }) async {
+    late final Map<String, dynamic>? data;
+    try {
+      data = await _post(
+        _searchQuery,
+        searchVariables(
+          query,
+          page: page,
+          genre: genre,
+          year: year,
+          status: status,
+          format: format,
+        ),
+      );
+    } catch (_) {
+      return (results: <Anime>[], failed: true);
+    }
     final List<dynamic> media =
         (data?['Page'] as Map<String, dynamic>?)?['media'] as List<dynamic>? ??
         <dynamic>[];
-    return media
-        .map((dynamic e) => animeFromMedia(e as Map<String, dynamic>))
-        .whereType<Anime>()
-        .toList();
+    return (
+      results: media
+          .map((dynamic e) => animeFromMedia(e as Map<String, dynamic>))
+          .whereType<Anime>()
+          .toList(),
+      failed: false,
+    );
+  }
+
+  /// Strip a trailing season marker from a search query (0.2.12):
+  /// "Black Clover S2" / "S02" / "Season 2" / "2nd Season" /
+  /// "Part 2" → "Black Clover". AniList's fuzzy `search:` and the
+  /// local `contains` match both miss on the suffix, and "Black
+  /// Clover S2" has no separate AniList entry (one 170-episode
+  /// series + an upcoming season entry under the base name). Pure —
+  /// unit-tested. Only a TRAILING marker is stripped; a bare
+  /// trailing number ("Black Clover 2") is left alone — it can be
+  /// a different title.
+  static String stripSeasonSuffix(String query) {
+    String q = query.trim();
+    // "2nd Season" / "3rd Season" (also without the space: "2ndSeason").
+    q = q.replaceAll(
+      RegExp(r'\s*\d+(?:st|nd|rd|th)\s*Season$', caseSensitive: false),
+      '',
+    );
+    // "Season 2" / "Season2".
+    q = q.replaceAll(
+      RegExp(r'\s*Season\s*\d{1,2}$', caseSensitive: false),
+      '',
+    );
+    // "S2" / "S02" (word-boundary so "Class S2" keeps its meaning…
+    // it doesn't: "S2" alone at the end is always a season marker
+    // in a search box; "Naruto S2" means season 2 of Naruto).
+    q = q.replaceAll(RegExp(r'\s+S\d{1,2}$', caseSensitive: false), '');
+    // "Part 2" / "Part2" — e.g. "Attack on Titan Final Season Part 2"
+    // is filed under the base title + part, not under "Part 2".
+    q = q.replaceAll(
+      RegExp(r'\s*Part\s*\d{1,2}$', caseSensitive: false),
+      '',
+    );
+    return q.trim();
   }
 
   static const String _searchQuery =
@@ -201,6 +351,37 @@ class AniListService {
     final Map<String, dynamic>? media = data?['Media'] as Map<String, dynamic>?;
     if (media == null) return null;
     return animeFromMedia(media);
+  }
+
+  /// Title variants + year + format for one AniList id (0.2.12):
+  /// the AniZone matcher needs romaji/english/native together
+  /// (animeFromMedia keeps only the preferred title) plus the year
+  /// and format to tell Naruto (2002) from Shippuuden (2007) and
+  /// Boruto (2017). Null on any failure — the caller treats it as
+  /// "match on the catalogue title alone".
+  Future<AnilistIdentity?> mediaIdentity(int anilistId) async {
+    const String q =
+        r'query($id:Int){Media(id:$id,type:ANIME){title{romaji english native}'
+        r' seasonYear format episodes status}}';
+    final Map<String, dynamic>? data = await _postSafe(q, <String, Object?>{
+      'id': anilistId,
+    });
+    final Map<String, dynamic>? media = data?['Media'] as Map<String, dynamic>?;
+    if (media == null) return null;
+    final Map<String, dynamic>? t = media['title'] as Map<String, dynamic>?;
+    final List<String> titles = <String?>[
+      t?['romaji'] as String?,
+      t?['english'] as String?,
+      t?['native'] as String?,
+    ].whereType<String>().where((String s) => s.isNotEmpty).toList();
+    if (titles.isEmpty) return null;
+    return AnilistIdentity(
+      titles: titles,
+      year: (media['seasonYear'] as num?)?.toInt(),
+      format: media['format'] as String?,
+      episodes: (media['episodes'] as num?)?.toInt(),
+      status: media['status'] as String?,
+    );
   }
 
   /// Season chain for an anime (0.2.8): seasons are separate AniList
@@ -351,6 +532,45 @@ class AniListService {
       }
     }
     return results.first.anilistId;
+  }
+
+  /// Like [resolveId] but honest about WHY it failed (0.2.12): the
+  /// resolvers show a different message when AniList itself could
+  /// not be reached (network / rate limit) than when the title
+  /// genuinely has no AniList entry. [lookupFailed] is true only
+  /// when the GraphQL call threw; `id` is null in both failure
+  /// cases. Uses [_post] (throwing) instead of [searchAnime]'s
+  /// swallowing [_postSafe], so a dead network is visible.
+  Future<({int? id, bool lookupFailed})> resolveIdDetailed(
+    String title,
+  ) async {
+    late final Map<String, dynamic>? data;
+    try {
+      data = await _post(_searchQuery, searchVariables(title));
+    } catch (_) {
+      return (id: null, lookupFailed: true);
+    }
+    final List<dynamic> media =
+        (data?['Page'] as Map<String, dynamic>?)?['media'] as List<dynamic>? ??
+        <dynamic>[];
+    final List<Anime> results = media
+        .map((dynamic e) => animeFromMedia(e as Map<String, dynamic>))
+        .whereType<Anime>()
+        .toList();
+    if (results.isEmpty) return (id: null, lookupFailed: false);
+    final String norm = normalizeTitle(title);
+    for (final Anime a in results) {
+      if (normalizeTitle(a.title) == norm && a.anilistId != null) {
+        return (id: a.anilistId, lookupFailed: false);
+      }
+    }
+    for (final Anime a in results) {
+      final String n = normalizeTitle(a.title);
+      if ((n.contains(norm) || norm.contains(n)) && a.anilistId != null) {
+        return (id: a.anilistId, lookupFailed: false);
+      }
+    }
+    return (id: results.first.anilistId, lookupFailed: false);
   }
 
   /// Logged-in viewer (name + id). Throws on 401 / network failure.
@@ -539,7 +759,15 @@ class AniListService {
     final String? poster =
         cover?['extraLarge'] as String? ?? cover?['large'] as String?;
     final int? score = (m['averageScore'] as num?)?.toInt();
-    final int episodes = (m['episodes'] as num?)?.toInt() ?? 0;
+    final String format = (m['format'] as String?) ?? '';
+    int episodes = (m['episodes'] as num?)?.toInt() ?? 0;
+    // 0.2.12: a movie is one "episode" — AniList reports episodes
+    // null/0 for some movies (The Garden of Words), and episodeCount
+    // 0 made Detail show the dead "No episodes yet" state with no
+    // way to play. Same force-to-1 `fetchMovies` already did; now
+    // every search path gets it. TV keeps its real count (0 = the
+    // airing empty state from item 1).
+    if (format == 'MOVIE' && episodes <= 0) episodes = 1;
     final int year = (m['seasonYear'] as num?)?.toInt() ?? 0;
     final List<String> genres =
         (m['genres'] as List<dynamic>?)

@@ -1,7 +1,7 @@
 name: anibee
 description: "aniBee — personal iOS anime app. Miruro-linked, AniList-powered."
 publish_to: 'none'
-version: 0.2.11+15
+version: 0.2.12+16
 
 environment:
   sdk: ^3.13.5
@@ -53,6 +53,8 @@ dependencies:
   # share sheet (share_plus).
   connectivity_plus: ^6.1.4
   share_plus: ^13.3.1
+  package_info_plus: ^10.2.2
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:

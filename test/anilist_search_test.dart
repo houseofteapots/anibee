@@ -183,4 +183,215 @@ void main() {
     const gradient = <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)];
     expect(gradient.length, 2);
   });
+
+  group('search misses (0.2.12, item 9)', () {
+    Map<String, dynamic> media({
+      required int id,
+      required String english,
+      String format = 'TV',
+      int? episodes = 12,
+      int year = 2020,
+    }) {
+      return <String, dynamic>{
+        'id': id,
+        'idMal': null,
+        'title': <String, dynamic>{'romaji': english, 'english': english},
+        'coverImage': <String, dynamic>{
+          'large': 'https://cdn.example.com/large.jpg',
+        },
+        'format': format,
+        'episodes': episodes,
+        'seasonYear': year,
+        'averageScore': 80,
+        'genres': <String>['Drama'],
+        'description': 'Test title.',
+      };
+    }
+
+    Map<String, dynamic> pageJson(List<Map<String, dynamic>> m) {
+      return <String, dynamic>{
+        'data': <String, dynamic>{
+          'Page': <String, dynamic>{'media': m},
+        },
+      };
+    }
+
+    test('stripSeasonSuffix drops trailing season markers only', () {
+      expect(
+        AniListService.stripSeasonSuffix('Black Clover S2'),
+        'Black Clover',
+      );
+      expect(
+        AniListService.stripSeasonSuffix('One Piece S02'),
+        'One Piece',
+      );
+      expect(
+        AniListService.stripSeasonSuffix('Jujutsu Kaisen Season 2'),
+        'Jujutsu Kaisen',
+      );
+      expect(
+        AniListService.stripSeasonSuffix('Jujutsu Kaisen Season2'),
+        'Jujutsu Kaisen',
+      );
+      expect(
+        AniListService.stripSeasonSuffix('Attack on Titan 2nd Season'),
+        'Attack on Titan',
+      );
+      expect(
+        AniListService.stripSeasonSuffix('Sword Art Online Part 2'),
+        'Sword Art Online',
+      );
+      expect(AniListService.stripSeasonSuffix('Frieren'), 'Frieren');
+      expect(AniListService.stripSeasonSuffix('Naruto'), 'Naruto');
+      expect(
+        AniListService.stripSeasonSuffix('Black Clover 2'),
+        'Black Clover 2',
+      );
+    });
+
+    test('The Garden of Words (MOVIE, episodes null) returns as 1 EP',
+        () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          return http.Response(
+            jsonEncode(
+              pageJson(<Map<String, dynamic>>[
+                media(
+                  id: 10408,
+                  english: 'The Garden of Words',
+                  format: 'MOVIE',
+                  episodes: null,
+                  year: 2013,
+                ),
+              ]),
+            ),
+            200,
+          );
+        }),
+      );
+      final List<dynamic> results =
+          await svc.searchAnime('The Garden of Words');
+      expect(results.length, 1);
+      expect(results[0].title, 'The Garden of Words');
+      expect(results[0].anilistId, 10408);
+      // A movie is one episode — Detail must open it as a playable
+      // single-episode title, not the "No episodes yet" dead end.
+      expect(results[0].episodeCount, 1);
+    });
+
+    test('MOVIE with episodes 0 forces 1; TV with 0 stays 0', () {
+      final movie = AniListService.animeFromMedia(
+        media(
+          id: 10408,
+          english: 'The Garden of Words',
+          format: 'MOVIE',
+          episodes: 0,
+        ),
+      );
+      expect(movie!.episodeCount, 1);
+      final tv = AniListService.animeFromMedia(
+        media(id: 1, english: 'Airing Show', format: 'TV', episodes: 0),
+      );
+      expect(tv!.episodeCount, 0);
+    });
+
+    test('Noblesse (TV) returns', () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          return http.Response(
+            jsonEncode(
+              pageJson(<Map<String, dynamic>>[
+                media(id: 118586, english: 'Noblesse'),
+              ]),
+            ),
+            200,
+          );
+        }),
+      );
+      final results = await svc.searchAnime('Noblesse');
+      expect(results.map((a) => a.title), contains('Noblesse'));
+      expect(results.first.anilistId, 118586);
+    });
+
+    test('"Black Clover S2" falls back to the stripped base title',
+        () async {
+      int calls = 0;
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          calls++;
+          final Map<String, dynamic> body =
+              jsonDecode(req.body) as Map<String, dynamic>;
+          final String q =
+              (body['variables'] as Map<String, dynamic>)['q'] as String;
+          if (q == 'Black Clover S2') {
+            // AniList's fuzzy search finds nothing for the suffix.
+            return http.Response(jsonEncode(pageJson(<Map<String, dynamic>>[])), 200);
+          }
+          expect(q, 'Black Clover');
+          return http.Response(
+            jsonEncode(
+              pageJson(<Map<String, dynamic>>[
+                media(id: 97940, english: 'Black Clover', episodes: 170),
+              ]),
+            ),
+            200,
+          );
+        }),
+      );
+      final results = await svc.searchAnime('Black Clover S2');
+      expect(calls, 2);
+      expect(results.map((a) => a.title), contains('Black Clover'));
+      expect(results.first.anilistId, 97940);
+    });
+
+    test('no fallback call when the first page already has the base',
+        () async {
+      int calls = 0;
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          calls++;
+          return http.Response(
+            jsonEncode(
+              pageJson(<Map<String, dynamic>>[
+                media(id: 97940, english: 'Black Clover', episodes: 170),
+              ]),
+            ),
+            200,
+          );
+        }),
+      );
+      final results = await svc.searchAnime('Black Clover S2');
+      expect(calls, 1);
+      expect(results.length, 1);
+    });
+
+    test('searchAnimeDetailed reports a dead AniList honestly',
+        () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          return http.Response('rate limited', 429);
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('Frieren');
+      expect(r.results, isEmpty);
+      expect(r.lookupFailed, isTrue);
+      // The swallowing variant keeps its contract for resolveId.
+      expect(await svc.searchAnime('Frieren'), isEmpty);
+    });
+
+    test('searchAnimeDetailed: genuine no-match is not a lookup failure',
+        () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          return http.Response(
+            jsonEncode(pageJson(<Map<String, dynamic>>[])),
+            200,
+          );
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('zzz-no-such-anime');
+      expect(r.results, isEmpty);
+      expect(r.lookupFailed, isFalse);
+    });
+  });
 }

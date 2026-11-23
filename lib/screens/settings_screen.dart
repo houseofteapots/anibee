@@ -2,8 +2,10 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:reicon_flutter/reicon_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_services.dart';
 import '../services/backup_service.dart';
@@ -455,33 +457,11 @@ class SettingsScreen extends StatelessWidget {
                     ],
                   ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 32, 16, 0),
-                  child: Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        ReiconIcon(
-                          Reicon.outline.infoCircle,
-                          size: 14,
-                          color: isDark
-                              ? AppTheme.textSecondaryDark
-                              : AppTheme.textSecondaryLight,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'AniBee 0.2.11 • Personal build',
-                          style: TextStyle(
-                            color: isDark
-                                ? AppTheme.textSecondaryDark
-                                : AppTheme.textSecondaryLight,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                // 0.2.12 footer: Developer Toji + tappable GitHub
+                // link + the REAL build version (package_info_plus
+                // reads it from the bundle — never a hardcoded
+                // string that drifts between releases).
+                const SettingsFooter(),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
                   child: Center(
@@ -1182,6 +1162,116 @@ class _DebridTile extends StatelessWidget {
         ),
       ),
       onTap: onTap,
+    );
+  }
+}
+
+/// Settings footer (0.2.12): Developer Toji, a tappable GitHub link,
+/// and the real build version. The version comes from the bundle
+/// via package_info_plus — `version` is the pubspec version
+/// (0.2.12) and `buildNumber` the build (16) — never a hardcoded
+/// string. [versionLabel] is a test seam: when given, it is shown
+/// as-is instead of loading PackageInfo (no platform channel in
+/// widget tests).
+class SettingsFooter extends StatefulWidget {
+  const SettingsFooter({super.key, this.versionLabel});
+
+  final String? versionLabel;
+
+  @override
+  State<SettingsFooter> createState() => _SettingsFooterState();
+}
+
+class _SettingsFooterState extends State<SettingsFooter> {
+  String _versionLabel = '';
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.versionLabel != null) {
+      _versionLabel = widget.versionLabel!;
+      return;
+    }
+    PackageInfo.fromPlatform().then((PackageInfo info) {
+      if (mounted) {
+        setState(() {
+          _versionLabel = '${info.version}+${info.buildNumber}';
+        });
+      }
+    }).catchError((Object _) {
+      // No version available (e.g. platform channel missing) —
+      // the footer still shows developer + GitHub without it.
+    });
+  }
+
+  Future<void> _openGitHub() async {
+    try {
+      await launchUrl(
+        Uri.parse('https://github.com/sezkc16'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      // Best-effort: a failed launch must never crash Settings.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color secondary = isDark
+        ? AppTheme.textSecondaryDark
+        : AppTheme.textSecondaryLight;
+    final Color accent = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 32, 16, 0),
+      child: Column(
+        children: <Widget>[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              ReiconIcon(
+                Reicon.outline.infoCircle,
+                size: 14,
+                color: secondary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _versionLabel.isEmpty
+                    ? 'AniBee • Personal build'
+                    : 'AniBee $_versionLabel • Personal build',
+                style: TextStyle(color: secondary, fontSize: 11),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Developer Toji',
+            style: TextStyle(
+              color: secondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          InkWell(
+            onTap: _openGitHub,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              child: Text(
+                'github.com/sezkc16',
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
