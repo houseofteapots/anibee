@@ -48,6 +48,11 @@ class GlassNavBar extends StatelessWidget {
   /// app shell's Positioned.
   static const double pillRadius = 32.0;
 
+  /// Height of the Liquid Glass pill — the package bar's fixed
+  /// 63 pt. The glass branch is built on a SizedBox of exactly this
+  /// height (0.2.14) so the nav can NEVER collapse to zero height.
+  static const double glassPillHeight = 63.0;
+
   // Navigation icons are Reicon Outline (reicon.dev, MIT) — no generic
   // Material icons on the nav pill.
   static final List<_NavItem> _items = <_NavItem>[
@@ -64,8 +69,8 @@ class GlassNavBar extends StatelessWidget {
     return _buildBlurry();
   }
 
-  /// Liquid Glass (0.2.13): the real package bar — the same
-  /// `LiquidGlassNavBar` Zeus renders. Its dark-mode pill is the
+  /// Liquid Glass (0.2.13, fixed 0.2.14): the real package bar — the
+  /// same `LiquidGlassNavBar` Zeus renders. Its dark-mode pill is the
   /// clear one (4% fill); its light-mode pill is milky (76% white
   /// fill), so on light themes the bar is handed a dark brightness
   /// (Zeus's `clearNavGlassFor`) to get the same clear glass, and
@@ -73,6 +78,29 @@ class GlassNavBar extends StatelessWidget {
   /// on the pill's exact outline (Zeus's `_NavPillRim`). The shell
   /// already insets the pill 16 pt on each side, so the package's
   /// own `insets` is 0.
+  ///
+  /// 0.2.14 REGRESSION FIX (user 2026-11-24 01:00: "navigation hi
+  /// gayeb?"): the package bar's build returns a `Positioned`
+  /// (left/right/bottom, no top/height) — it is designed as a DIRECT
+  /// child of the screen Stack, as in Zeus. 0.2.13 wrapped it in an
+  /// intermediate `Stack` whose children were BOTH positioned (the
+  /// bar + the rim's `Positioned.fill`), so that Stack sized to 0x0
+  /// and its default `Clip.hardEdge` clipped the whole nav away on
+  /// the phone. Fixed three ways, all in this method:
+  /// (1) the branch is a `SizedBox` of exactly `glassPillHeight` and
+  /// its first child is the frosted pill as a NON-positioned base
+  /// layer, so the Stack takes its height from it — the nav can never
+  /// collapse to zero height again;
+  /// (2) the package bar is handed a MediaQuery with bottom padding
+  /// zeroed, so its internal `Positioned(bottom: padding.bottom)` is
+  /// bottom: 0 and the pill fills this box exactly, bottom-aligned
+  /// with the blurry pill (the shell's bottom: 20 already handles
+  /// the home indicator);
+  /// (3) the base layer has no BackdropFilter — the glass shader does
+  /// the refraction over it, and if the shader ever paints nothing on
+  /// a device the plain pill + border + icons still show and its
+  /// buttons stay tappable. `clipBehavior: Clip.none` is belt and
+  /// braces so the nav can never be clipped away again.
   Widget _buildLiquidGlass(BuildContext context) {
     final LiquidGlassNavBar bar = LiquidGlassNavBar(
       items: <LiquidGlassNavItem>[
@@ -111,26 +139,43 @@ class GlassNavBar extends StatelessWidget {
             data: Theme.of(context).copyWith(brightness: Brightness.dark),
             child: bar,
           );
-    return Stack(
-      children: <Widget>[
-        glass,
-        // Thin neutral rim on the pill's exact outline, above the
-        // glass so it reads on every theme. IgnorePointer so taps
-        // still land on the bar.
-        Positioned.fill(
-          child: IgnorePointer(
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(pillRadius),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.18),
-                  width: 1,
+    // Zero the bottom padding for the package bar only (see the
+    // 0.2.14 note above) — the shell's bottom: 20 is the only offset.
+    final MediaQueryData mediaQuery = MediaQuery.of(context);
+    final Widget glassInBox = MediaQuery(
+      data: mediaQuery.copyWith(
+        padding: mediaQuery.padding.copyWith(bottom: 0.0),
+      ),
+      child: glass,
+    );
+    return SizedBox(
+      height: glassPillHeight,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: <Widget>[
+          // BASE LAYER: the pill without blur, non-positioned so the
+          // Stack takes its 63 pt height from it. Visible + tappable
+          // even if the package shader paints nothing.
+          _buildPill(height: glassPillHeight, blurred: false),
+          glassInBox,
+          // Thin neutral rim on the pill's exact outline, above the
+          // glass so it reads on every theme. IgnorePointer so taps
+          // still land on the bar.
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(pillRadius),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    width: 1,
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -138,6 +183,16 @@ class GlassNavBar extends StatelessWidget {
   /// surface (0x0A181C20 dark / white 0.30 light), exactly the
   /// 0.2.9–0.2.11 'glass' look.
   Widget _buildBlurry() {
+    return _buildPill(height: 64, blurred: true);
+  }
+
+  /// The pill's painted content (surface + border + sheen + the five
+  /// icon buttons), shared by both styles so switching nav styles
+  /// never moves the pill. [blurred] wraps it in the BackdropFilter
+  /// for the frosted look; the glass base layer (0.2.14) skips the
+  /// blur so the package shader refracts a clean pill — a blurred
+  /// base would fog the liquid-glass look.
+  Widget _buildPill({required double height, required bool blurred}) {
     final ImageFilter filter = ImageFilter.blur(
       sigmaX: blurryBlurSigma,
       sigmaY: blurryBlurSigma,
@@ -149,40 +204,42 @@ class GlassNavBar extends StatelessWidget {
       alpha: isDark ? 0.28 : 0.45,
     );
     final double sheenAlpha = isDark ? 0.08 : 0.20;
+    final Widget pill = Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(pillRadius),
+        border: Border.all(color: borderColor),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            Colors.white.withValues(alpha: sheenAlpha),
+            Colors.white.withValues(alpha: 0.0),
+          ],
+        ),
+      ),
+      child: Row(
+        children: <Widget>[
+          for (int i = 0; i < _items.length; i++)
+            Expanded(
+              child: _NavButton(
+                item: _items[i],
+                selected: i == currentIndex,
+                accent: accent,
+                isDark: isDark,
+                onTap: () => onTap(i),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (!blurred) return pill;
     return ClipRRect(
       borderRadius: BorderRadius.circular(pillRadius),
       child: BackdropFilter(
         filter: filter,
-        child: Container(
-          height: 64,
-          decoration: BoxDecoration(
-            color: bgColor,
-            borderRadius: BorderRadius.circular(pillRadius),
-            border: Border.all(color: borderColor),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: <Color>[
-                Colors.white.withValues(alpha: sheenAlpha),
-                Colors.white.withValues(alpha: 0.0),
-              ],
-            ),
-          ),
-          child: Row(
-            children: <Widget>[
-              for (int i = 0; i < _items.length; i++)
-                Expanded(
-                  child: _NavButton(
-                    item: _items[i],
-                    selected: i == currentIndex,
-                    accent: accent,
-                    isDark: isDark,
-                    onTap: () => onTap(i),
-                  ),
-                ),
-            ],
-          ),
-        ),
+        child: pill,
       ),
     );
   }

@@ -17,6 +17,13 @@ void main() {
     required String navStyle,
     required bool isDark,
   }) async {
+    // Phone-size surface (390x844): the shell Stack must be the
+    // full phone screen or the 844-tall box gets clamped to the
+    // default 800x600 test viewport and the bottom: 20 math breaks.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(
@@ -90,5 +97,147 @@ void main() {
     final BoxDecoration decoration = container.decoration as BoxDecoration;
     expect(decoration.color, GlassNavBar.blurrySurfaceDark);
     expect(GlassNavBar.blurryBlurSigma, 4.0);
+  });
+
+  /// 0.2.14 REGRESSION ("navigation hi gayeb?", user 2026-11-24
+  /// 01:00): the 0.2.13 glass branch wrapped the package bar in a
+  /// Stack whose children were ALL positioned (the bar's root
+  /// `Positioned` + the rim's `Positioned.fill`), so the Stack sized
+  /// to 0x0 and `Clip.hardEdge` clipped the whole nav away on the
+  /// phone — the 0.2.13 tests only checked the bar was PRESENT,
+  /// never its size. These tests pump the nav the way app_shell does
+  /// (Stack + Positioned left:16 / right:16 / bottom:20) and assert
+  /// REAL geometry — height, position, tappability — not presence.
+  Future<void> pumpNavInShell(
+    WidgetTester tester, {
+    required String navStyle,
+    required bool isDark,
+    required ValueChanged<int> onTap,
+    EdgeInsets padding = EdgeInsets.zero,
+  }) async {
+    // Same phone-size surface as pumpNav — the shell Stack must be
+    // the full 390x844 screen or the box clamps to the 800x600 test
+    // viewport and the bottom: 20 math breaks.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(
+          brightness: isDark ? Brightness.dark : Brightness.light,
+        ),
+        home: Scaffold(
+          body: MediaQuery(
+            data: MediaQueryData(padding: padding),
+            child: SizedBox(
+              width: 390,
+              height: 844,
+              child: Stack(
+                children: <Widget>[
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 20,
+                    child: GlassNavBar(
+                      currentIndex: 0,
+                      onTap: onTap,
+                      accent: const Color(0xFF34C759),
+                      isDark: isDark,
+                      navStyle: navStyle,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+  }
+
+  testWidgets('0.2.14: glass nav has real 63pt height in the shell',
+      (WidgetTester tester) async {
+    await pumpNavInShell(
+      tester,
+      navStyle: 'glass',
+      isDark: true,
+      onTap: (_) {},
+    );
+    final Rect rect = tester.getRect(find.byType(GlassNavBar));
+    expect(rect.height, GlassNavBar.glassPillHeight); // 63, never 0
+    expect(rect.width, 358); // 390 - 16 - 16
+    // Bottom edge sits exactly at the shell's bottom: 20.
+    expect(rect.bottom, 844 - 20);
+  });
+
+  testWidgets(
+      '0.2.14: glass nav keeps its height with home-indicator padding',
+      (WidgetTester tester) async {
+    await pumpNavInShell(
+      tester,
+      navStyle: 'glass',
+      isDark: true,
+      onTap: (_) {},
+      padding: const EdgeInsets.only(bottom: 34),
+    );
+    final Rect rect = tester.getRect(find.byType(GlassNavBar));
+    expect(rect.height, GlassNavBar.glassPillHeight);
+    expect(rect.bottom, 844 - 20);
+  });
+
+  testWidgets('0.2.14: glass nav items are tappable',
+      (WidgetTester tester) async {
+    int tapped = -1;
+    await pumpNavInShell(
+      tester,
+      navStyle: 'glass',
+      isDark: true,
+      onTap: (int i) => tapped = i,
+    );
+    // Two 'Search' labels exist (base layer + package bar, same
+    // spot) — tap the coordinate; the topmost (package bar) must
+    // answer.
+    await tester.tapAt(
+      tester.getCenter(find.text('Search').first),
+    );
+    await tester.pump();
+    expect(tapped, 1);
+  });
+
+  testWidgets('0.2.14: glass base layer is present under the package bar',
+      (WidgetTester tester) async {
+    await pumpNavInShell(
+      tester,
+      navStyle: 'glass',
+      isDark: true,
+      onTap: (_) {},
+    );
+    // The base pill (no BackdropFilter) is the fallback if the
+    // package shader ever paints nothing — and it is what gives the
+    // glass Stack its non-zero height.
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(LiquidGlassNavBar), findsOneWidget);
+    expect(find.text('Home'), findsWidgets);
+  });
+
+  testWidgets('0.2.14: blurry nav keeps 64pt height and taps work',
+      (WidgetTester tester) async {
+    int tapped = -1;
+    await pumpNavInShell(
+      tester,
+      navStyle: 'blurry',
+      isDark: true,
+      onTap: (int i) => tapped = i,
+    );
+    final Rect rect = tester.getRect(find.byType(GlassNavBar));
+    expect(rect.height, 64);
+    expect(rect.bottom, 844 - 20);
+    await tester.tapAt(
+      tester.getCenter(find.text('Downloads').first),
+    );
+    await tester.pump();
+    expect(tapped, 3);
   });
 }
