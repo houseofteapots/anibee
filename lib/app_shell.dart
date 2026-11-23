@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'models.dart';
 import 'player/trailer_player.dart';
@@ -6,6 +9,7 @@ import 'screens/full_player_screen.dart';
 import 'services/app_services.dart';
 import 'services/miruro_resolver.dart';
 import 'services/provider_config.dart';
+import 'services/update_service.dart';
 import 'settings_store.dart';
 import 'widgets/top_notification.dart';
 import 'screens/collection_screen.dart';
@@ -26,11 +30,17 @@ class AppShell extends StatefulWidget {
     required this.store,
     required this.configService,
     required this.services,
+    this.checkForUpdate,
   });
 
   final SettingsStore store;
   final ProviderConfigService configService;
   final AppServices services;
+
+  /// Update check (0.2.17): override for tests — a function that
+  /// returns the newer release, or null. Production passes nothing
+  /// and the real [UpdateService.checkForUpdate] runs.
+  final Future<UpdateAvailable?> Function()? checkForUpdate;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -38,6 +48,77 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // 0.2.17: update check on cold start — fire-and-forget after
+    // the first frame, never blocking launch. Any failure is
+    // silent inside the service (offline / private repo).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_maybeShowUpdateDialog());
+    });
+  }
+
+  /// Show "Naya version aaya hai" once per cold start when a newer
+  /// release exists and the user has not dismissed that version
+  /// with "Baad me". Download opens the release page in the
+  /// browser (iOS cannot install an IPA from inside the app).
+  Future<void> _maybeShowUpdateDialog() async {
+    if (!mounted) return;
+    final UpdateAvailable? update =
+        await (widget.checkForUpdate ?? UpdateService.checkForUpdate)();
+    if (!mounted || update == null) return;
+    if (widget.store.skippedUpdateVersion == update.tag) return;
+    final bool? download = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF17171F),
+          title: Text(
+            'Naya version aaya hai — ${update.tag}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          content: const Text(
+            'Naya AniBee version download karo aur eSign se install karo.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text(
+                'Baad me',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text(
+                'Download',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted) return;
+    if (download == true) {
+      await launchUrl(
+        Uri.parse(update.url),
+        mode: LaunchMode.externalApplication,
+      );
+    } else {
+      await widget.store.skipUpdateVersion(update.tag);
+    }
+  }
 
   void _openAnime(Anime anime, {bool autoPlay = false}) {
     Navigator.of(context).push(

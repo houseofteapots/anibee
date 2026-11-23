@@ -287,6 +287,10 @@ class SettingsStore extends ChangeNotifier {
   bool fallbackProviders = true;
   List<ProviderSource> sources = defaultSources();
 
+  /// Update check (0.2.17): the release tag the user dismissed
+  /// with "Baad me" — never prompt again for that version.
+  String? skippedUpdateVersion;
+
   // --- Downloads ---
   String downloadQuality = '1080p';
   bool wifiOnly = true;
@@ -444,6 +448,7 @@ class SettingsStore extends ChangeNotifier {
     }
     preferredServer = _prefs.getString('preferred_server') ?? 'Miruro';
     fallbackProviders = _prefs.getBool('fallback_providers') ?? true;
+    skippedUpdateVersion = _prefs.getString('skipped_update_version');
     downloadQuality = _prefs.getString('download_quality') ?? '1080p';
     wifiOnly = _prefs.getBool('wifi_only') ?? true;
     autoDeleteDownloads = _prefs.getBool('auto_delete_downloads') ?? true;
@@ -1028,6 +1033,14 @@ class SettingsStore extends ChangeNotifier {
         .toList();
     await _save('preferred_server', name);
     await _saveSources();
+    notifyListeners();
+  }
+
+  /// Update check (0.2.17): remember that the user dismissed the
+  /// prompt for [version] ("Baad me") — no prompt again for it.
+  Future<void> skipUpdateVersion(String version) async {
+    skippedUpdateVersion = version;
+    await _save('skipped_update_version', version);
     notifyListeners();
   }
 

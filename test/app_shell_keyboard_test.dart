@@ -97,6 +97,9 @@ void main() {
           store: store,
           configService: config,
           services: services,
+          // 0.2.17: stub the update check — the real one would hit
+          // the network from this test.
+          checkForUpdate: () async => null,
         ),
       ),
     );
