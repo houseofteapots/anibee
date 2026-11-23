@@ -232,6 +232,16 @@ class SettingsStore extends ChangeNotifier {
   /// with a 5 s countdown; tap to cancel).
   bool autoplayNext = true;
 
+  /// Airing episode alerts (0.2.10): notify 15 minutes before a
+  /// followed anime airs. Default ON; the schedule only runs while
+  /// AniList is connected (OFF when not connected).
+  bool airingNotifications = true;
+
+  /// True once the iOS notification permission has been asked from
+  /// the Home airing section — asked once at first use, never on
+  /// every launch.
+  bool airingPermissionAsked = false;
+
   /// Resume positions, seconds into the episode. Key: canonical
   /// resume key (see [resumeKeyFor]) — `'al:<anilistId>:ep<n>'` or
   /// `'id:<catalogue id>:ep<n>'`.
@@ -355,6 +365,8 @@ class SettingsStore extends ChangeNotifier {
     hwDecoding = _prefs.getBool('hw_decoding') ?? true;
     skipIntro = _prefs.getBool('skip_intro') ?? true;
     autoplayNext = _prefs.getBool('autoplay_next') ?? true;
+    airingNotifications = _prefs.getBool('airing_notifications') ?? true;
+    airingPermissionAsked = _prefs.getBool('airing_perm_asked') ?? false;
     final String? resumeJson = _prefs.getString('resume_seconds');
     if (resumeJson != null) {
       try {
@@ -735,6 +747,18 @@ class SettingsStore extends ChangeNotifier {
   Future<void> setAutoplayNext(bool value) async {
     autoplayNext = value;
     await _save('autoplay_next', value);
+    notifyListeners();
+  }
+
+  Future<void> setAiringNotifications(bool value) async {
+    airingNotifications = value;
+    await _save('airing_notifications', value);
+    notifyListeners();
+  }
+
+  Future<void> setAiringPermissionAsked(bool value) async {
+    airingPermissionAsked = value;
+    await _save('airing_perm_asked', value);
     notifyListeners();
   }
 

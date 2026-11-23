@@ -217,7 +217,7 @@ class AniListService {
     final Map<String, dynamic>? media = data?['Media'] as Map<String, dynamic>?;
     if (media == null) return null;
     final Map<String, dynamic>? title = media['title'] as Map<String, dynamic>?;
-    final String name = _preferredTitle(title);
+    final String name = preferredTitle(title);
     final String format = media['format'] as String? ?? '';
     final int episodes = (media['episodes'] as num?)?.toInt() ?? 0;
     final int? year = (media['seasonYear'] as num?)?.toInt();
@@ -348,6 +348,20 @@ class AniListService {
     }
   }
 
+  /// Run a raw GraphQL query (feature services, e.g. airing).
+  /// Returns decoded `data`, or null on any failure — never throws.
+  Future<Map<String, dynamic>?> queryGraphQL(
+    String query,
+    Map<String, Object?> variables, {
+    String? token,
+  }) async {
+    try {
+      return await _post(query, variables, token: token);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Search must never throw: on any failure (rate limit, network,
   /// bad body) it returns an empty list and the search screen falls
   /// back to the local catalogue.
@@ -406,7 +420,7 @@ class AniListService {
   static Anime? animeFromMedia(Map<String, dynamic> m) {
     final int? id = (m['id'] as num?)?.toInt();
     final Map<String, dynamic>? title = m['title'] as Map<String, dynamic>?;
-    final String name = _preferredTitle(title);
+    final String name = preferredTitle(title);
     if (id == null || name.isEmpty || name == 'Unknown') return null;
     final Map<String, dynamic>? cover =
         m['coverImage'] as Map<String, dynamic>?;
@@ -435,7 +449,7 @@ class AniListService {
     );
   }
 
-  static String _preferredTitle(Map<String, dynamic>? t) {
+  static String preferredTitle(Map<String, dynamic>? t) {
     if (t == null) return 'Unknown';
     final String? english = t['english'] as String?;
     if (english != null && english.isNotEmpty) return english;

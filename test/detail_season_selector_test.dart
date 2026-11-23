@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:anibee/models.dart';
 import 'package:anibee/player/trailer_player.dart';
 import 'package:anibee/screens/detail_screen.dart';
+import 'package:anibee/services/airing_notifications.dart';
+import 'package:anibee/services/airing_service.dart';
 import 'package:anibee/services/anilist_service.dart';
 import 'package:anibee/services/app_services.dart';
 import 'package:anibee/services/debrid_service.dart';
@@ -212,6 +214,8 @@ void main() {
       debrid: DebridService(),
       oauth: OAuthService(),
       downloads: DownloadService(),
+      airing: AiringService(anilist: anilist),
+      airingNotifications: AiringNotifications(),
     );
   }
 

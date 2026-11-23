@@ -175,6 +175,11 @@ class _TopBannerState extends State<_TopBanner>
                                 fontSize: 14,
                                 fontWeight: FontWeight.w700,
                                 height: 1.35,
+                                // 0.2.10: explicit none — the phone
+                                // renders a yellow underline under
+                                // this text and no Dart code draws
+                                // one; harden the style directly.
+                                decoration: TextDecoration.none,
                               ),
                             ),
                             if (widget.detail != null) ...<Widget>[
@@ -185,6 +190,7 @@ class _TopBannerState extends State<_TopBanner>
                                   color: secondaryText,
                                   fontSize: 12,
                                   height: 1.35,
+                                  decoration: TextDecoration.none,
                                 ),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,

@@ -1,5 +1,7 @@
 import '../models.dart';
 import '../settings_store.dart';
+import 'airing_notifications.dart';
+import 'airing_service.dart';
 import 'anilist_service.dart';
 import 'debrid_service.dart';
 import 'download_service.dart';
@@ -16,6 +18,8 @@ class AppServices {
     required this.debrid,
     required this.oauth,
     required this.downloads,
+    required this.airing,
+    required this.airingNotifications,
     this.configService,
   });
 
@@ -27,6 +31,8 @@ class AppServices {
       debrid: DebridService(),
       oauth: OAuthService(),
       downloads: DownloadService(),
+      airing: AiringService(anilist: anilist),
+      airingNotifications: AiringNotifications(),
       configService: configService,
     );
   }
@@ -35,6 +41,20 @@ class AppServices {
   final MiruroResolver miruro;
   final DebridService debrid;
   final OAuthService oauth;
+
+  /// Upcoming airing episodes (0.2.10) + their local alerts.
+  final AiringService airing;
+  final AiringNotifications airingNotifications;
+
+  /// Schedule airing alerts for [entries] — only when AniList is
+  /// connected AND the toggle is on. Best-effort, never throws.
+  Future<void> scheduleAiringNotifications({
+    required SettingsStore store,
+    required List<AiringEntry> entries,
+  }) async {
+    if (!store.anilistConnected || !store.airingNotifications) return;
+    await airingNotifications.scheduleAiring(entries);
+  }
 
   /// Real offline downloads (0.2.5): app-lifetime service, never
   /// tied to a screen — leaving Detail can't stall a download.

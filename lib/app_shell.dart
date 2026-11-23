@@ -156,6 +156,8 @@ class _AppShellState extends State<AppShell> {
                 child: HomeScreen(
                   store: widget.store,
                   anilist: widget.services.anilist,
+                  airing: widget.services.airing,
+                  airingNotifications: widget.services.airingNotifications,
                   onOpenAnime: _openAnime,
                   onOpenSearch: () => setState(() => _tab = 1),
                   onWatchNow: (Anime anime) =>

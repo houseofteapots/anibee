@@ -127,6 +127,30 @@ class SettingsScreen extends StatelessWidget {
                   },
                 ),
                 SettingsSection(
+                  title: 'NOTIFICATIONS',
+                  children: <Widget>[
+                    SettingsTile(
+                      title: 'Airing episode alerts',
+                      subtitle: store.anilistConnected
+                          ? 'Notify 15 minutes before a followed anime airs'
+                          : 'Connect AniList to enable',
+                      leading: _icon(Reicon.outline.bell, context),
+                      trailing: Switch(
+                        value: store.airingNotifications,
+                        onChanged: store.anilistConnected
+                            ? (bool value) async {
+                                await store.setAiringNotifications(value);
+                                if (!value) {
+                                  await services.airingNotifications
+                                      .cancelAll();
+                                }
+                              }
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+                SettingsSection(
                   title: 'APPEARANCE',
                   children: <Widget>[
                     SettingsTile(

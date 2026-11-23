@@ -1,7 +1,7 @@
 name: anibee
 description: "aniBee — personal iOS anime app. Miruro-linked, AniList-powered."
 publish_to: 'none'
-version: 0.2.9+13
+version: 0.2.10+14
 
 environment:
   sdk: ^3.13.5
@@ -45,6 +45,8 @@ dependencies:
   # 0.2.4: "Load subtitle file" in the Zeus-style subtitle panel
   # (pick .srt/.ass from Files, load as an external mpv track).
   file_picker: ^13.4.1
+  flutter_local_notifications: ^23.0.4
+  timezone: ^0.11.2
 
 dev_dependencies:
   flutter_test:

@@ -24,6 +24,14 @@ void main() async {
   // config's client ID (0.2.3: client IDs live in the remote config,
   // never typed in by the user).
   final AppServices services = AppServices.create(configService: configService);
+  // 0.2.10: local airing alerts — init once, never prompts here
+  // (permission is asked once at first use from the Home airing
+  // section). A failed init must never block launch.
+  try {
+    await services.airingNotifications.init();
+  } catch (_) {
+    // Notifications are best-effort.
+  }
   // 0.2.5: drop download rows the M1 simulation left behind (they
   // claim 'downloaded' but no file was ever saved — tapping them
   // did nothing). Real records + files are untouched.

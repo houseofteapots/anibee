@@ -51,13 +51,26 @@ class AppTheme {
         inactiveTrackColor: const Color(0xFF3A3A48),
         thumbColor: Colors.white,
       ),
+      // 0.2.10: explicit `decoration: none` on every theme text
+      // style. No Dart code in the app draws an underline, yet the
+      // phone renders a yellow line under text (splash wordmark,
+      // then the top banner) — so the style is hardened at the
+      // inheritance root: any Text that falls back to the theme can
+      // never pick up an underline from DefaultTextStyle.
       textTheme: const TextTheme(
         titleLarge: TextStyle(
           color: textPrimaryDark,
           fontWeight: FontWeight.w700,
+          decoration: TextDecoration.none,
         ),
-        bodyMedium: TextStyle(color: textPrimaryDark),
-        bodySmall: TextStyle(color: textSecondaryDark),
+        bodyMedium: TextStyle(
+          color: textPrimaryDark,
+          decoration: TextDecoration.none,
+        ),
+        bodySmall: TextStyle(
+          color: textSecondaryDark,
+          decoration: TextDecoration.none,
+        ),
       ),
     );
   }
@@ -92,13 +105,21 @@ class AppTheme {
         inactiveTrackColor: const Color(0xFFD5D5DE),
         thumbColor: Colors.white,
       ),
+      // 0.2.10: same hardening as the dark theme (see above).
       textTheme: const TextTheme(
         titleLarge: TextStyle(
           color: textPrimaryLight,
           fontWeight: FontWeight.w700,
+          decoration: TextDecoration.none,
         ),
-        bodyMedium: TextStyle(color: textPrimaryLight),
-        bodySmall: TextStyle(color: textSecondaryLight),
+        bodyMedium: TextStyle(
+          color: textPrimaryLight,
+          decoration: TextDecoration.none,
+        ),
+        bodySmall: TextStyle(
+          color: textSecondaryLight,
+          decoration: TextDecoration.none,
+        ),
       ),
     );
   }

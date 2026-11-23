@@ -49,6 +49,20 @@ enum _PanelKind { sources, audio, subtitles, quality }
 /// episode's stream (null = keep playing the current episode).
 /// There is no sample fallback any more (0.2.4) — a stream that
 /// cannot be resolved shows the error dialog, never a placeholder.
+/// The episode after [currentNumber] in [episodes], or null when
+/// there is none. Pure — unit-tested. Lookup is BY EPISODE NUMBER,
+/// never by identity: `Episode` has no `==` override, so
+/// `indexOf(_currentEpisode)` is identity-based, and Detail rebuilds
+/// its episode list (0.2.9 thumbnails) while the stream resolves —
+/// by push time the initial object may no longer be identical to any
+/// list element, `indexOf` returns -1, and the Up-next card never
+/// shows (0.2.10: EP 2 restarted at EOF instead of advancing).
+Episode? nextEpisodeAfter(List<Episode> episodes, int currentNumber) {
+  final int i = episodes.indexWhere((Episode e) => e.number == currentNumber);
+  if (i < 0 || i + 1 >= episodes.length) return null;
+  return episodes[i + 1];
+}
+
 class FullPlayerScreen extends StatefulWidget {
   const FullPlayerScreen({
     super.key,
@@ -146,10 +160,26 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   // arrives, instead of waiting for the next position tick (which
   // may be seconds away, or never come if playback stalls).
   StreamSubscription<Duration>? _durationSub;
+  // 0.2.10: end-of-episode — fires when mpv reports the media
+  // completed, so the end card shows even if no position tick lands
+  // in the last 3 s (HLS position jumps) or autoplay is off.
+  StreamSubscription<bool>? _completedSub;
   bool _resumeApplied = false;
   bool _autoplayShown = false;
   Timer? _autoplayTimer;
   int _autoplayCountdown = 5;
+
+  /// 0.2.10: the Up-next card is visible independently of the
+  /// countdown timer — with autoplay OFF there is no timer, the
+  /// player is paused and the card waits for the user. True from
+  /// the moment the card is shown until Cancel / Play now / an
+  /// episode switch hides it.
+  bool _autoplayVisible = false;
+
+  /// 0.2.10: the user explicitly cancelled the card. The
+  /// end-of-playback handler must NOT re-show it — Cancel means
+  /// "stay on this episode", not "ask me again at EOF".
+  bool _autoplayCancelled = false;
 
   // PiP (software-rendered player + native window).
   Player? _pipPlayer;
@@ -271,10 +301,21 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     if (mounted) _showAutoplayOverlay();
   }
 
+  /// Test seam: drive the end-of-playback path (the real trigger is
+  /// mpv's `completed` stream at EOF). The player pauses and the
+  /// Up-next card shows — the episode must NOT restart.
+  @visibleForTesting
+  void simulateEndForTest() {
+    if (mounted) _onPlaybackCompleted();
+  }
+
   /// Test seam: whether the autoplay-next overlay is currently shown.
   @visibleForTesting
-  bool get autoplayVisibleForTest =>
-      _autoplayTimer != null && _autoplayTimer!.isActive;
+  bool get autoplayVisibleForTest => _autoplayVisible;
+
+  /// Test seam: the current video scale (pinch zoom, 1.0 = fit).
+  @visibleForTesting
+  double get videoScaleForTest => _videoScale.value;
 
   /// Test seam: the episode currently playing.
   @visibleForTesting
@@ -300,11 +341,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   String get _resumeKey =>
       _store.resumeKeyFor(widget.anime, _currentEpisode.number);
 
-  Episode? get _nextEpisode {
-    final int i = widget.episodes.indexOf(_currentEpisode);
-    if (i < 0 || i + 1 >= widget.episodes.length) return null;
-    return widget.episodes[i + 1];
-  }
+  Episode? get _nextEpisode =>
+      nextEpisodeAfter(widget.episodes, _currentEpisode.number);
 
   @override
   void initState() {
@@ -336,6 +374,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _durationSub = _player.stream.duration.listen((Duration d) {
       if (d > Duration.zero) _maybeRetrySkipTimes();
     });
+    // 0.2.10: the end-of-episode card must show even when no
+    // position tick lands in the last 3 s (HLS jumps) or autoplay
+    // is off — mpv's `completed` fires exactly once at EOF.
+    _completedSub = _player.stream.completed.listen((bool done) {
+      if (done) _onPlaybackCompleted();
+    });
     _scheduleHide();
     // 0.2.4: real AniSkip data for the first episode (best-effort,
     // silent — no data simply means no Skip button).
@@ -346,6 +390,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   void dispose() {
     _positionSub?.cancel();
     _durationSub?.cancel();
+    _completedSub?.cancel();
     _hideTimer?.cancel();
     _holdTimer?.cancel();
     _autoplayTimer?.cancel();
@@ -966,6 +1011,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     setState(() {
       _currentEpisode = episode;
       _autoplayShown = false;
+      _autoplayVisible = false;
+      _autoplayCancelled = false;
+      _autoplayTimer?.cancel();
+      _autoplayTimer = null;
       _resumeApplied = true; // resume handled inline below
     });
     widget.onEpisodeChanged?.call(episode);
@@ -1023,22 +1072,49 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _pokeControls();
   }
 
-  void _showAutoplayOverlay() {
+  /// End of playback (mpv `completed` at EOF, 0.2.10): the player
+  /// PAUSES and the Up-next card shows — the episode NEVER restarts.
+  /// (Before this, `PlaylistMode.single` looped the media, so EP 2
+  /// silently replayed from 00:00 and no card ever appeared.)
+  /// - The early card is already up (autoplay ON, countdown
+  ///   running): nothing to do — the timer advances as usual.
+  /// - The user cancelled the early card: respect it, stay paused
+  ///   with no card.
+  /// - Otherwise (autoplay OFF, or the early trigger never fired):
+  ///   show the card — WITH the 5 s countdown when autoplay is on,
+  ///   paused with NO countdown when it is off, waiting for the user.
+  /// - No next episode (last one): just pause, no card.
+  void _onPlaybackCompleted() {
+    if (!mounted) return;
+    unawaited(_player.pause());
+    _saveProgress();
+    _pokeControls();
+    if (_autoplayShown || _autoplayCancelled) return;
+    if (_nextEpisode == null) return;
+    _autoplayShown = true;
+    _showAutoplayOverlay(withCountdown: _store.autoplayNext);
+  }
+
+  void _showAutoplayOverlay({bool withCountdown = true}) {
     _autoplayCountdown = 5;
     _autoplayTimer?.cancel();
-    _autoplayTimer = Timer.periodic(const Duration(seconds: 1), (Timer t) {
-      if (!mounted) {
-        t.cancel();
-        return;
-      }
-      if (_autoplayCountdown <= 1) {
-        t.cancel();
-        final Episode? next = _nextEpisode;
-        if (next != null) _selectEpisode(next);
-      } else {
-        setState(() => _autoplayCountdown -= 1);
-      }
-    });
+    _autoplayTimer = null;
+    if (withCountdown) {
+      _autoplayTimer = Timer.periodic(const Duration(seconds: 1), (Timer t) {
+        if (!mounted) {
+          t.cancel();
+          return;
+        }
+        if (_autoplayCountdown <= 1) {
+          t.cancel();
+          final Episode? next = _nextEpisode;
+          if (next != null) _selectEpisode(next);
+        } else {
+          setState(() => _autoplayCountdown -= 1);
+        }
+      });
+    }
+    _autoplayVisible = true;
     setState(() {});
   }
 
@@ -2159,6 +2235,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   Future<void> _showEpisodeSheet() async {
     final Color accent = Theme.of(context).colorScheme.primary;
+    // 0.2.10: CONTENT-DRIVEN height, capped at 0.55. The 0.2.9 sheet
+    // was a fixed 0.55 box PLUS SafeArea/chrome on top, so it
+    // rendered ~0.63 tall on the phone — and for a short anime (11
+    // eps = 3 grid rows) most of that height was empty space. Now
+    // the sheet shrink-wraps to its content: a short anime gets a
+    // SHORT sheet, and only a long list grows to the cap and scrolls.
+    // Short anime (<= 12 eps) get ONE horizontal row instead of a
+    // grid ("line se ana chaiye"); more than 12 keep the 5-column
+    // grid. Title is one line with ellipsis.
+    final bool singleRow = widget.episodes.length <= 12;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -2167,19 +2253,21 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (BuildContext context) {
+        final double maxHeight =
+            MediaQuery.of(context).size.height * 0.55;
         return SafeArea(
-          child: SizedBox(
-            // 0.2.9: more compact — the 0.7 sheet dominated the
-            // landscape screen. 0.55 leaves the video visible above
-            // it; the grid scrolls for later episodes.
-            height: MediaQuery.of(context).size.height * 0.55,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxHeight),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
                   child: Text(
                     'Episodes — ${widget.anime.title}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 16,
@@ -2187,43 +2275,42 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     ),
                   ),
                 ),
-                Expanded(
-                  child: GridView.builder(
-                    padding: const EdgeInsets.all(12),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 5,
-                          mainAxisSpacing: 8,
-                          crossAxisSpacing: 8,
-                          childAspectRatio: 1.6,
+                Flexible(
+                  child: singleRow
+                      ? _EpisodeRow(
+                          episodes: widget.episodes,
+                          current: _currentEpisode,
+                          accent: accent,
+                          onSelect: (Episode ep) {
+                            Navigator.of(context).pop();
+                            _selectEpisode(ep);
+                          },
+                        )
+                      : GridView.builder(
+                          padding: const EdgeInsets.all(12),
+                          shrinkWrap: true,
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 5,
+                                mainAxisSpacing: 8,
+                                crossAxisSpacing: 8,
+                                childAspectRatio: 1.6,
+                              ),
+                          itemCount: widget.episodes.length,
+                          itemBuilder: (BuildContext context, int index) {
+                            final Episode ep = widget.episodes[index];
+                            return _EpisodeCell(
+                              episode: ep,
+                              selected:
+                                  ep.number == _currentEpisode.number,
+                              accent: accent,
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                _selectEpisode(ep);
+                              },
+                            );
+                          },
                         ),
-                    itemCount: widget.episodes.length,
-                    itemBuilder: (BuildContext context, int index) {
-                      final Episode ep = widget.episodes[index];
-                      final bool selected = ep.number == _currentEpisode.number;
-                      return InkWell(
-                        onTap: () {
-                          Navigator.of(context).pop();
-                          _selectEpisode(ep);
-                        },
-                        borderRadius: BorderRadius.circular(10),
-                        child: Container(
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: selected ? accent : const Color(0xFF23232F),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            '${ep.number}',
-                            style: TextStyle(
-                              color: selected ? Colors.white : Colors.white70,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
                 ),
               ],
             ),
@@ -2410,18 +2497,28 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     ),
                   ),
                 ),
-              if (_autoplayTimer != null && _autoplayTimer!.isActive)
+              if (_autoplayVisible)
                 _AutoplayOverlay(
-                  countdown: _autoplayCountdown,
+                  countdown: _autoplayTimer != null ? _autoplayCountdown : null,
                   next: _nextEpisode,
                   accent: accent,
                   onPlayNow: () {
                     _autoplayTimer?.cancel();
+                    _autoplayTimer = null;
+                    _autoplayVisible = false;
                     final Episode? next = _nextEpisode;
                     if (next != null) _selectEpisode(next);
+                    setState(() {});
                   },
                   onCancel: () {
+                    // 0.2.10: Cancel means "stay on this episode" —
+                    // hide the card AND remember it, so the EOF
+                    // handler does not re-show it. The player stays
+                    // paused on the finished episode.
                     _autoplayTimer?.cancel();
+                    _autoplayTimer = null;
+                    _autoplayVisible = false;
+                    _autoplayCancelled = true;
                     setState(() {});
                   },
                 ),
@@ -2476,9 +2573,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           final List<Offset> points = _activePointers.values.toList();
           final double distance = (points[0] - points[1]).distance;
           if (_pinchBaseDistance > 0) {
+            // 0.2.10: pinch zoom is 1x–3x ONLY. The old 0.5 floor
+            // shrank the video to half size and exposed the poster
+            // behind it ("background araha" on pinch-out, 2026-11-23
+            // video) — zoom-out now stops exactly at fit.
             _videoScale.value =
                 (_pinchBaseScale * distance / _pinchBaseDistance).clamp(
-                  0.5,
+                  1.0,
                   3.0,
                 );
           }
@@ -3507,7 +3608,10 @@ class _AutoplayOverlay extends StatelessWidget {
     required this.onCancel,
   });
 
-  final int countdown;
+  /// Seconds left on the autoplay countdown, or null when the
+  /// player is paused at EOF with autoplay OFF — the card waits for
+  /// the user instead of counting down (0.2.10).
+  final int? countdown;
   final Episode? next;
   final Color accent;
   final VoidCallback onPlayNow;
@@ -3552,7 +3656,9 @@ class _AutoplayOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Playing in $countdown s',
+                countdown != null
+                    ? 'Playing in $countdown s'
+                    : 'Paused — tap Play now or Cancel',
                 style: const TextStyle(color: Colors.white70, fontSize: 13),
               ),
               const SizedBox(height: 10),
@@ -3589,6 +3695,88 @@ class _AutoplayOverlay extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// One episode cell in the in-player chooser sheet (0.2.10): the
+/// accent-filled selected cell + tap-to-select, shared by the grid
+/// and the single row so both look and behave the same.
+class _EpisodeCell extends StatelessWidget {
+  const _EpisodeCell({
+    required this.episode,
+    required this.selected,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final Episode episode;
+  final bool selected;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? accent : const Color(0xFF23232F),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          '${episode.number}',
+          style: TextStyle(
+            color: selected ? Colors.white : Colors.white70,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Single horizontal episode row (0.2.10): short anime (<= 12
+/// episodes) show all episodes in ONE line instead of a grid, so
+/// the sheet stays short. Fixed 52pt row height; scrolls
+/// horizontally when the cells don't fit (12 cells).
+class _EpisodeRow extends StatelessWidget {
+  const _EpisodeRow({
+    required this.episodes,
+    required this.current,
+    required this.accent,
+    required this.onSelect,
+  });
+
+  final List<Episode> episodes;
+  final Episode current;
+  final Color accent;
+  final ValueChanged<Episode> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 52,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        itemCount: episodes.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (BuildContext context, int index) {
+          final Episode ep = episodes[index];
+          return SizedBox(
+            width: 64,
+            child: _EpisodeCell(
+              episode: ep,
+              selected: ep.number == current.number,
+              accent: accent,
+              onTap: () => onSelect(ep),
+            ),
+          );
+        },
       ),
     );
   }

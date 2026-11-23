@@ -47,60 +47,83 @@ Future<T?> showPremiumPicker<T>({
   final Color sheetBg = isDark ? AppTheme.cardDark : AppTheme.cardLight;
   return showModalBottomSheet<T>(
     context: context,
+    // 0.2.10: scroll-controlled + capped — the old plain Column had
+    // NO scroll view and the default sheet cap cut it off, so with
+    // 12 ranges (One Piece, 1180 eps) everything below 701-800 was
+    // unreachable. The options now scroll inside a 70% cap; the
+    // title + drag handle stay fixed at the top.
+    isScrollControlled: true,
     backgroundColor: sheetBg,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
     builder: (BuildContext context) {
+      final double maxHeight = MediaQuery.of(context).size.height * 0.7;
       return SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            const SizedBox(height: 8),
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF3A3A48),
-                  borderRadius: BorderRadius.circular(2),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const SizedBox(height: 8),
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3A3A48),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-              child: Text(
-                title,
-                style: TextStyle(
-                  color: primaryText,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            if (subtitle != null)
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
                 child: Text(
-                  subtitle,
-                  style: TextStyle(color: secondaryText, fontSize: 13),
+                  title,
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
-            const SizedBox(height: 4),
-            for (final PremiumPickerOption<T> option in options)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-                child: _PremiumPickerRow<T>(
-                  option: option,
-                  isSelected: !option.destructive && option.value == selected,
-                  accent: accent,
-                  primaryText: primaryText,
-                  secondaryText: secondaryText,
+              if (subtitle != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Text(
+                    subtitle,
+                    style: TextStyle(color: secondaryText, fontSize: 13),
+                  ),
+                ),
+              const SizedBox(height: 4),
+              // Scrollable options: shrink-wrapped so a picker with
+              // few options renders exactly as before (no empty
+              // space); Flexible caps it at the sheet max so a long
+              // list scrolls instead of overflowing.
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  children: <Widget>[
+                    for (final PremiumPickerOption<T> option in options)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                        child: _PremiumPickerRow<T>(
+                          option: option,
+                          isSelected:
+                              !option.destructive && option.value == selected,
+                          accent: accent,
+                          primaryText: primaryText,
+                          secondaryText: secondaryText,
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                  ],
                 ),
               ),
-            const SizedBox(height: 8),
-          ],
+            ],
+          ),
         ),
       );
     },

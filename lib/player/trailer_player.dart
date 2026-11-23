@@ -135,11 +135,15 @@ class TrailerPlayer extends ChangeNotifier {
   }
 
   /// Load a real resolved episode stream (M2): the URL + playback
-  /// headers (Referer/Origin) + subtitle tracks. Single-play mode
-  /// (no loop — it is a real episode, not the trailer preview).
-  /// [muted] is false when the full player loads the stream (volume
-  /// 100); the inline hero never loads streams. [subtitleLanguage] is
-  /// the user's preferred subtitle language (Settings → Player).
+  /// headers (Referer/Origin) + subtitle tracks. Playback STOPS at
+  /// the end of the episode (PlaylistMode.none) — 0.2.10: `single`
+  /// means "loop the current media forever" in media_kit, which is
+  /// what silently restarted EP 2 from 00:00 at EOF on the phone
+  /// (2026-11-23 video); the full player owns the end-of-episode
+  /// card and the next-episode advance. [muted] is false when the
+  /// full player loads the stream (volume 100); the inline hero
+  /// never loads streams. [subtitleLanguage] is the user's preferred
+  /// subtitle language (Settings → Player).
   Future<void> loadStream(
     ResolvedStream stream, {
     bool muted = false,
@@ -158,7 +162,9 @@ class TrailerPlayer extends ChangeNotifier {
     try {
       await _player.open(Media(stream.url, httpHeaders: stream.headers));
       await _player.setVolume(muted ? 0 : 100);
-      await _player.setPlaylistMode(PlaylistMode.single);
+      // 0.2.10: PlaylistMode.none — playback STOPS at EOF. `single`
+      // loops the current media forever (the EP 2 restart bug).
+      await _player.setPlaylistMode(PlaylistMode.none);
       await _player.play();
       _loaded = true;
       _loadError = null;
@@ -202,7 +208,9 @@ class TrailerPlayer extends ChangeNotifier {
     _inlineActive = false;
     notifyListeners();
     await _player.setVolume(100);
-    await _player.setPlaylistMode(PlaylistMode.single);
+    // 0.2.10: none, not `single` (which loops the media — see
+    // loadStream). The full player owns the end-of-episode card.
+    await _player.setPlaylistMode(PlaylistMode.none);
     await _player.play();
   }
 

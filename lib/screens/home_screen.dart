@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../models.dart';
+import '../services/airing_notifications.dart';
+import '../services/airing_service.dart';
 import '../services/anilist_service.dart';
 import '../settings_store.dart';
 import '../theme.dart';
@@ -25,6 +27,8 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.store,
     required this.anilist,
+    this.airing,
+    this.airingNotifications,
     required this.onOpenAnime,
     required this.onOpenSearch,
     required this.onWatchNow,
@@ -32,6 +36,15 @@ class HomeScreen extends StatefulWidget {
 
   final SettingsStore store;
   final AniListService anilist;
+
+  /// Upcoming-airing service (0.2.10). Null in tests / when not
+  /// wired — Home builds a default one from [anilist].
+  final AiringService? airing;
+
+  /// Local airing alerts (0.2.10). Null in tests — no permission
+  /// prompt and no scheduling there.
+  final AiringNotifications? airingNotifications;
+
   final ValueChanged<Anime> onOpenAnime;
 
   /// Header search icon jumps to the Search tab.
@@ -64,10 +77,29 @@ class _HomeScreenState extends State<HomeScreen> {
   /// it ignores the genre chips and the tab bar.
   List<Anime> _movies = mockMovies();
 
+  /// AIRING SOON (0.2.10): upcoming episodes for followed titles
+  /// (AniList list when connected, Continue Watching ids, else
+  /// trending airing). Hidden when empty.
+  List<AiringEntry> _airing = <AiringEntry>[];
+
+  /// Ticks the countdown text once a minute while airings show.
+  Timer? _countdownTimer;
+
+  /// AniList-connected state at the last airing load — a login /
+  /// logout flips the airing source, so reload then.
+  bool _wasConnected = false;
+
   @override
   void initState() {
     super.initState();
     unawaited(_loadMovies());
+    unawaited(_loadAiring());
+    _wasConnected = widget.store.anilistConnected;
+    widget.store.addListener(_onStoreChanged);
+    _countdownTimer = Timer.periodic(const Duration(minutes: 1), (Timer t) {
+      if (!mounted || _airing.isEmpty) return;
+      setState(() {});
+    });
     _autoTimer = Timer.periodic(const Duration(seconds: 5), (Timer t) {
       if (!mounted) return;
       final int next = (_page + 1) % _heroItems.length;
@@ -82,8 +114,90 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _autoTimer?.cancel();
+    _countdownTimer?.cancel();
+    widget.store.removeListener(_onStoreChanged);
     _pageController.dispose();
     super.dispose();
+  }
+
+  void _onStoreChanged() {
+    if (!mounted) return;
+    if (widget.store.anilistConnected != _wasConnected) {
+      _wasConnected = widget.store.anilistConnected;
+      unawaited(_loadAiring());
+    }
+  }
+
+  /// Upcoming airings for this user (0.2.10): AniList list when
+  /// connected, else the Continue Watching AniList ids, else
+  /// trending airing titles. Empty on failure — the row hides.
+  Future<void> _loadAiring() async {
+    final AiringService svc =
+        widget.airing ?? AiringService(anilist: widget.anilist);
+    final List<int> followed = widget.store.watchHistory
+        .map((WatchEntry e) => e.anilistId)
+        .whereType<int>()
+        .toList();
+    final List<AiringEntry> entries = await svc.fetchAiring(
+      token: widget.store.anilistToken,
+      followedIds: followed,
+    );
+    if (!mounted) return;
+    setState(() => _airing = entries);
+    unawaited(_maybeScheduleAiring());
+  }
+
+  /// After a fresh airing fetch: ask the iOS notification
+  /// permission ONCE at first use (never on every launch), then
+  /// schedule the alerts. Only when AniList is connected and the
+  /// toggle is on; the bell in the section header re-asks manually.
+  Future<void> _maybeScheduleAiring() async {
+    final AiringNotifications? notifications = widget.airingNotifications;
+    if (notifications == null ||
+        _airing.isEmpty ||
+        !widget.store.anilistConnected ||
+        !widget.store.airingNotifications) {
+      return;
+    }
+    if (!widget.store.airingPermissionAsked) {
+      await widget.store.setAiringPermissionAsked(true);
+      final bool granted = await notifications.requestPermission();
+      if (!granted || !mounted) return;
+    }
+    await notifications.scheduleAiring(_airing);
+  }
+
+  /// Bell in the AIRING SOON header: (re-)ask permission and
+  /// schedule the alerts, with a short banner as confirmation.
+  Future<void> _onAiringBell() async {
+    final AiringNotifications? notifications = widget.airingNotifications;
+    if (notifications == null || !mounted) return;
+    if (!widget.store.anilistConnected) {
+      TopNotification.show(
+        context,
+        'Connect AniList to get airing alerts',
+        neutral: true,
+      );
+      return;
+    }
+    final bool granted = await notifications.requestPermission();
+    if (!mounted) return;
+    if (granted) {
+      await widget.store.setAiringNotifications(true);
+      await notifications.scheduleAiring(_airing);
+      if (!mounted) return;
+      TopNotification.show(
+        context,
+        'Airing alerts on — 15 min before each episode',
+        success: true,
+      );
+    } else {
+      TopNotification.show(
+        context,
+        'Notifications are off — enable them in iOS Settings',
+        neutral: true,
+      );
+    }
   }
 
   List<Anime> get _catalogue => mockCatalogue();
@@ -514,6 +628,86 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
                 ),
+              // AIRING SOON (0.2.10): upcoming episodes for followed
+              // titles, soonest first, with a live countdown. Same
+              // header style as MOVIES; the bell asks the iOS
+              // notification permission / schedules the alerts.
+              // Hidden when there is nothing airing. Sits above
+              // MOVIES, below the poster grid.
+              if (_airing.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 28),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: <Widget>[
+                      Container(
+                        width: 4,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          color: accent,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'AIRING SOON',
+                        style: TextStyle(
+                          color: primaryText,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: ReiconIcon(
+                          Reicon.outline.bell,
+                          size: 20,
+                          color: secondaryText,
+                        ),
+                        tooltip: 'Airing alerts',
+                        onPressed: _onAiringBell,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 212,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: _airing.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 12),
+                    itemBuilder: (BuildContext context, int index) {
+                      final AiringEntry entry = _airing[index];
+                      return SizedBox(
+                        width: 120,
+                        child: _AiringCard(
+                          entry: entry,
+                          onTap: () => widget.onOpenAnime(
+                            Anime(
+                              id: 'anilist-${entry.anilistId}',
+                              anilistId: entry.anilistId,
+                              title: entry.title,
+                              rating: 0,
+                              year: 0,
+                              episodeCount: entry.episodeCount,
+                              genres: const <String>[],
+                              synopsis: '',
+                              gradient: const <Color>[
+                                Color(0xFF3B2A6B),
+                                Color(0xFF120E24),
+                              ],
+                              posterUrl: entry.posterUrl,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
               // MOVIES (0.2.9): fixed last section on Home, below the
               // grid — it ignores the genre chips and the tab bar.
               // Horizontal poster row, same PosterCard style as the
@@ -1118,6 +1312,70 @@ class _MovieCard extends StatelessWidget {
                   ? AppTheme.textSecondaryDark
                   : AppTheme.textSecondaryLight,
               fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// AIRING SOON card (0.2.10): same PosterCard shape as the MOVIES
+/// row — poster + title — with an accent "EP n · in 2d 4h" countdown
+/// line instead of a score. Tap opens the normal Detail screen.
+class _AiringCard extends StatelessWidget {
+  const _AiringCard({required this.entry, required this.onTap});
+
+  final AiringEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color accent = Theme.of(context).colorScheme.primary;
+    final Anime anime = Anime(
+      id: 'anilist-${entry.anilistId}',
+      anilistId: entry.anilistId,
+      title: entry.title,
+      rating: 0,
+      year: 0,
+      episodeCount: entry.episodeCount,
+      genres: const <String>[],
+      synopsis: '',
+      gradient: const <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
+      posterUrl: entry.posterUrl,
+    );
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: PosterArt(anime: anime, borderRadius: 0, showTitle: false),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            entry.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: isDark
+                  ? AppTheme.textPrimaryDark
+                  : AppTheme.textPrimaryLight,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'EP ${entry.episode} · ${formatAiringCountdown(entry.airingAt)}',
+            style: TextStyle(
+              color: accent,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
