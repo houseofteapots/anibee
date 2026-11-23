@@ -79,4 +79,83 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets('neutral banner: info icon, no yellow error icon', (
+    WidgetTester tester,
+  ) async {
+    // 0.2.9: an empty state is not a warning — the bell's "No
+    // notifications yet" shows a grey info icon, never the yellow
+    // error icon.
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (BuildContext context) {
+            return ElevatedButton(
+              onPressed: () => TopNotification.show(
+                context,
+                'No notifications yet',
+                neutral: true,
+              ),
+              child: const Text('Show'),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.tap(find.text('Show'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('No notifications yet'), findsOneWidget);
+    expect(find.byIcon(Icons.info_outline_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+    expect(find.byIcon(Icons.check_circle_rounded), findsNothing);
+    TopNotification.hide();
+    await tester.pump();
+  });
+
+  testWidgets('default banner still shows the warning icon', (
+    WidgetTester tester,
+  ) async {
+    await pumpButton(tester);
+    await tester.tap(find.text('Show'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      find.text('AniList login failed — no token returned.'),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.info_outline_rounded), findsNothing);
+    TopNotification.hide();
+    await tester.pump();
+  });
+
+  testWidgets('success banner still shows the green check', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (BuildContext context) {
+            return ElevatedButton(
+              onPressed: () => TopNotification.show(
+                context,
+                'Done!',
+                success: true,
+              ),
+              child: const Text('Show'),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.tap(find.text('Show'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Done!'), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+    TopNotification.hide();
+    await tester.pump();
+  });
 }

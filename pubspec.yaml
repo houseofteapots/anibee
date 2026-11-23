@@ -1,7 +1,7 @@
 name: anibee
 description: "aniBee — personal iOS anime app. Miruro-linked, AniList-powered."
 publish_to: 'none'
-version: 0.2.8+12
+version: 0.2.9+13
 
 environment:
   sdk: ^3.13.5
@@ -65,4 +65,5 @@ flutter:
   assets:
     - assets/logo.jpg
     - assets/splash_mark.png
+    - assets/launch_image.png
     - assets/providers.json

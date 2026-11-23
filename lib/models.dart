@@ -62,6 +62,7 @@ class Anime {
     bool? isSaved,
     int? anilistId,
     int? malId,
+    int? episodeCount,
     int? currentEpisode,
     int? minutesLeft,
     int? nextEpisode,
@@ -73,7 +74,7 @@ class Anime {
       title: title,
       rating: rating,
       year: year,
-      episodeCount: episodeCount,
+      episodeCount: episodeCount ?? this.episodeCount,
       genres: genres,
       synopsis: synopsis,
       gradient: gradient,
@@ -98,6 +99,7 @@ class Episode {
     required this.synopsis,
     required this.airDate,
     required this.hasDub,
+    this.thumbnailUrl,
   });
 
   final int number;
@@ -112,6 +114,23 @@ class Episode {
 
   /// True when a dubbed track exists (drives the Sub & Dub filter).
   final bool hasDub;
+
+  /// Per-episode thumbnail from AniList `streamingEpisodes` (0.2.9).
+  /// Null = AniList has no thumbnail for this episode → the card
+  /// falls back to the anime poster. Never faked or derived.
+  final String? thumbnailUrl;
+
+  Episode copyWith({String? thumbnailUrl}) {
+    return Episode(
+      number: number,
+      title: title,
+      duration: duration,
+      synopsis: synopsis,
+      airDate: airDate,
+      hasDub: hasDub,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+    );
+  }
 }
 
 class ProviderSource {
@@ -346,6 +365,7 @@ List<Anime> mockCatalogue() {
       synopsis: 'Izuku has dreamt of being a hero all his life—a lofty goal for anyone, but especially challenging for a kid with no superpowers. That’s right, in a world where eighty percent of the population has some kind of...',
       posterUrl:
           'https://image.tmdb.org/t/p/w500/phuYuzqWW9ru8EA3HVjE9W2Rr3M.jpg',
+      anilistId: 21459,
       gradient: <Color>[Color(0xFF0B4D5C), Color(0xFF0A0A13)],
     ),
     const Anime(
@@ -623,6 +643,142 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/61EwFPqc0r1uJo6la49J55F8bQ8.jpg',
       gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
+    ),
+  ];
+}
+
+/// Bundled anime-movie fallback for the Home MOVIES row (0.2.9).
+/// Used when the live AniList movie query fails or returns empty
+/// (offline / rate limit) — the row is never blank. Every entry is
+/// one "episode", so Detail/player treat it like any single-episode
+/// title and play through the existing resolver path. Poster URLs
+/// are TMDB w500, each verified to return 200 — except Violet
+/// Evergarden: The Movie, whose TMDB poster could not be verified,
+/// so it has no posterUrl and shows the gradient art. anilistId is
+/// set only where known for certain; the rest resolve by title at
+/// play time (same as catalogue titles without a stored id).
+List<Anime> mockMovies() {
+  return <Anime>[
+    const Anime(
+      id: 'movie-your-name',
+      title: 'Your Name',
+      rating: 4.4,
+      year: 2016,
+      episodeCount: 1,
+      genres: <String>['Drama', 'Romance', 'Supernatural'],
+      synopsis: 'Two teenagers who swap bodies across time and distance race to meet before a comet changes everything.',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/q719jXXEzOoYaps6babgKnONONX.jpg',
+      anilistId: 21519,
+      gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
+    ),
+    const Anime(
+      id: 'movie-spirited-away',
+      title: 'Spirited Away',
+      rating: 4.4,
+      year: 2001,
+      episodeCount: 1,
+      genres: <String>['Adventure', 'Fantasy'],
+      synopsis: 'A girl wanders into a bathhouse for spirits and must work there to free her transformed parents.',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/39wmItIWsg5sZMyRUHLkWBcuVCM.jpg',
+      anilistId: 199,
+      gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
+    ),
+    const Anime(
+      id: 'movie-mugen-train',
+      title: 'Demon Slayer: Mugen Train',
+      rating: 4.2,
+      year: 2020,
+      episodeCount: 1,
+      genres: <String>['Action', 'Fantasy'],
+      synopsis: 'Tanjiro boards the Infinity Train with the Flame Hashira to stop a demon haunting its passengers.',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/h8Rb9gBr48ODIwYUttZNYeMWeUU.jpg',
+      gradient: <Color>[Color(0xFF4D1A1A), Color(0xFF120E24)],
+    ),
+    const Anime(
+      id: 'movie-jujutsu-kaisen-0',
+      title: 'Jujutsu Kaisen 0',
+      rating: 4.1,
+      year: 2021,
+      episodeCount: 1,
+      genres: <String>['Action', 'Fantasy'],
+      synopsis: 'Yuta Okkotsu, haunted by a powerful cursed spirit, joins Jujutsu High to learn to control it.',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/3pTwMUEavTzVOh6yLN0aEwR7uSy.jpg',
+      gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
+    ),
+    const Anime(
+      id: 'movie-a-silent-voice',
+      title: 'A Silent Voice',
+      rating: 4.4,
+      year: 2016,
+      episodeCount: 1,
+      genres: <String>['Drama', 'Romance'],
+      synopsis: 'A former bully seeks redemption years later by reconnecting with the deaf girl he once tormented.',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/tuFaWiqX0TXoWu7DGNcmX3UW7sT.jpg',
+      anilistId: 20934,
+      gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
+    ),
+    const Anime(
+      id: 'movie-weathering-with-you',
+      title: 'Weathering With You',
+      rating: 4.0,
+      year: 2019,
+      episodeCount: 1,
+      genres: <String>['Drama', 'Fantasy', 'Romance'],
+      synopsis: 'A runaway teen in rainy Tokyo meets a girl who can clear the sky — at a price.',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/qgrk7r1fV4IjuoeiGS5HOhXNdLJ.jpg',
+      gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
+    ),
+    const Anime(
+      id: 'movie-suzume',
+      title: 'Suzume',
+      rating: 4.0,
+      year: 2022,
+      episodeCount: 1,
+      genres: <String>['Adventure', 'Drama', 'Fantasy'],
+      synopsis: 'A 17-year-old girl helps a mysterious young man close doors unleashing disasters across Japan.',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/yStW1TXF5s7Tbtu9KjIZEaWl6HL.jpg',
+      gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
+    ),
+    const Anime(
+      id: 'movie-boy-and-the-heron',
+      title: 'The Boy and the Heron',
+      rating: 3.8,
+      year: 2023,
+      episodeCount: 1,
+      genres: <String>['Adventure', 'Drama', 'Fantasy'],
+      synopsis: 'During the war, a boy follows a talking grey heron into a strange world to find his mother.',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/4GKye5dR4uJyYbcyTveSue1gATD.jpg',
+      gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
+    ),
+    const Anime(
+      id: 'movie-violet-evergarden',
+      title: 'Violet Evergarden: The Movie',
+      rating: 4.2,
+      year: 2020,
+      episodeCount: 1,
+      genres: <String>['Drama', 'Fantasy', 'Romance'],
+      synopsis: 'Violet keeps searching for the meaning of the Major’s last words when a letter request stirs her past.',
+      gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
+    ),
+    const Anime(
+      id: 'movie-one-piece-film-red',
+      title: 'One Piece Film: Red',
+      rating: 3.8,
+      year: 2022,
+      episodeCount: 1,
+      genres: <String>['Action', 'Adventure', 'Music'],
+      synopsis: 'Luffy’s crew attends pop superstar Uta’s first concert — and her song threatens to trap the world in a dream.',
+      posterUrl:
+          'https://image.tmdb.org/t/p/w500/8ibfhe4P7rhmn3lrPhOZzIJHA2B.jpg',
+      gradient: <Color>[Color(0xFF4D1A1A), Color(0xFF120E24)],
     ),
   ];
 }

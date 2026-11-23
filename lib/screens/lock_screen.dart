@@ -11,17 +11,29 @@ enum LockMode { unlock, setup }
 
 /// App lock: 4-digit PIN + Face ID. Matches the approved mockup
 /// (AniBee bee mark, "Enter Passcode", 4 dots, keypad, Face ID).
+///
+/// 0.2.9: Face ID first — in unlock mode, when Face ID is enabled in
+/// Settings, the Face ID prompt fires automatically as soon as the
+/// lock screen appears, so the user never has to tap the Face ID
+/// button or type the PIN. A failed / cancelled prompt stays
+/// silently on the PIN keypad (no error loop, no repeated prompt);
+/// the Face ID button retries, the PIN always works. Setup mode is
+/// unchanged (manual flow only).
 class LockScreen extends StatefulWidget {
   const LockScreen({
     super.key,
     required this.mode,
     required this.store,
     this.onUnlocked,
+    this.auth,
   });
 
   final LockMode mode;
   final SettingsStore store;
   final VoidCallback? onUnlocked;
+
+  /// Test seam: the real [LocalAuthentication] when null.
+  final LocalAuthentication? auth;
 
   @override
   State<LockScreen> createState() => _LockScreenState();
@@ -33,6 +45,22 @@ class _LockScreenState extends State<LockScreen> {
   String _error = '';
   int _wrongAttempts = 0;
   bool _faceIdBusy = false;
+
+  /// 0.2.9 auto-prompt guard: fires once per appearance.
+  bool _autoFaceIdTried = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.mode == LockMode.unlock && widget.store.faceIdEnabled) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_autoFaceIdTried && mounted) {
+          _autoFaceIdTried = true;
+          _tryFaceId(silent: true);
+        }
+      });
+    }
+  }
 
   String _hash(String pin) {
     return sha256.convert(utf8.encode('anibee-pin:$pin')).toString();
@@ -86,14 +114,21 @@ class _LockScreenState extends State<LockScreen> {
     }
   }
 
-  Future<void> _tryFaceId() async {
+  /// Face ID attempt. [silent] is the 0.2.9 auto-prompt path: a
+  /// failed / cancelled automatic prompt stays quietly on the PIN
+  /// keypad (no error text, no loop) — the user taps the Face ID
+  /// button to retry or types the PIN. The button path (silent:
+  /// false) keeps showing the error, as before.
+  Future<void> _tryFaceId({bool silent = false}) async {
     if (_faceIdBusy) return;
     setState(() => _faceIdBusy = true);
     try {
-      final LocalAuthentication auth = LocalAuthentication();
+      final LocalAuthentication auth = widget.auth ?? LocalAuthentication();
       final bool canCheck = await auth.canCheckBiometrics;
       if (!canCheck) {
-        setState(() => _error = 'Face ID is not available on this device.');
+        if (!silent) {
+          setState(() => _error = 'Face ID is not available on this device.');
+        }
         return;
       }
       final bool ok = await auth.authenticate(
@@ -109,7 +144,9 @@ class _LockScreenState extends State<LockScreen> {
         }
       }
     } catch (_) {
-      setState(() => _error = 'Face ID failed. Enter your passcode.');
+      if (!silent) {
+        setState(() => _error = 'Face ID failed. Enter your passcode.');
+      }
     } finally {
       if (mounted) setState(() => _faceIdBusy = false);
     }

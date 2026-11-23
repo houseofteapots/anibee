@@ -141,6 +141,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   double _rate = 1.0;
 
   StreamSubscription<Duration>? _positionSub;
+  // 0.2.9: the AniSkip fetch is deferred until the real duration is
+  // known — this subscription retries it the moment the duration
+  // arrives, instead of waiting for the next position tick (which
+  // may be seconds away, or never come if playback stalls).
+  StreamSubscription<Duration>? _durationSub;
   bool _resumeApplied = false;
   bool _autoplayShown = false;
   Timer? _autoplayTimer;
@@ -224,6 +229,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   int? _skipTimesEpisode;
   int? _resolvedMalId;
 
+  /// 0.2.9: true when a Skip fetch was deferred because the episode
+  /// duration was still unknown (stream not loaded yet). `_onPosition`
+  /// retries the fetch once the real duration first arrives.
+  bool _skipTimesAwaitingDuration = false;
+
   /// Right-side slide-over panel (0.2.4, Zeus style): null = closed.
   _PanelKind? _panelKind;
 
@@ -253,6 +263,31 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// holding the right side).
   @visibleForTesting
   double get rateForTest => _rate;
+
+  /// Test seam: show the autoplay-next overlay immediately (the real
+  /// trigger is the position stream near the end of an episode).
+  @visibleForTesting
+  void showAutoplayForTest() {
+    if (mounted) _showAutoplayOverlay();
+  }
+
+  /// Test seam: whether the autoplay-next overlay is currently shown.
+  @visibleForTesting
+  bool get autoplayVisibleForTest =>
+      _autoplayTimer != null && _autoplayTimer!.isActive;
+
+  /// Test seam: the episode currently playing.
+  @visibleForTesting
+  int get currentEpisodeForTest => _currentEpisode.number;
+
+  /// Test seam: whether a Skip Intro/Outro fetch is deferred, waiting
+  /// for the episode duration to become known (0.2.9).
+  @visibleForTesting
+  bool get skipTimesAwaitingDurationForTest => _skipTimesAwaitingDuration;
+
+  /// Test seam: the loaded Skip Intro/Outro data (null = none).
+  @visibleForTesting
+  SkipTimes? get skipTimesForTest => _skipTimes;
 
   /// Last periodic progress save (Continue Watching + resume).
   DateTime _lastProgressSave = DateTime.fromMillisecondsSinceEpoch(0);
@@ -298,6 +333,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     }
 
     _positionSub = _player.stream.position.listen(_onPosition);
+    _durationSub = _player.stream.duration.listen((Duration d) {
+      if (d > Duration.zero) _maybeRetrySkipTimes();
+    });
     _scheduleHide();
     // 0.2.4: real AniSkip data for the first episode (best-effort,
     // silent — no data simply means no Skip button).
@@ -307,6 +345,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   @override
   void dispose() {
     _positionSub?.cancel();
+    _durationSub?.cancel();
     _hideTimer?.cancel();
     _holdTimer?.cancel();
     _autoplayTimer?.cancel();
@@ -348,6 +387,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       _lastProgressSave = DateTime.now();
       _saveProgress();
     }
+    // 0.2.9: the AniSkip fetch was deferred until the real duration
+    // was known — retry once now that it has arrived.
+    _maybeRetrySkipTimes();
     // Autoplay-next countdown near the end of a real episode.
     if (!_autoplayShown &&
         _store.autoplayNext &&
@@ -652,30 +694,61 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// AniList id (one GraphQL call, cached for the title). No id, no
   /// service, or no AniSkip data -> null, and the player shows no
   /// Skip button. Never throws.
+  ///
+  /// 0.2.9: (1) AniSkip 400s without `episodeLength` ("Validation
+  /// failed: episodeLength NaN"), and the duration is usually still
+  /// 0 when this runs at init / episode switch — so the fetch is now
+  /// DEFERRED until the real duration is known and never sent
+  /// without it; `_onPosition` retries once the duration arrives.
+  /// (2) Most catalogue titles have neither a malId nor an
+  /// anilistId, so the fetch never started at all — the AniList id
+  /// is now resolved by title first (same helper as the season
+  /// selector), then the MAL id from it.
   Future<void> _loadSkipTimes(Episode episode) async {
     if (_skipTimesEpisode == episode.number && _skipTimes != null) return;
     _skipTimesEpisode = episode.number;
     int? malId = widget.anime.malId ?? _resolvedMalId;
-    if (malId == null && widget.anime.anilistId != null) {
-      try {
-        final Anime? full = await widget.anilist?.mediaById(
-          widget.anime.anilistId!,
-        );
-        malId = full?.malId;
-        if (malId != null) _resolvedMalId = malId;
-      } catch (_) {
-        malId = null;
+    if (malId == null) {
+      int? anilistId = widget.anime.anilistId;
+      anilistId ??= await widget.anilist?.resolveId(widget.anime.title);
+      if (anilistId != null) {
+        try {
+          final Anime? full = await widget.anilist?.mediaById(anilistId);
+          malId = full?.malId;
+          if (malId != null) _resolvedMalId = malId;
+        } catch (_) {
+          malId = null;
+        }
       }
     }
     if (malId == null) return;
     final int duration = _player.state.duration.inSeconds;
+    if (duration <= 0) {
+      // Duration not known yet (stream still loading): do NOT fetch
+      // without episodeLength — AniSkip 400s. `_onPosition` retries
+      // once the duration arrives.
+      _skipTimesAwaitingDuration = true;
+      return;
+    }
+    _skipTimesAwaitingDuration = false;
     final SkipTimes? times = await _aniSkip.fetchSkipTimes(
       malId: malId,
       episode: episode.number,
-      episodeLength: duration > 0 ? duration : null,
+      episodeLength: duration,
     );
     if (!mounted || _skipTimesEpisode != episode.number) return;
     setState(() => _skipTimes = times);
+  }
+
+  /// 0.2.9: the AniSkip fetch was deferred until the real duration
+  /// was known — retry once now that it has arrived. Called from
+  /// `_onPosition` (every position update carries the duration).
+  void _maybeRetrySkipTimes() {
+    if (_skipTimesAwaitingDuration &&
+        _player.state.duration.inSeconds > 0) {
+      _skipTimesAwaitingDuration = false;
+      unawaited(_loadSkipTimes(_currentEpisode));
+    }
   }
 
   // ------------------------------------------------------------- controls
@@ -971,6 +1044,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   // ------------------------------------------------------------------- PiP
 
+  /// 0.2.9: the ONE short line the user ever sees when PiP fails.
+  /// The raw native diagnostic (PGPegasusErrorDomain … + the diag
+  /// counters) goes to the log only — never to the banner.
+  static const String _pipFailedMessage = 'PiP nahi khula — dobara try karo.';
+
+  /// Test seam: the short PiP-failure line (the raw native diagnostic
+  /// must never reach the user).
+  @visibleForTesting
+  String get pipFailedMessageForTest => _pipFailedMessage;
+
   Future<void> _enterPip() async {
     if (_pipBusy || _pipPlayer != null) return;
     final String? url = widget.trailer.url;
@@ -985,8 +1068,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _pipBusy = true;
     final Duration pos = _player.state.position;
     final Duration dur = _player.state.duration;
+    // The main player keeps playing until the PiP layer is primed —
+    // pausing it first would freeze the picture for the whole wait.
+    final bool wasPlaying = _player.state.playing;
+    final AnibeeMpvPip bridge = AnibeeMpvPip();
+    Player? pipPlayerForCleanup;
     try {
       final Player pipPlayer = Player();
+      pipPlayerForCleanup = pipPlayer;
       // Software renderer: the fork's frame tap feeds the native window.
       final VideoController pipController = VideoController(
         pipPlayer,
@@ -1006,9 +1095,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       await pipPlayer.setVolume(_player.state.volume);
       await pipPlayer.setRate(_rate);
       await pipPlayer.play();
-      await _player.pause();
 
-      final AnibeeMpvPip bridge = AnibeeMpvPip();
       bridge.onPipStarted = () {
         if (mounted) setState(() => _inPip = true);
       };
@@ -1016,7 +1103,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         await _restoreFromPip();
       };
       bridge.onPipFailed = (String reason) async {
-        if (mounted) _snack('PiP failed: $reason');
+        debugPrint('Anibee PiP failed: $reason');
+        if (mounted) _snack(_pipFailedMessage);
         await _restoreFromPip();
       };
       bridge.onPipSetPlaying = (bool playing) {
@@ -1037,16 +1125,53 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         playing: true,
         rate: _rate,
       );
+      // 0.2.9: do NOT enter until the layer holds a frame. The Swift
+      // side polls only ~3 s for `possible`, and the pip player's
+      // first frame (HLS open + seek + decode) routinely takes
+      // longer — the old code entered immediately and failed with
+      // primed=false / ingest=0. Wait here (main player still
+      // playing); on timeout fail short and leave the main player
+      // exactly as it was.
+      if (!await bridge.waitForPrime()) {
+        String diag = '';
+        try {
+          diag = await bridge.diag;
+        } catch (_) {}
+        debugPrint('Anibee PiP never primed: $diag');
+        await bridge.dispose();
+        await pipPlayer.dispose();
+        if (mounted) _snack(_pipFailedMessage);
+        return;
+      }
+      await _player.pause();
+      // Refresh the scrubber position: it advanced while we waited.
+      await bridge.updateState(
+        position: _player.state.position,
+        duration: _player.state.duration,
+        playing: true,
+        rate: _rate,
+      );
       final bool ok = await bridge.enterPiP();
       if (!ok) {
+        // Start refused even primed: resume the main player — the
+        // old code left it paused with no window.
+        await bridge.dispose();
         await pipPlayer.dispose();
+        if (wasPlaying) await _player.play();
+        if (mounted) _snack(_pipFailedMessage);
         return;
       }
       _pipPlayer = pipPlayer;
       _pipController = pipController;
       _pipBridge = bridge;
     } catch (e) {
-      if (mounted) _snack('PiP failed: $e');
+      debugPrint('Anibee PiP failed: $e');
+      await bridge.dispose();
+      await pipPlayerForCleanup?.dispose();
+      if (wasPlaying && !_player.state.playing) {
+        await _player.play();
+      }
+      if (mounted) _snack(_pipFailedMessage);
       await _restoreFromPip();
     } finally {
       _pipBusy = false;
@@ -2044,29 +2169,32 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       builder: (BuildContext context) {
         return SafeArea(
           child: SizedBox(
-            height: MediaQuery.of(context).size.height * 0.7,
+            // 0.2.9: more compact — the 0.7 sheet dominated the
+            // landscape screen. 0.55 leaves the video visible above
+            // it; the grid scrolls for later episodes.
+            height: MediaQuery.of(context).size.height * 0.55,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
                   child: Text(
                     'Episodes — ${widget.anime.title}',
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 18,
+                      fontSize: 16,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
                 Expanded(
                   child: GridView.builder(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(12),
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 5,
-                          mainAxisSpacing: 10,
-                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
                           childAspectRatio: 1.6,
                         ),
                     itemCount: widget.episodes.length,
@@ -3390,52 +3518,76 @@ class _AutoplayOverlay extends StatelessWidget {
     return Positioned(
       right: 16,
       bottom: 150,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: const Color(0xE617171F),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: accent.withValues(alpha: 0.5)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(
-              'Up next: Episode ${next?.number ?? ''}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
+      // 0.2.9: the card itself is tappable to cancel. Before this,
+      // only the two buttons responded: the Container has a
+      // decoration so it IS hit-testable, but it carried no
+      // recognizer, and the Stack stops hit-testing at the overlay —
+      // so a tap on the title, the countdown text, the padding, or
+      // the gap between the buttons was swallowed completely (not
+      // even the controls toggle fired). A finger aiming at the
+      // small grey Cancel text easily lands a few px off it. Any tap
+      // on the card now dismisses it; the buttons still fire their
+      // own handlers too (both recognizers winning is harmless —
+      // onCancel is idempotent, and onPlayNow still switches).
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onCancel,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xE617171F),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: accent.withValues(alpha: 0.5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(
+                'Up next: Episode ${next?.number ?? ''}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Playing in $countdown s',
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                ElevatedButton(
-                  onPressed: onPlayNow,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: accent,
-                    foregroundColor: Colors.white,
+              const SizedBox(height: 4),
+              Text(
+                'Playing in $countdown s',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  ElevatedButton(
+                    onPressed: onPlayNow,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Play now'),
                   ),
-                  child: const Text('Play now'),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: onCancel,
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(color: Colors.white70),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: onCancel,
+                    // 0.2.9: a proper finger-sized target — the bare
+                    // text was ~36pt tall and easy to miss.
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(64, 44),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(color: Colors.white70),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

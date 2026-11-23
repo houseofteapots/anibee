@@ -82,6 +82,7 @@ class _DetailScreenState extends State<DetailScreen> {
     _trailer = widget.player ?? TrailerPlayer();
     _episodes = mockEpisodes(_anime);
     unawaited(_loadSeasons());
+    unawaited(_loadEpisodeThumbnails());
     if (widget.autoPlay) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _openFullPlayer();
@@ -92,14 +93,48 @@ class _DetailScreenState extends State<DetailScreen> {
   /// Fetch the season chain for this anime (one GraphQL query when
   /// there is no sequel/prequel — the walk stops at the first hop).
   /// Failure = no selector; the episode list stays as-is.
+  /// 0.2.9: most catalogue titles have NO stored anilistId (My Hero
+  /// Academia didn't — the 0.2.8 phone test showed no selector), so
+  /// resolve by title first, exactly like the Miruro resolver does.
+  /// Unresolvable = no selector, episode list as-is.
   Future<void> _loadSeasons() async {
-    final int? anilistId = _anime.anilistId;
+    int? anilistId = _anime.anilistId;
+    anilistId ??= await _services.anilist.resolveId(_anime.title);
     if (anilistId == null) return;
     final List<SeasonInfo> seasons = await _services.anilist.fetchSeasons(
       anilistId,
     );
     if (!mounted) return;
     if (seasons.length > 1) setState(() => _seasons = seasons);
+  }
+
+  /// Per-episode thumbnails from AniList `streamingEpisodes` (0.2.9):
+  /// same id resolution as _loadSeasons. Best-effort — failure or
+  /// no thumbnails = poster fallback per episode. The map is
+  /// applied to _episodes once (cached in the episode list
+  /// itself), so scrolling never re-fetches. The identity guard
+  /// drops a stale response if the user switched seasons mid-fetch.
+  Future<void> _loadEpisodeThumbnails() async {
+    final Anime animeAtCall = _anime;
+    final int? anilistId =
+        _anime.anilistId ?? await _services.anilist.resolveId(_anime.title);
+    if (anilistId == null) return;
+    final Map<int, String> thumbs = await _services.anilist
+        .fetchEpisodeThumbnails(
+          anilistId,
+          episodeCount: _anime.episodeCount,
+        );
+    if (!mounted || thumbs.isEmpty) return;
+    if (!identical(_anime, animeAtCall)) return;
+    setState(() {
+      _episodes = _episodes
+          .map(
+            (Episode ep) => thumbs.containsKey(ep.number)
+                ? ep.copyWith(thumbnailUrl: thumbs[ep.number])
+                : ep,
+          )
+          .toList();
+    });
   }
 
   /// Switch the episode list to another season: load that season's
@@ -121,6 +156,8 @@ class _DetailScreenState extends State<DetailScreen> {
       _episodes = mockEpisodes(next);
       _selectingSeason = false;
     });
+    // The new season has its own episode thumbnails.
+    unawaited(_loadEpisodeThumbnails());
   }
 
   @override

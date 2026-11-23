@@ -19,6 +19,7 @@ class TopNotification {
     BuildContext context,
     String message, {
     bool success = false,
+    bool neutral = false,
     String? detail,
     Duration duration = const Duration(seconds: 3),
   }) {
@@ -31,6 +32,7 @@ class TopNotification {
           message: message,
           detail: detail,
           success: success,
+          neutral: neutral,
           onDismiss: hide,
         );
       },
@@ -52,12 +54,14 @@ class _TopBanner extends StatefulWidget {
     required this.message,
     required this.detail,
     required this.success,
+    required this.neutral,
     required this.onDismiss,
   });
 
   final String message;
   final String? detail;
   final bool success;
+  final bool neutral;
   final VoidCallback onDismiss;
 
   @override
@@ -143,12 +147,19 @@ class _TopBannerState extends State<_TopBanner>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Icon(
+                        // 0.2.9: an empty state is not a warning —
+                        // neutral shows a grey info icon, never the
+                        // yellow error icon.
                         widget.success
                             ? Icons.check_circle_rounded
+                            : widget.neutral
+                            ? Icons.info_outline_rounded
                             : Icons.error_outline_rounded,
                         size: 20,
                         color: widget.success
                             ? AppTheme.success
+                            : widget.neutral
+                            ? secondaryText
                             : const Color(0xFFFFC531),
                       ),
                       const SizedBox(width: 10),

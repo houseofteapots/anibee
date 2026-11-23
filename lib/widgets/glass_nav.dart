@@ -9,9 +9,10 @@ import 'reicon_icon.dart';
 /// Dark mode cards everywhere else are solid; this pill is translucent blur.
 /// Positioned talks directly to the Stack (never wrap in Transform/Padding).
 ///
-/// [navStyle] (Settings → Appearance): 'glass' = Liquid Glass — highly
-/// translucent with a sheen; 'blurry' = frosted blur — stronger blur,
-/// more opaque, matte finish.
+/// [navStyle] (Settings → Appearance): 'glass' = Liquid Glass — crystal
+/// clear, Zeus-style; 'blurry' = the frosted look — heavy blur, milky
+/// surface. (0.2.9: the old 'glass' rendered frosted on the phone, so the
+/// frosted look moved here to 'blurry' and 'glass' became truly clear.)
 class GlassNavBar extends StatelessWidget {
   const GlassNavBar({
     super.key,
@@ -28,6 +29,25 @@ class GlassNavBar extends StatelessWidget {
   final bool isDark;
   final String navStyle;
 
+  /// Liquid Glass design values — Zeus's Frost nav
+  /// (packages/liquid_glass_bottom_nav, fork of 0.0.14): its glass
+  /// colour is `Color.fromARGB(0, 255, 255, 255)` — alpha ZERO — with
+  /// blur 5, thickness 20, refractive index 1.2. The glass look
+  /// comes from refraction, not from a milky surface or heavy blur;
+  /// Zeus's own Frost fix (b109, "nav blurry/milky on Frost — pure
+  /// liquid glass, clear not frosted") is the same complaint this
+  /// fixes here. AniBee has no refraction renderer, so the closest
+  /// faithful equivalent is a near-transparent surface + minimal
+  /// blur: the content behind stays SHARP and readable.
+  static const double glassBlurSigma = 4.0;
+  static const Color glassSurfaceDark = Color(0x0A181C20);
+
+  /// Frosted design values — exactly what the old 'glass' rendered
+  /// (Zeus MatteGlassPill's composed colour-matrix + blur-18 filter
+  /// over the 0x38 dark surface): heavy diffusion, milky surface.
+  static const double blurryBlurSigma = 18.0;
+  static const Color blurrySurfaceDark = Color(0x38181C20);
+
   // Navigation icons are Reicon Outline (reicon.dev, MIT) — no generic
   // Material icons on the nav pill.
   static final List<_NavItem> _items = <_NavItem>[
@@ -41,14 +61,15 @@ class GlassNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool glass = navStyle != 'blurry';
-    // Liquid Glass (crystal clear, Zeus-style): the composed
-    // colour-matrix + blur filter from Zeus's MatteGlassPill keeps the
-    // scene's colour and brightness beneath the diffusion, over a very
-    // low-alpha dark surface — genuinely translucent glass, content
-    // behind stays sharp and readable, never a muddy wash.
-    // Blurry: frosted — heavy blur + much more opaque, matte.
+    // 'glass' — crystal clear: near-transparent surface + minimal
+    // blur (sigma 4, cf. Zeus's liquid-glass blur 5). The content
+    // behind stays sharp; only a thin bright border + a whisper of
+    // top sheen mark the pill's edge.
+    // 'blurry' — frosted: the composed colour-matrix + blur-18
+    // filter over the 0x38 dark surface (the old 'glass' look).
     final ImageFilter filter = glass
-        ? ImageFilter.compose(
+        ? ImageFilter.blur(sigmaX: glassBlurSigma, sigmaY: glassBlurSigma)
+        : ImageFilter.compose(
             outer: const ColorFilter.matrix(<double>[
               0.724,
               0.250,
@@ -71,18 +92,18 @@ class GlassNavBar extends StatelessWidget {
               1,
               0,
             ]),
-            inner: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          )
-        : ImageFilter.blur(sigmaX: 32, sigmaY: 32);
+            inner: ImageFilter.blur(
+              sigmaX: blurryBlurSigma,
+              sigmaY: blurryBlurSigma,
+            ),
+          );
     final Color bgColor = isDark
-        ? (glass
-              ? const Color(0x38181C20)
-              : Colors.white.withValues(alpha: 0.24))
+        ? (glass ? glassSurfaceDark : blurrySurfaceDark)
         : (glass
-              ? Colors.white.withValues(alpha: 0.30)
-              : Colors.white.withValues(alpha: 0.82));
+              ? Colors.white.withValues(alpha: 0.06)
+              : Colors.white.withValues(alpha: 0.30));
     final Color borderColor = Colors.white.withValues(
-      alpha: isDark ? (glass ? 0.22 : 0.10) : (glass ? 0.45 : 0.25),
+      alpha: isDark ? (glass ? 0.28 : 0.22) : (glass ? 0.50 : 0.45),
     );
     return ClipRRect(
       borderRadius: BorderRadius.circular(32),
@@ -94,16 +115,16 @@ class GlassNavBar extends StatelessWidget {
             color: bgColor,
             borderRadius: BorderRadius.circular(32),
             border: Border.all(color: borderColor),
-            gradient: glass
-                ? LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: <Color>[
-                      Colors.white.withValues(alpha: isDark ? 0.10 : 0.20),
-                      Colors.white.withValues(alpha: 0.0),
-                    ],
-                  )
-                : null,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: <Color>[
+                Colors.white.withValues(
+                  alpha: isDark ? (glass ? 0.08 : 0.10) : (glass ? 0.12 : 0.20),
+                ),
+                Colors.white.withValues(alpha: 0.0),
+              ],
+            ),
           ),
           child: Row(
             children: <Widget>[

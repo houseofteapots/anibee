@@ -41,6 +41,111 @@ class AniListService {
         .toList();
   }
 
+  /// Popular anime movies for the Home MOVIES row (0.2.9): AniList
+  /// MOVIE-format entries by popularity, 12 per page. A movie is
+  /// one "episode" — the API sometimes reports episodes 0/null, so
+  /// those are forced to 1 here (Detail/player treat a movie like
+  /// any single-episode title). Empty on any failure — the caller
+  /// falls back to the bundled list.
+  Future<List<Anime>> fetchMovies() async {
+    const String q =
+        r'query($p:Int,$n:Int){Page(page:$p,perPage:$n)'
+        r'{media(type:ANIME,format:MOVIE,sort:POPULARITY_DESC)'
+        r'{id idMal title{romaji english}coverImage{large extraLarge}'
+        r' format episodes seasonYear averageScore genres description}}}';
+    final Map<String, dynamic>? data = await _postSafe(q, <String, Object?>{
+      'p': 1,
+      'n': 12,
+    });
+    final List<dynamic> media =
+        (data?['Page'] as Map<String, dynamic>?)?['media'] as List<dynamic>? ??
+        <dynamic>[];
+    return media
+        .map((dynamic e) => animeFromMedia(e as Map<String, dynamic>))
+        .whereType<Anime>()
+        .map(
+          (Anime a) => a.episodeCount <= 0 ? a.copyWith(episodeCount: 1) : a,
+        )
+        .toList();
+  }
+
+  /// Per-episode thumbnails for one AniList id (0.2.9): the
+  /// `streamingEpisodes` field carries a thumbnail per episode
+  /// (titles like "Episode 1"). Returns episode number →
+  /// thumbnail URL, only for entries that actually have one.
+  /// Empty on any failure — the caller falls back to the anime
+  /// poster per episode. [episodeCount] bounds the order-fallback
+  /// for unnumbered entries; 0 = no bound.
+  Future<Map<int, String>> fetchEpisodeThumbnails(
+    int anilistId, {
+    int episodeCount = 0,
+  }) async {
+    const String q =
+        r'query($id:Int){Media(id:$id,type:ANIME)'
+        r'{streamingEpisodes{title thumbnail url site}}}';
+    final Map<String, dynamic>? data = await _postSafe(q, <String, Object?>{
+      'id': anilistId,
+    });
+    final List<dynamic> eps =
+        (data?['Media'] as Map<String, dynamic>?)?['streamingEpisodes']
+                as List<dynamic>? ??
+            <dynamic>[];
+    return matchEpisodeThumbnails(
+      eps.map((dynamic e) => e as Map<String, dynamic>).toList(),
+      episodeCount: episodeCount,
+    );
+  }
+
+  /// Match AniList `streamingEpisodes` entries to episode numbers.
+  /// Pure — unit-tested. Numbered titles ("Episode 1", "Ep. 12",
+  /// "12") map to that number; unnumbered entries fill the lowest
+  /// unclaimed episode numbers in list order (AniList usually
+  /// returns them in episode order). Entries without a thumbnail
+  /// are skipped (→ null, poster fallback); out-of-range numbers
+  /// are ignored; the first entry wins a duplicate number.
+  static Map<int, String> matchEpisodeThumbnails(
+    List<Map<String, dynamic>> streaming, {
+    int episodeCount = 0,
+  }) {
+    final Map<int, String> byNumber = <int, String>{};
+    final List<String> unnumbered = <String>[];
+    for (final Map<String, dynamic> entry in streaming) {
+      final String? thumb = entry['thumbnail'] as String?;
+      if (thumb == null || thumb.isEmpty) continue;
+      final int? number = _episodeNumberFromTitle(
+        entry['title'] as String? ?? '',
+      );
+      if (number != null && number > 0) {
+        if (episodeCount > 0 && number > episodeCount) continue;
+        byNumber.putIfAbsent(number, () => thumb);
+      } else {
+        unnumbered.add(thumb);
+      }
+    }
+    if (unnumbered.isNotEmpty && episodeCount > 0) {
+      int next = 1;
+      for (final String thumb in unnumbered) {
+        while (next <= episodeCount && byNumber.containsKey(next)) {
+          next++;
+        }
+        if (next > episodeCount) break;
+        byNumber[next] = thumb;
+        next++;
+      }
+    }
+    return byNumber;
+  }
+
+  /// "Episode 1" → 1, "Ep. 12" → 12, "12" → 12, anything else → null.
+  static int? _episodeNumberFromTitle(String title) {
+    final RegExpMatch? m = RegExp(
+      r'(?:episode|ep\.?)\s*(\d+)',
+      caseSensitive: false,
+    ).firstMatch(title);
+    if (m != null) return int.tryParse(m.group(1)!);
+    return int.tryParse(title.trim());
+  }
+
   /// Full detail for one AniList id (includes idMal, episode count rule
   /// inputs, banner). Returns null when the id is unknown.
   Future<Anime?> mediaById(int anilistId) async {

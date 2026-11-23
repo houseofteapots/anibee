@@ -616,9 +616,43 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                                 child: SizedBox(
                                   width: 104,
                                   height: 82,
-                                  child: PosterArt(
-                                    anime: widget.anime,
-                                    showTitle: false,
+                                  // 0.2.9: per-episode thumbnail from
+                                  // AniList streamingEpisodes. The
+                                  // poster stays underneath — while the
+                                  // thumbnail loads (or if it fails),
+                                  // the poster shows, never a blank tile.
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: <Widget>[
+                                      PosterArt(
+                                        anime: widget.anime,
+                                        showTitle: false,
+                                      ),
+                                      if (ep.thumbnailUrl != null)
+                                        Image.network(
+                                          ep.thumbnailUrl!,
+                                          fit: BoxFit.cover,
+                                          loadingBuilder:
+                                              (
+                                                BuildContext context,
+                                                Widget child,
+                                                ImageChunkEvent? progress,
+                                              ) {
+                                                if (progress == null) {
+                                                  return child;
+                                                }
+                                                return const SizedBox.shrink();
+                                              },
+                                          errorBuilder:
+                                              (
+                                                BuildContext context,
+                                                Object error,
+                                                StackTrace? stackTrace,
+                                              ) {
+                                                return const SizedBox.shrink();
+                                              },
+                                        ),
+                                    ],
                                   ),
                                 ),
                               ),

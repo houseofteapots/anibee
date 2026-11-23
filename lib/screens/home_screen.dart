@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../models.dart';
+import '../services/anilist_service.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/poster.dart';
@@ -23,12 +24,14 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.store,
+    required this.anilist,
     required this.onOpenAnime,
     required this.onOpenSearch,
     required this.onWatchNow,
   });
 
   final SettingsStore store;
+  final AniListService anilist;
   final ValueChanged<Anime> onOpenAnime;
 
   /// Header search icon jumps to the Search tab.
@@ -55,9 +58,16 @@ class _HomeScreenState extends State<HomeScreen> {
   String _genre = 'All';
   int _tab = 2; // TRENDING, like the reference.
 
+  /// MOVIES row (0.2.9, last section on Home): starts on the bundled
+  /// list so the row is never blank, then swaps in the live AniList
+  /// popular movies when the query answers. Fixed bottom section —
+  /// it ignores the genre chips and the tab bar.
+  List<Anime> _movies = mockMovies();
+
   @override
   void initState() {
     super.initState();
+    unawaited(_loadMovies());
     _autoTimer = Timer.periodic(const Duration(seconds: 5), (Timer t) {
       if (!mounted) return;
       final int next = (_page + 1) % _heroItems.length;
@@ -109,6 +119,14 @@ class _HomeScreenState extends State<HomeScreen> {
       list = list.where((Anime a) => a.genres.contains(_genre)).toList();
     }
     return list;
+  }
+
+  /// Live popular movies from AniList (0.2.9). A failed or empty
+  /// query keeps the bundled list — the row never goes blank.
+  Future<void> _loadMovies() async {
+    final List<Anime> live = await widget.anilist.fetchMovies();
+    if (!mounted || live.isEmpty) return;
+    setState(() => _movies = live);
   }
 
   Future<void> _confirmClearWatchHistory() async {
@@ -231,7 +249,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 tooltip: 'Notifications',
                 onPressed: () {
-                  TopNotification.show(context, 'No notifications yet');
+                  // 0.2.9: an empty state is not a warning — neutral
+                  // banner (grey info icon), never the yellow error.
+                  TopNotification.show(
+                    context,
+                    'No notifications yet',
+                    neutral: true,
+                  );
                 },
               ),
               IconButton(
@@ -490,6 +514,57 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
                 ),
+              // MOVIES (0.2.9): fixed last section on Home, below the
+              // grid — it ignores the genre chips and the tab bar.
+              // Horizontal poster row, same PosterCard style as the
+              // grid; a tap opens the normal Detail screen and the
+              // movie plays as a single episode.
+              const SizedBox(height: 28),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: <Widget>[
+                    Container(
+                      width: 4,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        color: accent,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'MOVIES',
+                      style: TextStyle(
+                        color: primaryText,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 212,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _movies.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 12),
+                  itemBuilder: (BuildContext context, int index) {
+                    final Anime movie = _movies[index];
+                    return SizedBox(
+                      width: 120,
+                      child: _MovieCard(
+                        anime: movie,
+                        onTap: () => widget.onOpenAnime(movie),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ],
           ),
         ),
@@ -947,6 +1022,97 @@ class _GridCard extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             '${anime.year} • ${anime.episodeCount} eps',
+            style: TextStyle(
+              color: isDark
+                  ? AppTheme.textSecondaryDark
+                  : AppTheme.textSecondaryLight,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// MOVIES row card (0.2.9): same PosterCard style as the grid card
+/// (poster + score badge + title) — the meta line says "Movie"
+/// instead of an episode count, since a movie is one episode.
+class _MovieCard extends StatelessWidget {
+  const _MovieCard({required this.anime, required this.onTap});
+
+  final Anime anime;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final int score = (anime.rating * 10).round();
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  PosterArt(anime: anime, borderRadius: 0, showTitle: false),
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          const Icon(
+                            Icons.star_rounded,
+                            color: Colors.white,
+                            size: 13,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '$score%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            anime.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: isDark
+                  ? AppTheme.textPrimaryDark
+                  : AppTheme.textPrimaryLight,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${anime.year} • Movie',
             style: TextStyle(
               color: isDark
                   ? AppTheme.textSecondaryDark

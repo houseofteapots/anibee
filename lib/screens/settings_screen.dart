@@ -479,13 +479,16 @@ class SettingsScreen extends StatelessWidget {
   /// "setup in progress" state instead of asking the user for it.
   /// Implicit grant — the token comes back in the redirect fragment.
   ///
-  /// 0.2.8 (Zeus-mirror): the redirect is `http://localhost` — the
-  /// client's registered Redirect URL must be exactly that (client
-  /// 57814). The webview intercepts it three ways; if every automatic
-  /// path fails, the sheet's paste fallback returns the token the
-  /// user copied off the PIN page. Every failure shows the last URL
-  /// the webview reached, so the next phone test proves where the
-  /// flow died instead of another blind "no token returned".
+  /// 0.2.8 (Zeus-mirror): the redirect is `http://localhost`.
+  /// 0.2.9: the token parser is host-agnostic, so the client's
+  /// registered Redirect URL no longer has to match anything — the
+  /// user's client 57814 has "anibee:// anilist-auth" (with a space)
+  /// and that URL now parses fine. The webview intercepts the
+  /// redirect three ways; if every automatic path fails, the sheet's
+  /// paste fallback returns the token the user copied off the PIN
+  /// page. Every failure shows the last URL the webview reached, so
+  /// the next phone test proves where the flow died instead of
+  /// another blind "no token returned".
   Future<void> _loginAnilist(BuildContext context) async {
     // 0.2.4: pick up client IDs the moment they land in the remote
     // config — no rebuild, no restart. A failed refresh keeps the
@@ -574,7 +577,10 @@ class SettingsScreen extends StatelessWidget {
       );
     } catch (e) {
       if (!context.mounted) return;
-      _notify(context, 'AniList login failed: $e');
+      // 0.2.9: the raw exception goes to the log only — the user
+      // sees one short line, never a technical dump.
+      debugPrint('AniList login failed: $e');
+      _notify(context, 'AniList login failed — dobara try karo.');
     }
   }
 
@@ -584,11 +590,12 @@ class SettingsScreen extends StatelessWidget {
   /// Code + PKCE plain.
   ///
   /// 0.2.8: same Zeus-mirror as AniList — redirect
-  /// `http://localhost` (the MAL client's registered Redirect URL must
-  /// match), intercepted three ways, same last-URL diagnostic, same
-  /// paste fallback (the code, copied from the sheet's last-URL line).
-  /// The MAL client ID is still empty in the remote config, so this
-  /// cannot be phone-verified until the user sends a real one.
+  /// `http://localhost`, intercepted three ways, same last-URL
+  /// diagnostic, same paste fallback (the code, copied from the
+  /// sheet's last-URL line). 0.2.9: the code parser is host-agnostic
+  /// like AniList's, so the registered Redirect URL shape no longer
+  /// matters. The MAL client ID is still empty in the remote config,
+  /// so this cannot be phone-verified until the user sends a real one.
   Future<void> _loginMal(BuildContext context) async {
     // 0.2.4: same remote-config refresh as AniList (see above).
     try {
@@ -683,7 +690,10 @@ class SettingsScreen extends StatelessWidget {
       _notify(context, 'Connected to MyAnimeList as $name.', success: true);
     } catch (e) {
       if (!context.mounted) return;
-      _notify(context, 'MyAnimeList login failed: $e');
+      // 0.2.9: the raw exception goes to the log only — the user
+      // sees one short line, never a technical dump.
+      debugPrint('MyAnimeList login failed: $e');
+      _notify(context, 'MyAnimeList login failed — dobara try karo.');
     }
   }
 

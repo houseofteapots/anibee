@@ -69,6 +69,23 @@ void main() {
       expect(times!.hasAny, isFalse);
     });
 
+    test('episodeLength is omitted when null (0.2.9: never send it empty)',
+        () async {
+      // AniSkip 400s on a missing/NaN episodeLength, so the player
+      // defers the fetch instead — but the service itself must not
+      // invent the parameter when the caller passes null.
+      final MockClient client = MockClient((http.Request req) async {
+        expect(req.url.query, isNot(contains('episodeLength')));
+        return http.Response('{"found":true,"results":[]}', 200);
+      });
+      final AniSkipService service = AniSkipService(client: client);
+      final SkipTimes? times = await service.fetchSkipTimes(
+        malId: 113415,
+        episode: 1,
+      );
+      expect(times, isNotNull);
+    });
+
     test('404 means no data for this episode (null), not an error',
         () async {
       final AniSkipService service = AniSkipService(

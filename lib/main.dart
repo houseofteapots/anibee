@@ -9,6 +9,7 @@ import 'services/app_services.dart';
 import 'services/provider_config.dart';
 import 'settings_store.dart';
 import 'theme.dart';
+import 'widgets/splash_view.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -126,46 +127,8 @@ class _RootGateState extends State<_RootGate> {
     return Stack(
       children: <Widget>[
         content,
-        _SplashView(opacity: _splashOpacity),
+        SplashView(opacity: _splashOpacity),
       ],
-    );
-  }
-}
-
-/// The splash itself: the AniBee mark (white corners cleaned to navy)
-/// centered on the dark navy background, with "AniBee" below it in
-/// the mark's bronze-gold — the same composition as the native launch
-/// screen, so the handoff between the two is seamless.
-class _SplashView extends StatelessWidget {
-  const _SplashView({required this.opacity});
-
-  final double opacity;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedOpacity(
-      opacity: opacity,
-      duration: const Duration(milliseconds: 400),
-      child: Container(
-        color: const Color(0xFF0D142E),
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Image.asset('assets/splash_mark.png', width: 180, height: 180),
-            const SizedBox(height: 14),
-            const Text(
-              'AniBee',
-              style: TextStyle(
-                color: Color(0xFFB17E5C),
-                fontSize: 34,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 6,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

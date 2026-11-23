@@ -125,33 +125,39 @@ void main() {
         ),
         'pin-tok2',
       );
-      // PIN page without a token, and a wrong host/path, are rejected.
+      // PIN page without a token is still rejected.
       expect(
         OAuthService.parseAnilistRedirect(
           Uri.parse('https://anilist.co/api/v2/oauth/pin'),
         ),
         isNull,
       );
+      // 0.2.9: host-agnostic — a token on ANY url is accepted now
+      // (the old host gate is what broke login on the phone, where
+      // the registered redirect had a space in it). These two used
+      // to be rejected; they return the token now, on purpose.
       expect(
         OAuthService.parseAnilistRedirect(
           Uri.parse('https://anilist.co/api/v2/oauth/other#access_token=x'),
         ),
-        isNull,
+        'x',
       );
       expect(
         OAuthService.parseAnilistRedirect(
           Uri.parse('https://evil.example/api/v2/oauth/pin#access_token=x'),
         ),
-        isNull,
+        'x',
       );
     });
 
-    test('parseAnilistRedirect rejects wrong scheme / host / empty token', () {
+    test('parseAnilistRedirect ignores scheme/host — only the token matters', () {
+      // 0.2.9: the host gate is gone. Any URL carrying an
+      // access_token yields it; a URL with no token still gives null.
       expect(
         OAuthService.parseAnilistRedirect(
           Uri.parse('anibee://other#access_token=x'),
         ),
-        isNull,
+        'x',
       );
       expect(
         OAuthService.parseAnilistRedirect(
@@ -467,6 +473,110 @@ void main() {
         (code: null, state: null),
       );
       expect(OAuthService.extractMalCodeFromText(null), (code: null, state: null));
+    });
+  });
+
+  group('0.2.9 host-agnostic redirect parse (phone regression)', () {
+    test('parseAnilistRedirect takes the token from the EXACT phone URL', () {
+      // 2026-11-23 19:07 phone screenshot, 0.2.8: the notification
+      // said "no token returned" while its own diagnostic line showed
+      // the token HAD arrived on this URL. The registered Redirect
+      // URL has a space ("anibee:// anilist-auth") so AniList
+      // redirects to a host of `%20anilist-auth` — the 0.2.8 exact
+      // host gate rejected it. Short token, exact phone shape:
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse(
+            'anibee://%20anilist-auth#access_token=eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6dGVzdA',
+          ),
+        ),
+        'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6dGVzdA',
+      );
+      // Full-length JWT-style token on the same shape (the real one
+      // is a long JWT, truncated in the screenshot).
+      const String jwt =
+          'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6dGVzdC1pZCJ9.'
+          'eyJzdWIiOiIxMjM0NSIsIm5hbWUiOiJTdXJlc2giLCJpYXQiOjE3OTU0MzYwMDB9.'
+          'c2lnbmF0dXJlLXNlZ21lbnQtd2l0aC1tb3JlLWNoYXJhY3RlcnMtaGVyZS1mb3ItbGVuZ3Ro';
+      expect(jwt.length, greaterThan(100));
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse(
+            'anibee://%20anilist-auth#access_token=$jwt&token_type=Bearer&expires_in=31536000',
+          ),
+        ),
+        jwt,
+      );
+      // The clean registered shape still works, as do PIN + localhost.
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse('anibee://anilist-auth#access_token=tok-abc'),
+        ),
+        'tok-abc',
+      );
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse(
+            'https://anilist.co/api/v2/oauth/pin#access_token=pin-tok',
+          ),
+        ),
+        'pin-tok',
+      );
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse('http://localhost/#access_token=tok-123'),
+        ),
+        'tok-123',
+      );
+      // No token anywhere is still null — even on the spaced host.
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse('anibee://%20anilist-auth#token_type=Bearer'),
+        ),
+        isNull,
+      );
+    });
+
+    test('parseMalRedirect is host-agnostic but still checks state', () {
+      // Same space-in-registered-URL shape as the AniList phone bug.
+      expect(
+        OAuthService.parseMalRedirect(
+          Uri.parse('anibee://%20mal-auth?code=code-1&state=state-xyz'),
+          'state-xyz',
+        ),
+        'code-1',
+      );
+      // Any other host shape works too — only state + code matter.
+      expect(
+        OAuthService.parseMalRedirect(
+          Uri.parse('https://example.com/cb?code=code-2&state=state-xyz'),
+          'state-xyz',
+        ),
+        'code-2',
+      );
+      // Wrong state is still rejected on every shape (CSRF gate).
+      expect(
+        OAuthService.parseMalRedirect(
+          Uri.parse('anibee://%20mal-auth?code=code-1&state=attacker'),
+          'state-xyz',
+        ),
+        isNull,
+      );
+      expect(
+        OAuthService.parseMalRedirect(
+          Uri.parse('http://localhost/?code=code-9&state=attacker'),
+          'state-xyz',
+        ),
+        isNull,
+      );
+      // No code is still null.
+      expect(
+        OAuthService.parseMalRedirect(
+          Uri.parse('anibee://%20mal-auth?state=state-xyz'),
+          'state-xyz',
+        ),
+        isNull,
+      );
     });
   });
 }

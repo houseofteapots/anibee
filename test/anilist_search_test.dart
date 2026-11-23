@@ -102,6 +102,26 @@ void main() {
       );
       expect(await svc.resolveId('Jujutsu Kaisen'), 5);
     });
+
+    test('resolveId returns 21459 for My Hero Academia (0.2.9)', () async {
+      // 0.2.9 phone regression: the MHA catalogue entry had no
+      // stored anilistId, so _loadSeasons never started and no
+      // season selector showed. The detail screen now resolves by
+      // title first — the exact match must win over the movie
+      // sequel in the same search page.
+      final AniListService svc = AniListService(
+        client: clientFor(
+          pageJson(<Map<String, dynamic>>[
+            mediaJson(
+              id: 21460,
+              english: 'My Hero Academia: Heroes Rising',
+            ),
+            mediaJson(id: 21459, english: 'My Hero Academia'),
+          ]),
+        ),
+      );
+      expect(await svc.resolveId('My Hero Academia'), 21459);
+    });
   });
 
   group('AniListService.animeFromMedia', () {

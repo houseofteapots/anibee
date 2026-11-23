@@ -154,6 +154,37 @@ class AnibeeMpvPip {
     }
   }
 
+  /// 0.2.9: parse the native PiP diag string for its prime state.
+  /// `primed=true` means the native layer holds a frame and a start
+  /// can succeed; anything else means no frame ever arrived. Pure —
+  /// unit-tested.
+  static bool diagIsPrimed(String diag) {
+    return RegExp(r'primed=true\b').hasMatch(diag);
+  }
+
+  /// 0.2.9: wait until the native PiP layer is primed — a frame has
+  /// arrived at the tap AFTER prepare() registered it — polling the
+  /// native diag. Bounded: false on timeout. The caller keeps the
+  /// main player running while this waits; it is paused only once
+  /// primed.
+  Future<bool> waitForPrime({
+    Duration timeout = const Duration(seconds: 6),
+    Duration interval = const Duration(milliseconds: 250),
+  }) async {
+    final DateTime deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      String d;
+      try {
+        d = await diag;
+      } catch (_) {
+        return false;
+      }
+      if (diagIsPrimed(d)) return true;
+      await Future.delayed(interval);
+    }
+    return false;
+  }
+
   /// Tears the native PiP controller, its layer and the frame tap down
   /// but keeps this bridge (and its callbacks) for a later [prepare].
   ///

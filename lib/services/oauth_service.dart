@@ -22,14 +22,28 @@ import 'package:http/http.dart' as http;
 /// resource error — the last one fires when the localhost load itself
 /// fails, and still carries the full redirect URL).
 ///
+/// 0.2.9: the token/code extraction is HOST-AGNOSTIC (see
+/// [parseAnilistRedirect] / [parseMalRedirect]) — the token is read
+/// out of ANY redirect URL the webview reports, whatever its scheme,
+/// host or path. That is what finally fixed login on the phone: the
+/// user's registered AniList Redirect URL contains a space
+/// ("anibee:// anilist-auth"), so AniList redirects to
+/// `anibee://%20anilist-auth#access_token=...` and the 0.2.8 exact
+/// host gate (`uri.host == 'anilist-auth'`) rejected a token that
+/// had actually arrived (0.2.8 phone test, 2026-11-23). The
+/// localhost intercept stays as the preferred path, but the
+/// registered URL no longer has to match anything exactly.
+///
 /// Client IDs are NOT invented: the user creates them
 /// (AniList: anilist.co/settings/developer; MAL: myanimelist.net/apiconfig,
-/// App Type iOS, public, no secret). The AniList client (57814) must
-/// have its Redirect URL set to exactly `http://localhost`, and the
-/// MAL client likewise, for the automatic capture to work. Until
-/// then the manual paste fallback in the login sheet works: AniList's
-/// PIN page prints the token on screen, and the sheet shows the last
-/// redirect URL (copyable) for MAL's code.
+/// App Type iOS, public, no secret). 0.2.9: the registered Redirect
+/// URL no longer has to be `http://localhost` — the token/code is
+/// extracted from whatever URL the provider actually redirects to
+/// (the user's AniList client has "anibee:// anilist-auth" with a
+/// space, and that works now). The manual paste fallback in the
+/// login sheet still exists: AniList's PIN page prints the token on
+/// screen, and the sheet shows the last redirect URL (copyable) for
+/// MAL's code.
 class OAuthService {
   OAuthService({http.Client? client}) : _client = client ?? http.Client();
 
@@ -86,22 +100,24 @@ class OAuthService {
         (uri.path.isEmpty || uri.path == '/');
   }
 
-  /// Pull the access token out of an AniList answer URL. Three shapes:
+  /// Pull the access token out of an AniList answer URL — HOST-AGNOSTIC
+  /// (0.2.9). The token is read from the fragment (query as fallback)
+  /// of ANY URL the webview reports, regardless of scheme, host or
+  /// path. Shapes that must all yield the token:
   /// - PIN page (0.2.5): https://anilist.co/api/v2/oauth/pin#access_token=...
   /// - Localhost redirect (0.2.8, Zeus-mirror):
   ///   http://localhost/#access_token=...
   /// - Custom-scheme fallback: anibee://anilist-auth#access_token=...
-  /// (kept for a client whose registered redirect still matches).
-  /// Some webviews convert the fragment `#` to `?` — the query params
-  /// are checked as a fallback (Zeus pattern). Pure — unit-tested.
+  /// - The 0.2.8 phone failure: the user's registered Redirect URL
+  ///   contains a space ("anibee:// anilist-auth"), so AniList
+  ///   redirects to `anibee://%20anilist-auth#access_token=...`.
+  ///   The 0.2.8 exact host gate rejected that URL even though the
+  ///   token had arrived — there is no host check here any more, on
+  ///   purpose. Do NOT re-add one.
+  /// A URL with no access_token still returns null. Some webviews
+  /// convert the fragment `#` to `?` — the query params are checked
+  /// as a fallback (Zeus pattern). Pure — unit-tested.
   static String? parseAnilistRedirect(Uri uri) {
-    if (isAnilistPinUrl(uri) || isLocalRedirect(uri)) {
-      return _tokenFromFragmentOrQuery(uri);
-    }
-    final Uri redirect = Uri.parse(anilistRedirect);
-    if (uri.scheme != redirect.scheme || uri.host != redirect.host) {
-      return null;
-    }
     return _tokenFromFragmentOrQuery(uri);
   }
 
@@ -221,14 +237,16 @@ class OAuthService {
     ).toString();
   }
 
-  /// Pull the auth code out of a MAL redirect URI query. Two shapes
-  /// (0.2.8): the Zeus-mirror `http://localhost/?code=...&state=...`
-  /// and the legacy `anibee://mal-auth?code=...&state=...` (kept for a
-  /// client whose registered redirect still matches). Pure — unit-tested.
+  /// Pull the auth code out of a MAL redirect URI query — HOST-AGNOSTIC
+  /// (0.2.9, same fix as AniList). The code is read from the query
+  /// of ANY redirect URL, whatever its scheme, host or path: the
+  /// Zeus-mirror `http://localhost/?code=...&state=...`, the legacy
+  /// `anibee://mal-auth?code=...&state=...`, or a registered
+  /// redirect with a stray space / different host. The `state` check
+  /// is the CSRF gate and stays — a mismatched state is still
+  /// rejected, and a URL with no code still returns null.
+  /// Pure — unit-tested.
   static String? parseMalRedirect(Uri uri, String expectedState) {
-    final bool isLocal = isLocalRedirect(uri);
-    final bool isLegacy = uri.scheme == 'anibee' && uri.host == 'mal-auth';
-    if (!isLocal && !isLegacy) return null;
     if (uri.queryParameters['state'] != expectedState) return null;
     final String? code = uri.queryParameters['code'];
     return code?.isEmpty == true ? null : code;
