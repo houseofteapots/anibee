@@ -7,6 +7,7 @@ import 'services/app_services.dart';
 import 'services/miruro_resolver.dart';
 import 'services/provider_config.dart';
 import 'settings_store.dart';
+import 'widgets/top_notification.dart';
 import 'screens/collection_screen.dart';
 import 'screens/detail_screen.dart';
 import 'screens/downloads_screen.dart';
@@ -58,27 +59,21 @@ class _AppShellState extends State<AppShell> {
   void _playOffline(String key) {
     final Map<String, dynamic>? record = widget.store.downloadRecordFor(key);
     if (record == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Download not found — please download it again.'),
-        ),
+      TopNotification.show(
+        context,
+        'Download not found — please download it again.',
       );
       return;
     }
     final String status = widget.store.downloadStatus[key] ?? '';
     if (status == 'downloading') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Still downloading — please wait.')),
-      );
+      TopNotification.show(context, 'Still downloading — please wait.');
       return;
     }
     if (status == 'failed') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Download failed — re-download it from the episode list.',
-          ),
-        ),
+      TopNotification.show(
+        context,
+        'Download failed — re-download it from the episode list.',
       );
       return;
     }
@@ -105,10 +100,9 @@ class _AppShellState extends State<AppShell> {
       widget.store,
     );
     if (local == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Download file not found — please download it again.'),
-        ),
+      TopNotification.show(
+        context,
+        'Download file not found — please download it again.',
       );
       return;
     }

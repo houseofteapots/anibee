@@ -9,24 +9,42 @@ import 'package:http/http.dart' as http;
 /// MAL: Authorization Code + PKCE, **plain** method only (challenge ==
 /// verifier) — token exchange + refresh via POST /v1/oauth2/token.
 ///
+/// 0.2.8 (Zeus-mirror): both providers redirect to
+/// `http://localhost` — exactly how Zeus's working login on this phone
+/// does it (`SyncConfig.signInRedirect`, intercepted by its native
+/// WKWebView delegate). The custom `anibee://` scheme is kept ONLY as
+/// a fallback parse shape: on 0.2.5–0.2.7 the fragment was stripped
+/// between AniList's redirect and the Dart callback for the
+/// custom-scheme server redirect, so the token never arrived (the
+/// generic "no token returned" toast on every phone test). An http
+/// URL is handled routinely by WKWebView, and the redirect is caught
+/// three ways in the webview (navigation request, URL change, and
+/// resource error — the last one fires when the localhost load itself
+/// fails, and still carries the full redirect URL).
+///
 /// Client IDs are NOT invented: the user creates them
 /// (AniList: anilist.co/settings/developer; MAL: myanimelist.net/apiconfig,
-/// App Type iOS, public, no secret) and pastes them in
-/// Settings → Accounts. MAL redirects use the custom scheme `anibee://`
-/// (registered in Info.plist) and are intercepted inside the in-app
-/// webview — no external browser round-trip. AniList sends NO
-/// redirect_uri at all (0.2.5, Zeus-proven): AniList answers on its
-/// default PIN page (`/api/v2/oauth/pin#access_token=...`), which the
-/// webview intercepts. Sending a redirect_uri made AniList reject the
-/// authorize request (unsupported_grant_type) over redirect matching
-/// — even after the registered URL was fixed, it still failed.
+/// App Type iOS, public, no secret). The AniList client (57814) must
+/// have its Redirect URL set to exactly `http://localhost`, and the
+/// MAL client likewise, for the automatic capture to work. Until
+/// then the manual paste fallback in the login sheet works: AniList's
+/// PIN page prints the token on screen, and the sheet shows the last
+/// redirect URL (copyable) for MAL's code.
 class OAuthService {
   OAuthService({http.Client? client}) : _client = client ?? http.Client();
 
   final http.Client _client;
 
   static const String anilistRedirect = 'anibee://anilist-auth';
-  static const String malRedirect = 'anibee://mal-auth';
+
+  /// Zeus's redirect, mirrored in 0.2.8: the registered Redirect URL
+  /// on both clients must be exactly this. MAL's legacy custom-scheme
+  /// redirect (`anibee://mal-auth`) is kept as a fallback parse shape
+  /// only — the authorize URL and the token exchange both send the
+  /// localhost redirect now.
+  static const String localRedirect = 'http://localhost';
+  static const String malRedirect = 'http://localhost';
+  static const String legacyMalRedirect = 'anibee://mal-auth';
 
   static const String _ua = 'AniBee/0.2.1';
 
@@ -57,14 +75,27 @@ class OAuthService {
         uri.path == '/api/v2/oauth/pin';
   }
 
-  /// Pull the access token out of an AniList answer URL. Two shapes:
+  /// True for the Zeus-mirror redirect: http://localhost (path '/'
+  /// or empty). AniList / MAL redirect here when the client's
+  /// registered Redirect URL is exactly this — the webview intercepts
+  /// it before the (failing) load. Pure — unit-tested.
+  static bool isLocalRedirect(Uri uri) {
+    return uri.scheme == 'http' &&
+        uri.host == 'localhost' &&
+        uri.port == 80 &&
+        (uri.path.isEmpty || uri.path == '/');
+  }
+
+  /// Pull the access token out of an AniList answer URL. Three shapes:
   /// - PIN page (0.2.5): https://anilist.co/api/v2/oauth/pin#access_token=...
+  /// - Localhost redirect (0.2.8, Zeus-mirror):
+  ///   http://localhost/#access_token=...
   /// - Custom-scheme fallback: anibee://anilist-auth#access_token=...
-  /// (kept for an older client whose registered redirect still matches).
+  /// (kept for a client whose registered redirect still matches).
   /// Some webviews convert the fragment `#` to `?` — the query params
   /// are checked as a fallback (Zeus pattern). Pure — unit-tested.
   static String? parseAnilistRedirect(Uri uri) {
-    if (isAnilistPinUrl(uri)) {
+    if (isAnilistPinUrl(uri) || isLocalRedirect(uri)) {
       return _tokenFromFragmentOrQuery(uri);
     }
     final Uri redirect = Uri.parse(anilistRedirect);
@@ -132,8 +163,8 @@ class OAuthService {
       case 'unsupported_grant_type':
         // 0.2.5: AniList no longer gets a redirect_uri at all (PIN
         // flow) — telling the user to set one would be wrong. MAL
-        // still uses its custom-scheme redirect, so it keeps the
-        // redirect hint.
+        // redirects to http://localhost (0.2.8, Zeus-mirror), so its
+        // message keeps the redirect hint with the localhost URL.
         if (provider == 'MyAnimeList') {
           return '$provider ne login reject kiya — apne $provider client ki '
               'Redirect URL bilkul $redirect honi chahiye. '
@@ -190,13 +221,41 @@ class OAuthService {
     ).toString();
   }
 
-  /// Pull the auth code out of a MAL redirect URI query.
-  /// Pure — unit-tested.
+  /// Pull the auth code out of a MAL redirect URI query. Two shapes
+  /// (0.2.8): the Zeus-mirror `http://localhost/?code=...&state=...`
+  /// and the legacy `anibee://mal-auth?code=...&state=...` (kept for a
+  /// client whose registered redirect still matches). Pure — unit-tested.
   static String? parseMalRedirect(Uri uri, String expectedState) {
-    if (uri.scheme != 'anibee' || uri.host != 'mal-auth') return null;
+    final bool isLocal = isLocalRedirect(uri);
+    final bool isLegacy = uri.scheme == 'anibee' && uri.host == 'mal-auth';
+    if (!isLocal && !isLegacy) return null;
     if (uri.queryParameters['state'] != expectedState) return null;
     final String? code = uri.queryParameters['code'];
     return code?.isEmpty == true ? null : code;
+  }
+
+  /// Pull a MAL auth code (+ state, when present) out of pasted text
+  /// (0.2.8 manual fallback): either the full redirect URL
+  /// (`http://localhost/?code=...&state=...`, copied from the sheet's
+  /// last-URL line) or a bare code. Returns (null, null) when the
+  /// text carries no code. Pure — unit-tested.
+  static ({String? code, String? state}) extractMalCodeFromText(String? text) {
+    if (text == null) return (code: null, state: null);
+    final String raw = text.trim();
+    if (raw.isEmpty) return (code: null, state: null);
+    final Uri? uri = Uri.tryParse(raw);
+    if (uri != null && uri.queryParameters.containsKey('code')) {
+      final String? code = uri.queryParameters['code'];
+      return (
+        code: code?.isEmpty == true ? null : code,
+        state: uri.queryParameters['state'],
+      );
+    }
+    // Bare code: one run of URL-safe characters, no spaces, no scheme.
+    if (RegExp(r'^[A-Za-z0-9\-_]{10,}$').hasMatch(raw)) {
+      return (code: raw, state: null);
+    }
+    return (code: null, state: null);
   }
 
   /// Exchange a MAL auth code for access + refresh tokens.

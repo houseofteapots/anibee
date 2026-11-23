@@ -161,8 +161,16 @@ void main() {
     await tester.pump();
 
     // Small watched tick on the completed cell; the number is still
-    // there, not covered by a badge.
-    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+    // there, not covered by a badge. The tick is the 12pt check —
+    // the grid's Sub/Dub dropdown carries its own 16pt accent check
+    // for the selected value (0.2.8), so scope the finder by size.
+    expect(
+      find.byWidgetPredicate(
+        (Widget w) =>
+            w is Icon && w.icon == Icons.check_rounded && w.size == 12,
+      ),
+      findsOneWidget,
+    );
     expect(find.text('3'), findsOneWidget);
     // Small download spinner on the downloading cell.
     expect(find.byType(CircularProgressIndicator), findsOneWidget);

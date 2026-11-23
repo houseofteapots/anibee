@@ -20,6 +20,7 @@ import '../theme.dart';
 import '../widgets/poster.dart';
 import '../widgets/server_sheet.dart';
 import '../widgets/subtitle_overlay.dart';
+import '../widgets/top_notification.dart';
 
 /// Right-side slide-over panel kind (0.2.4, Zeus style).
 enum _PanelKind { sources, audio, subtitles, quality }
@@ -175,6 +176,26 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   double _pinchBaseDistance = 0;
   double _pinchBaseScale = 1.0;
 
+  /// Hold-to-2x (0.2.8): tap and hold the RIGHT side plays at 2x while
+  /// held, releasing restores the previously selected speed. Tracked
+  /// in the same raw Listener as pinch zoom (never the gesture
+  /// arena), so it cannot disturb double-tap seek or the volume /
+  /// brightness swipes: 2x only engages when the finger stays down
+  /// without moving for a short hold threshold (400ms), and a quick
+  /// second tap is still the +10s seek.
+  Timer? _holdTimer;
+  Offset? _holdDownPosition;
+  int? _holdPointer;
+  double? _rateBeforeHold;
+  bool _hold2x = false;
+
+  /// When a hold releases, the pointer-up also completes a tap — and
+  /// that tap must NOT toggle the controls overlay. The tap fires
+  /// within milliseconds of the release (possibly after the
+  /// double-tap window), so the toggle ignores any tap inside 500ms
+  /// of a hold release.
+  DateTime? _holdReleasedAt;
+
   // 0.2.3 Zeus-layout player state.
   /// Controls locked (lock icon): only the unlock button shows.
   bool _controlsLocked = false;
@@ -223,6 +244,15 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// Test seam: whether the double-tap seek flash is currently shown.
   @visibleForTesting
   bool get seekFlashVisibleForTest => _seekFlashVisible;
+
+  /// Test seam: whether hold-to-2x is currently engaged.
+  @visibleForTesting
+  bool get hold2xForTest => _hold2x;
+
+  /// Test seam: the current playback rate (1.0 normally, 2.0 while
+  /// holding the right side).
+  @visibleForTesting
+  double get rateForTest => _rate;
 
   /// Last periodic progress save (Continue Watching + resume).
   DateTime _lastProgressSave = DateTime.fromMillisecondsSinceEpoch(0);
@@ -278,6 +308,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   void dispose() {
     _positionSub?.cancel();
     _hideTimer?.cancel();
+    _holdTimer?.cancel();
     _autoplayTimer?.cancel();
     _seekFlashTimer?.cancel();
     _hudHideTimer?.cancel();
@@ -514,8 +545,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           return StreamBuilder<List<String>>(
             stream: _player.stream.subtitle,
             initialData: _player.state.subtitle,
-            builder:
-                (BuildContext context, AsyncSnapshot<List<String>> snap) {
+            builder: (BuildContext context, AsyncSnapshot<List<String>> snap) {
               if (_player.state.track.subtitle.id == 'no') {
                 return const SizedBox.shrink();
               }
@@ -548,11 +578,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   Future<void> _loadSubtitleDiagnostics() async {
     final SubtitleTrack current = _player.state.track.subtitle;
-    final String trackLine =
-        current.id == 'no'
-            ? 'Off'
-            : '${current.title ?? 'Subtitle'}'
-                ' (${current.language ?? '?'}) · ${_shortId(current.id)}';
+    final String trackLine = current.id == 'no'
+        ? 'Off'
+        : '${current.title ?? 'Subtitle'}'
+              ' (${current.language ?? '?'}) · ${_shortId(current.id)}';
     if (mounted) setState(() => _diagTrack = trackLine);
     if (_player.state.duration <= Duration.zero) return;
     final PlatformPlayer? platform = _player.platform;
@@ -666,13 +695,62 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// passed, so a double-tap's first tap never toggles. Showing
   /// restarts the 3 s auto-hide; hiding cancels it — hidden stays
   /// hidden until the next tap.
+  ///
+  /// 0.2.8: a tap that ends a hold-to-2x is ignored — the release
+  /// itself is the "stop 2x" action, not a request to toggle the
+  /// overlay (see [_holdReleasedAt]).
   void _toggleControls() {
+    if (_holdReleasedAt != null &&
+        DateTime.now().difference(_holdReleasedAt!).inMilliseconds < 500) {
+      _holdReleasedAt = null;
+      return;
+    }
     if (_controlsVisible) {
       _hideTimer?.cancel();
       setState(() => _controlsVisible = false);
     } else {
       _pokeControls();
     }
+  }
+
+  /// Cancel a pending hold-to-2x (finger moved, second finger down,
+  /// or a drag started).
+  void _cancelHold() {
+    _holdTimer?.cancel();
+    _holdTimer = null;
+    _holdDownPosition = null;
+    _holdPointer = null;
+  }
+
+  /// Engage 2x: only when the same single finger is still down on
+  /// the right side after the hold threshold.
+  void _engageHold2x() {
+    _holdTimer = null;
+    if (_hold2x || _pinching || _activePointers.length != 1) return;
+    final Offset? down = _holdDownPosition;
+    if (down == null) return;
+    final double w = MediaQuery.of(context).size.width;
+    if (down.dx <= w / 2) return;
+    _rateBeforeHold = _rate;
+    setState(() {
+      _rate = 2.0;
+      _hold2x = true;
+    });
+    unawaited(_player.setRate(2.0));
+  }
+
+  /// Release 2x: restore the speed the user had selected before the
+  /// hold — never a hardcoded 1x.
+  void _disengageHold2x() {
+    if (!_hold2x) return;
+    final double restore = _rateBeforeHold ?? 1.0;
+    _rateBeforeHold = null;
+    _holdReleasedAt = DateTime.now();
+    setState(() {
+      _rate = restore;
+      _hold2x = false;
+    });
+    unawaited(_player.setRate(restore));
   }
 
   /// Show the controls overlay (single tap, button taps, episode
@@ -1003,9 +1081,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   }
 
   void _snack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
-    );
+    TopNotification.show(context, message);
   }
 
   // ---------------------------------------------------------------- sheets
@@ -1488,7 +1564,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     TextButton(
                       onPressed: () {
                         unawaited(_store.setSubManualPercent(0));
-                            },
+                      },
                       child: Text(
                         'Reset',
                         style: TextStyle(color: accent, fontSize: 13),
@@ -1549,7 +1625,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     _diagLine(
                       'Renderer',
                       'Flutter overlay — mpv rendering is off, so '
-                      'this panel drives the text above the video',
+                          'this panel drives the text above the video',
                     ),
                   ],
                 ),
@@ -1810,7 +1886,31 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             dropdownColor: const Color(0xFF23232F),
             style: const TextStyle(color: Colors.white, fontSize: 14),
             underline: const SizedBox.shrink(),
-            items: items,
+            // 0.2.8: the selected value carries an accent checkmark in
+            // the menu, like the premium pickers — the current choice
+            // is obvious at a glance instead of a flat list. The
+            // accent comes from the theme (the Settings accent
+            // picker), never hardcoded.
+            items: <DropdownMenuItem<T>>[
+              for (final DropdownMenuItem<T> item in items)
+                DropdownMenuItem<T>(
+                  value: item.value,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      item.child,
+                      if (item.value == value) ...<Widget>[
+                        const SizedBox(width: 10),
+                        Icon(
+                          Icons.check_rounded,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
             onChanged: onChanged,
           ),
         ],
@@ -2139,6 +2239,49 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   return _GestureHud(state: state, accent: accent);
                 },
               ),
+              // 0.2.8: the "2x" indicator while hold-to-2x is engaged.
+              // Top-center so it shows even when the controls are
+              // hidden (the hold works with the overlay hidden).
+              if (_hold2x)
+                Positioned(
+                  top: 48,
+                  left: 0,
+                  right: 0,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: Container(
+                        key: const ValueKey('hold2x-indicator'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Icon(
+                              Icons.fast_forward_rounded,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              '2x',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               if (_autoplayTimer != null && _autoplayTimer!.isActive)
                 _AutoplayOverlay(
                   countdown: _autoplayCountdown,
@@ -2167,6 +2310,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// observes raw pointer events, so it never steals a drag.
   Widget _buildPinchListener({required Widget child}) {
     return Listener(
+      // 0.2.8: opaque — the Listener must be in the hit path even
+      // where the video texture itself does not hit-test; deferToChild
+      // left it out of the path on some spots.
+      behavior: HitTestBehavior.opaque,
       onPointerDown: (PointerDownEvent event) {
         _activePointers[event.pointer] = event.position;
         if (_activePointers.length == 2) {
@@ -2174,6 +2321,24 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           _pinchBaseDistance = (points[0] - points[1]).distance;
           _pinchBaseScale = _videoScale.value;
           _pinching = true;
+          // Second finger: a pinch, never a hold.
+          _cancelHold();
+          _disengageHold2x();
+        } else if (_activePointers.length == 1) {
+          // Hold-to-2x (0.2.8): arm the hold only for the RIGHT side,
+          // and only when gestures are enabled. The timer fires at
+          // 400ms only if the finger is still down without moving —
+          // a quick tap or a double-tap never arms it.
+          _cancelHold();
+          final double w = MediaQuery.of(context).size.width;
+          if (_store.gestures && event.position.dx > w / 2) {
+            _holdDownPosition = event.position;
+            _holdPointer = event.pointer;
+            _holdTimer = Timer(
+              const Duration(milliseconds: 400),
+              _engageHold2x,
+            );
+          }
         }
       },
       onPointerMove: (PointerMoveEvent event) {
@@ -2190,14 +2355,31 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 );
           }
         }
+        // Hold-to-2x: the finger moved — a swipe is starting, not a
+        // hold. Cancel the pending timer, or disengage if 2x is on.
+        if (_holdDownPosition != null && event.pointer == _holdPointer) {
+          final Offset delta = event.position - _holdDownPosition!;
+          if (delta.distance > 12) {
+            _cancelHold();
+            _disengageHold2x();
+          }
+        }
       },
       onPointerUp: (PointerUpEvent event) {
         _activePointers.remove(event.pointer);
         if (_activePointers.length < 2) _pinching = false;
+        if (event.pointer == _holdPointer) {
+          _cancelHold();
+          _disengageHold2x();
+        }
       },
       onPointerCancel: (PointerCancelEvent event) {
         _activePointers.remove(event.pointer);
         if (_activePointers.length < 2) _pinching = false;
+        if (event.pointer == _holdPointer) {
+          _cancelHold();
+          _disengageHold2x();
+        }
       },
       child: child,
     );
@@ -2256,6 +2438,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         }
       },
       onHorizontalDragStart: (DragStartDetails details) {
+        // A drag starting means the finger moved: never a hold.
+        _cancelHold();
+        _disengageHold2x();
         if (!_store.gestures || _pinching) return;
         _dragStartPosition = _player.state.position;
         _dragAccumDx = 0;
@@ -2283,6 +2468,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         _pokeControls();
       },
       onVerticalDragStart: (DragStartDetails details) {
+        // A drag starting means the finger moved: never a hold.
+        _cancelHold();
+        _disengageHold2x();
         if (!_store.gestures || _pinching) return;
         final double w = MediaQuery.of(context).size.width;
         _dragVerticalRight = details.globalPosition.dx > w / 2;

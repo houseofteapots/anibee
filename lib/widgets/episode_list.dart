@@ -5,6 +5,7 @@ import '../models.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import 'poster.dart';
+import 'premium_picker.dart';
 import 'reicon_icon.dart';
 
 /// Episode list (user rules 01:44 + 01:45; refs in the goal files/):
@@ -145,66 +146,19 @@ class _EpisodeSectionState extends State<EpisodeSection> {
     });
   }
 
-  /// Range picker as a bottom sheet — never an overlay dropdown (the
-  /// old DropdownButton menu rendered as a solid grey box overlapping
-  /// the Sub dropdown and the Find number field).
+  /// Range picker as a premium bottom sheet (0.2.8) — never an
+  /// overlay dropdown (the old DropdownButton menu rendered as a
+  /// solid grey box overlapping the Sub dropdown and the Find number
+  /// field). The selected range is unmistakable (accent check + tint).
   Future<void> _showRangeSheet() async {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color accent = Theme.of(context).colorScheme.primary;
-    final Color primaryText = isDark
-        ? AppTheme.textPrimaryDark
-        : AppTheme.textPrimaryLight;
-    final Color sheetBg = isDark ? AppTheme.cardDark : AppTheme.cardLight;
-    final int? picked = await showModalBottomSheet<int>(
+    final int? picked = await showPremiumPicker<int>(
       context: context,
-      backgroundColor: sheetBg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const SizedBox(height: 8),
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3A3A48),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Text(
-                  'Episode range',
-                  style: TextStyle(
-                    color: primaryText,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              for (final int s in _rangeStarts)
-                ListTile(
-                  title: Text(
-                    _rangeLabel(s),
-                    style: TextStyle(color: primaryText),
-                  ),
-                  trailing: s == _rangeStart
-                      ? Icon(Icons.check_rounded, color: accent)
-                      : null,
-                  onTap: () => Navigator.of(context).pop(s),
-                ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
+      title: 'Episode range',
+      selected: _rangeStart,
+      options: <PremiumPickerOption<int>>[
+        for (final int s in _rangeStarts)
+          PremiumPickerOption<int>(value: s, label: _rangeLabel(s)),
+      ],
     );
     if (picked != null && mounted) setState(() => _rangeStart = picked);
   }
@@ -344,8 +298,13 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                 dropdownColor: card,
                 items: const <String>['Sub & Dub', 'Sub', 'Dub']
                     .map(
-                      (String v) =>
-                          DropdownMenuItem<String>(value: v, child: Text(v)),
+                      (String v) => DropdownMenuItem<String>(
+                        value: v,
+                        child: _DropdownItemLabel(
+                          label: v,
+                          isSelected: v == _audioFilter,
+                        ),
+                      ),
                     )
                     .toList(),
                 onChanged: (String? v) {
@@ -950,6 +909,36 @@ class _DownloadButton extends StatelessWidget {
       icon: child,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+    );
+  }
+}
+
+/// One row of a compact DropdownButton menu (0.2.8): the selected value
+/// carries an accent checkmark, so the current choice is obvious at a
+/// glance — the same treatment as the premium pickers.
+class _DropdownItemLabel extends StatelessWidget {
+  const _DropdownItemLabel({required this.label, required this.isSelected});
+
+  final String label;
+  final bool isSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color accent = Theme.of(context).colorScheme.primary;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(
+          label,
+          style: TextStyle(
+            fontWeight: isSelected ? FontWeight.w800 : FontWeight.w400,
+          ),
+        ),
+        if (isSelected) ...<Widget>[
+          const SizedBox(width: 8),
+          Icon(Icons.check_rounded, color: accent, size: 16),
+        ],
+      ],
     );
   }
 }

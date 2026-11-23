@@ -7,7 +7,9 @@ import '../models.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/poster.dart';
+import '../widgets/premium_picker.dart';
 import '../widgets/reicon_icon.dart';
+import '../widgets/top_notification.dart';
 
 /// Home — Anilili layout (ref anilili-home-reference.jpg), AniBee
 /// branding (name, Frost Glass dark design, Settings accent color).
@@ -151,58 +153,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showListSheet(Anime anime) async {
-    final Color accent = Theme.of(context).colorScheme.primary;
     final String? current = widget.store.statusOf(anime);
-    final String? picked = await showModalBottomSheet<String>(
+    final String? picked = await showPremiumPicker<String>(
       context: context,
-      backgroundColor: const Color(0xFF17171F),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Text(
-                  anime.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              for (final (String value, String label) in <(String, String)>[
-                ('watching', 'Move to Watching'),
-                ('finished', 'Move to Finished'),
-                ('plan', 'Move to To Be Watched'),
-              ])
-                ListTile(
-                  title: Text(
-                    label,
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  trailing: current == value
-                      ? Icon(Icons.check_rounded, color: accent)
-                      : null,
-                  onTap: () => Navigator.of(context).pop(value),
-                ),
-              ListTile(
-                title: const Text(
-                  'Remove from list',
-                  style: TextStyle(color: Colors.redAccent),
-                ),
-                onTap: () => Navigator.of(context).pop(''),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
+      title: anime.title,
+      selected: current,
+      options: const <PremiumPickerOption<String>>[
+        PremiumPickerOption(value: 'watching', label: 'Move to Watching'),
+        PremiumPickerOption(value: 'finished', label: 'Move to Finished'),
+        PremiumPickerOption(value: 'plan', label: 'Move to To Be Watched'),
+        PremiumPickerOption(
+          value: '',
+          label: 'Remove from list',
+          destructive: true,
+        ),
+      ],
     );
     if (picked == null) return;
     if (picked.isEmpty) {
@@ -266,12 +231,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 tooltip: 'Notifications',
                 onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('No notifications yet'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
+                  TopNotification.show(context, 'No notifications yet');
                 },
               ),
               IconButton(
@@ -436,15 +396,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           scrollDirection: Axis.horizontal,
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           itemCount: history.length,
-                          separatorBuilder: (_, _) =>
-                              const SizedBox(width: 12),
+                          separatorBuilder: (_, _) => const SizedBox(width: 12),
                           itemBuilder: (BuildContext context, int index) {
                             final WatchEntry entry = history[index];
                             return _ContinueWatchingCard(
                               entry: entry,
                               accent: accent,
-                              onTap: () =>
-                                  widget.onWatchNow(entry.toAnime()),
+                              onTap: () => widget.onWatchNow(entry.toAnime()),
                               onLongPress: () =>
                                   _showListSheet(entry.toAnime()),
                             );

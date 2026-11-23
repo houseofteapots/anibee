@@ -54,6 +54,135 @@ class AniListService {
     return animeFromMedia(media);
   }
 
+  /// Season chain for an anime (0.2.8): seasons are separate AniList
+  /// entries linked by SEQUEL/PREQUEL relations (e.g. My Hero Academia
+  /// S1 → S2 → S3…). Walks the relations both ways from [anilistId]
+  /// and returns the ordered chain, current entry included. Only TV /
+  /// TV_SHORT entries with at least one episode count as seasons
+  /// (movies, specials, OVAs are not seasons). Returns an empty list
+  /// on any failure — the detail screen then shows no selector and
+  /// the episode list stays as-is. Each hop is one public GraphQL
+  /// query; the walk caps at 12 hops per direction.
+  Future<List<SeasonInfo>> fetchSeasons(int anilistId) async {
+    try {
+      final Map<int, SeasonNode> byId = <int, SeasonNode>{};
+      // Walk PREQUELs back to the first season, then SEQUELs forward.
+      int? current = anilistId;
+      int hops = 0;
+      while (current != null && hops < 12 && !byId.containsKey(current)) {
+        final SeasonNode? node = await _seasonRelations(current);
+        if (node == null) break;
+        byId[current] = node;
+        current = node.prequelId;
+        hops++;
+      }
+      final List<int> ordered = <int>[];
+      int? first = anilistId;
+      while (byId[first]?.prequelId != null) {
+        first = byId[first]!.prequelId;
+      }
+      current = first;
+      hops = 0;
+      while (current != null && hops < 12) {
+        final SeasonNode? node = byId[current];
+        if (node == null) {
+          final SeasonNode? fetched = await _seasonRelations(current);
+          if (fetched == null) break;
+          byId[current] = fetched;
+        }
+        ordered.add(current);
+        current = byId[current]!.sequelId;
+        hops++;
+      }
+      return buildSeasonChain(anilistId, byId);
+    } catch (_) {
+      return <SeasonInfo>[];
+    }
+  }
+
+  /// One hop of the season walk: this entry's own season info plus
+  /// the ids of its TV PREQUEL / SEQUEL neighbours (null when none).
+  /// Null on any failure (the caller treats it as the end of the chain).
+  Future<SeasonNode?> _seasonRelations(int anilistId) async {
+    final String q =
+        '{Media(id:$anilistId,type:ANIME){id title{romaji english} format'
+        ' episodes seasonYear relations{edges{relationType node{id'
+        ' title{romaji english} format episodes seasonYear}}}}}';
+    final Map<String, dynamic>? data = await _postSafe(q, <String, Object?>{});
+    final Map<String, dynamic>? media = data?['Media'] as Map<String, dynamic>?;
+    if (media == null) return null;
+    final Map<String, dynamic>? title = media['title'] as Map<String, dynamic>?;
+    final String name = _preferredTitle(title);
+    final String format = media['format'] as String? ?? '';
+    final int episodes = (media['episodes'] as num?)?.toInt() ?? 0;
+    final int? year = (media['seasonYear'] as num?)?.toInt();
+    int? prequelId;
+    int? sequelId;
+    final List<dynamic> edges =
+        (media['relations'] as Map<String, dynamic>?)?['edges']
+            as List<dynamic>? ??
+        <dynamic>[];
+    for (final dynamic edge in edges) {
+      final Map<String, dynamic> e = edge as Map<String, dynamic>;
+      final Map<String, dynamic>? node = e['node'] as Map<String, dynamic>?;
+      if (node == null) continue;
+      // Record the neighbour whatever its format: a movie can sit
+      // between two TV seasons in the relation graph, and the walk
+      // passes through it — buildSeasonChain drops non-TV entries
+      // from the displayed chain.
+      final int? nodeId = (node['id'] as num?)?.toInt();
+      if (nodeId == null) continue;
+      if (e['relationType'] == 'PREQUEL') {
+        prequelId ??= nodeId;
+      } else if (e['relationType'] == 'SEQUEL') {
+        sequelId ??= nodeId;
+      }
+    }
+    return SeasonNode(
+      info: SeasonInfo(
+        id: (media['id'] as num).toInt(),
+        title: name,
+        format: format,
+        episodes: episodes,
+        year: year,
+      ),
+      prequelId: prequelId,
+      sequelId: sequelId,
+    );
+  }
+
+  /// Order a walked season map into the chain, current entry included.
+  /// Pure — unit-tested. Entries that are not TV seasons or have no
+  /// episodes are dropped; a chain of fewer than two entries means
+  /// "no selector" (the caller shows nothing).
+  static List<SeasonInfo> buildSeasonChain(
+    int currentId,
+    Map<int, SeasonNode> byId,
+  ) {
+    int? first = currentId;
+    final Set<int> seen = <int>{};
+    while (byId[first]?.prequelId != null && !seen.contains(first)) {
+      seen.add(first!);
+      first = byId[first]!.prequelId;
+    }
+    final List<SeasonInfo> chain = <SeasonInfo>[];
+    int? id = first;
+    seen.clear();
+    while (id != null && !seen.contains(id)) {
+      seen.add(id);
+      final SeasonNode? node = byId[id];
+      if (node == null) break;
+      final SeasonInfo info = node.info;
+      if ((info.format == 'TV' || info.format == 'TV_SHORT') &&
+          info.episodes > 0) {
+        chain.add(info);
+      }
+      id = node.sequelId;
+    }
+    if (chain.length < 2) return <SeasonInfo>[];
+    return chain;
+  }
+
   /// Resolve an AniList id for a catalogue title (titles without a
   /// stored anilistId). Normalized exact match first, then a contains
   /// match, else the first result. Null when nothing matches.
@@ -220,6 +349,35 @@ class AniListService {
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
+}
+
+/// One season in a season chain (0.2.8): a separate AniList entry
+/// linked by SEQUEL/PREQUEL relations. The label is positional
+/// ("Season 1", "Season 2"…) — AniList has no season number field.
+class SeasonInfo {
+  const SeasonInfo({
+    required this.id,
+    required this.title,
+    required this.format,
+    required this.episodes,
+    this.year,
+  });
+
+  final int id;
+  final String title;
+  final String format;
+  final int episodes;
+  final int? year;
+}
+
+/// One hop of the season walk: the entry's own info plus its TV
+/// PREQUEL / SEQUEL neighbour ids.
+class SeasonNode {
+  const SeasonNode({required this.info, this.prequelId, this.sequelId});
+
+  final SeasonInfo info;
+  final int? prequelId;
+  final int? sequelId;
 }
 
 /// Lowercase, strip punctuation — title matching for resolveId.

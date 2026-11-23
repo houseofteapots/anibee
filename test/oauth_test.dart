@@ -48,13 +48,14 @@ void main() {
       expect(msg, contains('PIN'));
       expect(msg, isNot(contains('unsupported_grant_type')));
       expect(msg, isNot(contains('{')));
-      // MAL still uses its custom-scheme redirect — it keeps the hint.
+      // MAL redirects to http://localhost (0.2.8, Zeus-mirror) —
+      // its message keeps the redirect hint with that URL.
       expect(
         OAuthService.readableOAuthError(
           provider: 'MyAnimeList',
           error: 'unsupported_grant_type',
         ),
-        contains('anibee://mal-auth'),
+        contains('http://localhost'),
       );
     });
 
@@ -256,7 +257,7 @@ void main() {
       expect(url.queryParameters['client_id'], 'mal-client-9');
       expect(url.queryParameters['code_challenge'], verifier);
       expect(url.queryParameters['code_challenge_method'], 'plain');
-      expect(url.queryParameters['redirect_uri'], 'anibee://mal-auth');
+      expect(url.queryParameters['redirect_uri'], 'http://localhost');
       expect(url.queryParameters['state'], 'state-xyz');
     });
 
@@ -294,7 +295,7 @@ void main() {
           expect(body['client_id'], 'mal-client-9');
           expect(body['code'], 'code-1');
           expect(body['code_verifier'], 'verifier-abc-123');
-          expect(body['redirect_uri'], 'anibee://mal-auth');
+          expect(body['redirect_uri'], 'http://localhost');
           return http.Response(
             jsonEncode(<String, dynamic>{
               'access_token': 'at-1',
@@ -361,6 +362,111 @@ void main() {
         }).isValid,
         isFalse,
       );
+    });
+  });
+
+  group('0.2.8 Zeus-mirror localhost redirect', () {
+    test('isLocalRedirect matches http://localhost only', () {
+      expect(
+        OAuthService.isLocalRedirect(Uri.parse('http://localhost/')),
+        isTrue,
+      );
+      expect(
+        OAuthService.isLocalRedirect(Uri.parse('http://localhost')),
+        isTrue,
+      );
+      expect(
+        OAuthService.isLocalRedirect(
+          Uri.parse('http://localhost/?code=abc&state=s'),
+        ),
+        isTrue,
+      );
+      expect(
+        OAuthService.isLocalRedirect(
+          Uri.parse('http://localhost:8080/?code=abc'),
+        ),
+        isFalse,
+      );
+      expect(
+        OAuthService.isLocalRedirect(
+          Uri.parse('https://localhost/?code=abc'),
+        ),
+        isFalse,
+      );
+      expect(
+        OAuthService.isLocalRedirect(
+          Uri.parse('https://anilist.co/api/v2/oauth/pin'),
+        ),
+        isFalse,
+      );
+    });
+
+    test('parseAnilistRedirect takes the token from the localhost fragment', () {
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse('http://localhost/#access_token=tok-123'),
+        ),
+        'tok-123',
+      );
+      // Query-form fallback (some webviews convert # to ?).
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse('http://localhost/?access_token=tok-456'),
+        ),
+        'tok-456',
+      );
+      // Empty localhost hit carries no token.
+      expect(
+        OAuthService.parseAnilistRedirect(Uri.parse('http://localhost/')),
+        isNull,
+      );
+    });
+
+    test('parseMalRedirect accepts localhost and the legacy scheme', () {
+      expect(
+        OAuthService.parseMalRedirect(
+          Uri.parse('http://localhost/?code=code-9&state=state-xyz'),
+          'state-xyz',
+        ),
+        'code-9',
+      );
+      // Legacy anibee:// shape still parses (fallback for a client
+      // whose registered redirect still matches it).
+      expect(
+        OAuthService.parseMalRedirect(
+          Uri.parse('anibee://mal-auth?code=code-1&state=state-xyz'),
+          'state-xyz',
+        ),
+        'code-1',
+      );
+      // Wrong state is still rejected on the localhost shape.
+      expect(
+        OAuthService.parseMalRedirect(
+          Uri.parse('http://localhost/?code=code-9&state=attacker'),
+          'state-xyz',
+        ),
+        isNull,
+      );
+    });
+
+    test('extractMalCodeFromText pulls code + state from a pasted URL', () {
+      final ({String? code, String? state}) fromUrl =
+          OAuthService.extractMalCodeFromText(
+            'http://localhost/?code=code-7&state=state-abc',
+          );
+      expect(fromUrl.code, 'code-7');
+      expect(fromUrl.state, 'state-abc');
+      // Bare code: no state attached (the sheet supplies its own).
+      final ({String? code, String? state}) bare =
+          OAuthService.extractMalCodeFromText('code-plain-12345');
+      expect(bare.code, 'code-plain-12345');
+      expect(bare.state, isNull);
+      // Junk carries no code.
+      expect(
+        OAuthService.extractMalCodeFromText('hello world'),
+        (code: null, state: null),
+      );
+      expect(OAuthService.extractMalCodeFromText(null), (code: null, state: null));
     });
   });
 }

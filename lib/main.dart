@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
@@ -84,21 +86,86 @@ class _RootGate extends StatefulWidget {
 class _RootGateState extends State<_RootGate> {
   bool _unlocked = false;
 
+  /// Zeus-style splash (0.2.8): the native launch screen shows the
+  /// logo instantly on tap; this Flutter-side hold keeps it up for
+  /// ~1s so the splash actually reads, then fades to Home (or the
+  /// lock screen). Total feel: ~1-2s, like Zeus.
+  bool _showSplash = true;
+  double _splashOpacity = 1.0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Timer(const Duration(milliseconds: 1000), () {
+        if (!mounted) return;
+        setState(() => _splashOpacity = 0);
+        Timer(const Duration(milliseconds: 400), () {
+          if (mounted) setState(() => _showSplash = false);
+        });
+      });
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool locked =
         widget.store.appLockEnabled && widget.store.hasPin && !_unlocked;
-    if (locked) {
-      return LockScreen(
-        mode: LockMode.unlock,
-        store: widget.store,
-        onUnlocked: () => setState(() => _unlocked = true),
-      );
-    }
-    return AppShell(
-      store: widget.store,
-      configService: widget.configService,
-      services: widget.services,
+    final Widget content = locked
+        ? LockScreen(
+            mode: LockMode.unlock,
+            store: widget.store,
+            onUnlocked: () => setState(() => _unlocked = true),
+          )
+        : AppShell(
+            store: widget.store,
+            configService: widget.configService,
+            services: widget.services,
+          );
+    if (!_showSplash) return content;
+    return Stack(
+      children: <Widget>[
+        content,
+        _SplashView(opacity: _splashOpacity),
+      ],
+    );
+  }
+}
+
+/// The splash itself: the AniBee mark (white corners cleaned to navy)
+/// centered on the dark navy background, with "AniBee" below it in
+/// the mark's bronze-gold — the same composition as the native launch
+/// screen, so the handoff between the two is seamless.
+class _SplashView extends StatelessWidget {
+  const _SplashView({required this.opacity});
+
+  final double opacity;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: opacity,
+      duration: const Duration(milliseconds: 400),
+      child: Container(
+        color: const Color(0xFF0D142E),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Image.asset('assets/splash_mark.png', width: 180, height: 180),
+            const SizedBox(height: 14),
+            const Text(
+              'AniBee',
+              style: TextStyle(
+                color: Color(0xFFB17E5C),
+                fontSize: 34,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 6,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../models.dart';
 import '../player/trailer_player.dart';
+import '../services/anilist_service.dart';
 import '../services/app_services.dart';
 import '../services/miruro_resolver.dart';
 import '../settings_store.dart';
@@ -12,8 +13,10 @@ import '../theme.dart';
 import '../widgets/episode_list.dart';
 import '../widgets/page_route.dart';
 import '../widgets/poster.dart';
+import '../widgets/premium_picker.dart';
 import '../widgets/reicon_icon.dart';
 import '../widgets/server_sheet.dart';
+import '../widgets/top_notification.dart';
 import 'full_player_screen.dart';
 
 /// Detail screen.
@@ -50,28 +53,74 @@ class DetailScreen extends StatefulWidget {
 class _DetailScreenState extends State<DetailScreen> {
   late final TrailerPlayer _trailer;
   late List<Episode> _episodes;
+
+  /// The anime shown on this screen. Starts as the opened anime;
+  /// the season selector (0.2.8) swaps it for another season's entry
+  /// (same title family, own episodes) via mediaById.
+  late Anime _anime;
+
   String _subDub = 'Sub';
   bool _connecting = false;
   Timer? _connectTimer;
+
+  /// Season chain (0.2.8): AniList SEQUEL/PREQUEL relations. Empty =
+  /// single season → no selector is shown.
+  List<SeasonInfo> _seasons = <SeasonInfo>[];
+  bool _selectingSeason = false;
 
   /// Debrid source selected in the server sheet ('torbox' |
   /// 'realdebrid'), or null for a normal Miruro/Anikoto server.
   String? _selectedDebrid;
 
-  Anime get _anime => widget.anime;
   SettingsStore get _store => widget.store;
   AppServices get _services => widget.services;
 
   @override
   void initState() {
     super.initState();
+    _anime = widget.anime;
     _trailer = widget.player ?? TrailerPlayer();
     _episodes = mockEpisodes(_anime);
+    unawaited(_loadSeasons());
     if (widget.autoPlay) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _openFullPlayer();
       });
     }
+  }
+
+  /// Fetch the season chain for this anime (one GraphQL query when
+  /// there is no sequel/prequel — the walk stops at the first hop).
+  /// Failure = no selector; the episode list stays as-is.
+  Future<void> _loadSeasons() async {
+    final int? anilistId = _anime.anilistId;
+    if (anilistId == null) return;
+    final List<SeasonInfo> seasons = await _services.anilist.fetchSeasons(
+      anilistId,
+    );
+    if (!mounted) return;
+    if (seasons.length > 1) setState(() => _seasons = seasons);
+  }
+
+  /// Switch the episode list to another season: load that season's
+  /// own AniList entry and rebuild the episodes through the existing
+  /// path (mockEpisodes + the same resolver). The banner, title,
+  /// synopsis and rating follow the season's own entry.
+  Future<void> _selectSeason(SeasonInfo season) async {
+    if (_selectingSeason || season.id == _anime.anilistId) return;
+    setState(() => _selectingSeason = true);
+    final Anime? next = await _services.anilist.mediaById(season.id);
+    if (!mounted) return;
+    if (next == null) {
+      setState(() => _selectingSeason = false);
+      TopNotification.show(context, 'Season load nahi hua — dobara try karo.');
+      return;
+    }
+    setState(() {
+      _anime = next;
+      _episodes = mockEpisodes(next);
+      _selectingSeason = false;
+    });
   }
 
   @override
@@ -325,35 +374,21 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Future<void> _pickListStatus() async {
-    final Color accent = Theme.of(context).colorScheme.primary;
     final String? current = _store.statusOf(_anime);
-    final String? picked = await showDialog<String>(
+    final String? picked = await showPremiumPicker<String>(
       context: context,
-      builder: (BuildContext context) => SimpleDialog(
-        title: const Text('My List'),
-        children: <Widget>[
-          for (final (String value, String label) in <(String, String)>[
-            ('plan', 'To Be Watched'),
-            ('watching', 'Watching'),
-            ('finished', 'Finished'),
-          ])
-            SimpleDialogOption(
-              onPressed: () => Navigator.of(context).pop(value),
-              child: Row(
-                children: <Widget>[
-                  Text(label),
-                  const Spacer(),
-                  if (current == value)
-                    Icon(Icons.check_rounded, color: accent),
-                ],
-              ),
-            ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.of(context).pop(''),
-            child: const Text('Remove from list'),
-          ),
-        ],
-      ),
+      title: 'My List',
+      selected: current,
+      options: const <PremiumPickerOption<String>>[
+        PremiumPickerOption(value: 'plan', label: 'To Be Watched'),
+        PremiumPickerOption(value: 'watching', label: 'Watching'),
+        PremiumPickerOption(value: 'finished', label: 'Finished'),
+        PremiumPickerOption(
+          value: '',
+          label: 'Remove from list',
+          destructive: true,
+        ),
+      ],
     );
     if (picked == null) return;
     if (picked.isEmpty) {
@@ -387,9 +422,7 @@ class _DetailScreenState extends State<DetailScreen> {
     );
     if (!mounted) return;
     if (_store.downloadStatus[key] == 'failed') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Download failed — tap again to retry.')),
-      );
+      TopNotification.show(context, 'Download failed — tap again to retry.');
     }
   }
 
@@ -734,7 +767,88 @@ class _DetailScreenState extends State<DetailScreen> {
                   ],
                 ),
               ),
+              // Season selector (0.2.8): only when the anime has
+              // more than one season (AniList SEQUEL/PREQUEL chain).
+              // Switching loads that season's own entry and its
+              // episodes through the existing path.
+              if (_seasons.length > 1)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Text(
+                            'SEASON',
+                            style: TextStyle(
+                              color: secondaryText,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          if (_selectingSeason) ...<Widget>[
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: accent,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: <Widget>[
+                            for (int i = 0; i < _seasons.length; i++)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: InkWell(
+                                  onTap: () => _selectSeason(_seasons[i]),
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 9,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _seasons[i].id == _anime.anilistId
+                                          ? accent
+                                          : (isDark
+                                                ? AppTheme.cardDark
+                                                : AppTheme.cardLight),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      'Season ${i + 1}',
+                                      style: TextStyle(
+                                        color:
+                                            _seasons[i].id == _anime.anilistId
+                                            ? Colors.white
+                                            : primaryText,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               EpisodeSection(
+                // A new season is a new anime: reset the episode
+                // section's state (grid mode, range, highlight).
+                key: ValueKey<String>(_anime.id),
                 anime: _anime,
                 episodes: _episodes,
                 store: _store,

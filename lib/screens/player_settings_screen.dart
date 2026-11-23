@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../settings_store.dart';
 import '../theme.dart';
+import '../widgets/premium_picker.dart';
 import '../widgets/settings_row.dart';
 
 /// Player Settings — subtitle preview + Subtitles + Playback sections,
@@ -265,27 +266,14 @@ class PlayerSettingsScreen extends StatelessWidget {
       ('ar', 'Arabic'),
       ('off', 'Off'),
     ];
-    final String? picked = await showDialog<String>(
+    final String? picked = await showPremiumPicker<String>(
       context: context,
-      builder: (BuildContext context) => SimpleDialog(
-        title: const Text('Subtitle language'),
-        children: <Widget>[
-          for (final (String value, String label) in options)
-            SimpleDialogOption(
-              onPressed: () => Navigator.of(context).pop(value),
-              child: Row(
-                children: <Widget>[
-                  Expanded(child: Text(label)),
-                  if (value == store.subtitleLanguage)
-                    Icon(
-                      Icons.check_rounded,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                ],
-              ),
-            ),
-        ],
-      ),
+      title: 'Subtitle language',
+      selected: store.subtitleLanguage,
+      options: <PremiumPickerOption<String>>[
+        for (final (String value, String label) in options)
+          PremiumPickerOption<String>(value: value, label: label),
+      ],
     );
     if (picked != null) await store.setSubtitleLanguage(picked);
   }
@@ -297,72 +285,53 @@ class PlayerSettingsScreen extends StatelessWidget {
       'Rounded',
       'Mono',
     ];
-    final String? picked = await showDialog<String>(
+    final String? picked = await showPremiumPicker<String>(
       context: context,
-      builder: (BuildContext context) => SimpleDialog(
-        title: const Text('Subtitle font'),
-        children: <Widget>[
-          for (final String f in fonts)
-            SimpleDialogOption(
-              onPressed: () => Navigator.of(context).pop(f),
-              child: Text(f),
-            ),
-        ],
-      ),
+      title: 'Subtitle font',
+      selected: store.subFont,
+      options: <PremiumPickerOption<String>>[
+        for (final String f in fonts)
+          PremiumPickerOption<String>(value: f, label: f),
+      ],
     );
     if (picked != null) await store.setSubFont(picked);
   }
 
   Future<void> _pickPosition(BuildContext context) async {
-    final String? picked = await showDialog<String>(
+    final String? picked = await showPremiumPicker<String>(
       context: context,
-      builder: (BuildContext context) => SimpleDialog(
-        title: const Text('Subtitle position'),
-        children: <Widget>[
-          SimpleDialogOption(
-            onPressed: () => Navigator.of(context).pop('Bottom'),
-            child: const Text('Bottom'),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.of(context).pop('Top'),
-            child: const Text('Top'),
-          ),
-        ],
-      ),
+      title: 'Subtitle position',
+      selected: store.subPosition,
+      options: const <PremiumPickerOption<String>>[
+        PremiumPickerOption(value: 'Bottom', label: 'Bottom'),
+        PremiumPickerOption(value: 'Top', label: 'Top'),
+      ],
     );
     if (picked != null) await store.setSubPosition(picked);
   }
 
   Future<void> _pickSeek(BuildContext context) async {
-    final int? picked = await showDialog<int>(
+    final int? picked = await showPremiumPicker<int>(
       context: context,
-      builder: (BuildContext context) => SimpleDialog(
-        title: const Text('Double-tap seek'),
-        children: <Widget>[
-          for (final int s in <int>[5, 10, 15, 30])
-            SimpleDialogOption(
-              onPressed: () => Navigator.of(context).pop(s),
-              child: Text('$s seconds'),
-            ),
-        ],
-      ),
+      title: 'Double-tap seek',
+      selected: store.doubleTapSeek,
+      options: <PremiumPickerOption<int>>[
+        for (final int s in <int>[5, 10, 15, 30])
+          PremiumPickerOption<int>(value: s, label: '$s seconds'),
+      ],
     );
     if (picked != null) await store.setDoubleTapSeek(picked);
   }
 
   Future<void> _pickSpeed(BuildContext context) async {
-    final double? picked = await showDialog<double>(
+    final double? picked = await showPremiumPicker<double>(
       context: context,
-      builder: (BuildContext context) => SimpleDialog(
-        title: const Text('Playback speed'),
-        children: <Widget>[
-          for (final double s in <double>[0.5, 1.0, 1.25, 1.5, 2.0])
-            SimpleDialogOption(
-              onPressed: () => Navigator.of(context).pop(s),
-              child: Text('${s}x'),
-            ),
-        ],
-      ),
+      title: 'Playback speed',
+      selected: store.playbackSpeed,
+      options: <PremiumPickerOption<double>>[
+        for (final double s in <double>[0.5, 1.0, 1.25, 1.5, 2.0])
+          PremiumPickerOption<double>(value: s, label: '${s}x'),
+      ],
     );
     if (picked != null) await store.setPlaybackSpeed(picked);
   }
