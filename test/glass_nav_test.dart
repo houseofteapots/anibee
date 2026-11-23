@@ -219,7 +219,11 @@ void main() {
     // glass Stack its non-zero height.
     expect(find.byType(BackdropFilter), findsNothing);
     expect(find.byType(LiquidGlassNavBar), findsOneWidget);
-    expect(find.text('Home'), findsWidgets);
+    // 0.2.16: exactly ONE 'Home' — the base layer is background-only
+    // now, so the package bar is the only copy of the items (before,
+    // the base pill rendered the same buttons and every icon + label
+    // appeared twice on the phone — the "reflection").
+    expect(find.text('Home'), findsOneWidget);
   });
 
   testWidgets('0.2.14: blurry nav keeps 64pt height and taps work',
@@ -324,6 +328,105 @@ void main() {
       expect(bases, isNotEmpty);
       for (final Container c in bases) {
         expect((c.decoration as BoxDecoration).color!.a, 1.0);
+      }
+    });
+  });
+
+  /// 0.2.16 SINGLE-RENDER NAV (user 2026-11-24 01:45, Downloads tab
+  /// screenshot on 0.2.15: "navigation icon and letter reflection"):
+  /// every nav icon + label showed a faint ghost copy above/below
+  /// it. Root cause: `_buildLiquidGlass` stacked TWO copies of the
+  /// same five items — the base pill's full Row of `_NavButton`s
+  /// UNDER the package bar's own five items — slightly offset, the
+  /// base copy showing through the package bar's translucent fill.
+  /// The 0.2.15 opaque surface only blocked the poster bleed-through,
+  /// not the base layer's own icons. Fix: the glass base layer is
+  /// background-only (surface + border + sheen, no buttons); the
+  /// package bar is the only item renderer. Headless rendering hides
+  /// the offset, so these tests assert the single-copy structure,
+  /// not pixels — the phone test is the proof.
+  group('0.2.16 single-render nav — no ghost/reflection', () {
+    const List<String> labels = <String>[
+      'Home',
+      'Search',
+      'Collection',
+      'Downloads',
+      'Settings',
+    ];
+
+    testWidgets('glass renders each nav label exactly once',
+        (WidgetTester tester) async {
+      await pumpNavInShell(
+        tester,
+        navStyle: 'glass',
+        isDark: true,
+        onTap: (_) {},
+      );
+      for (final String label in labels) {
+        expect(find.text(label), findsOneWidget, reason: label);
+      }
+    });
+
+    testWidgets('glass dark base layer renders no buttons',
+        (WidgetTester tester) async {
+      await pumpNavInShell(
+        tester,
+        navStyle: 'glass',
+        isDark: true,
+        onTap: (_) {},
+      );
+      // The base pill Container (opaque dark fill) must have no
+      // child Row of buttons — otherwise its icons show through the
+      // package bar as a ghost copy.
+      final Iterable<Container> bases = tester.widgetList<Container>(
+        find.byWidgetPredicate(
+          (Widget w) =>
+              w is Container &&
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).color ==
+                  GlassNavBar.blurrySurfaceDark,
+        ),
+      );
+      expect(bases, isNotEmpty);
+      for (final Container c in bases) {
+        expect(c.child, isNull);
+      }
+    });
+
+    testWidgets('glass light base layer renders no buttons',
+        (WidgetTester tester) async {
+      await pumpNavInShell(
+        tester,
+        navStyle: 'glass',
+        isDark: false,
+        onTap: (_) {},
+      );
+      final Iterable<Container> bases = tester.widgetList<Container>(
+        find.byWidgetPredicate(
+          (Widget w) =>
+              w is Container &&
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).color == Colors.white,
+        ),
+      );
+      expect(bases, isNotEmpty);
+      for (final Container c in bases) {
+        expect(c.child, isNull);
+      }
+    });
+
+    testWidgets('blurry still renders each nav label exactly once',
+        (WidgetTester tester) async {
+      await pumpNavInShell(
+        tester,
+        navStyle: 'blurry',
+        isDark: true,
+        onTap: (_) {},
+      );
+      // Blurry keeps its own buttons (no package bar there) — but
+      // still exactly one copy of each label.
+      for (final String label in labels) {
+        expect(find.text(label), findsOneWidget, reason: label);
       }
     });
   });

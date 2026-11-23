@@ -104,9 +104,17 @@ class GlassNavBar extends StatelessWidget {
   /// the home indicator);
   /// (3) the base layer has no BackdropFilter — the glass shader does
   /// the refraction over it, and if the shader ever paints nothing on
-  /// a device the plain pill + border + icons still show and its
-  /// buttons stay tappable. `clipBehavior: Clip.none` is belt and
-  /// braces so the nav can never be clipped away again.
+  /// a device the plain pill + border still show. `clipBehavior:
+  /// Clip.none` is belt and braces so the nav can never be clipped
+  /// away again.
+  ///
+  /// 0.2.16: the base layer is BACKGROUND-ONLY (surface + border +
+  /// sheen, no buttons — see `_buildPill`'s `includeButtons`). It
+  /// used to render the same five `_NavButton`s the package bar
+  /// renders, so every icon + label appeared TWICE, slightly offset
+  /// — the "reflection" the user saw on 0.2.15 (the base copy showed
+  /// through the package bar's translucent fill). The package bar is
+  /// now the ONLY item renderer in the 'glass' style.
   Widget _buildLiquidGlass(BuildContext context) {
     final LiquidGlassNavBar bar = LiquidGlassNavBar(
       items: <LiquidGlassNavItem>[
@@ -159,10 +167,18 @@ class GlassNavBar extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: <Widget>[
-          // BASE LAYER: the pill without blur, non-positioned so the
-          // Stack takes its 63 pt height from it. Visible + tappable
-          // even if the package shader paints nothing.
-          _buildPill(height: glassPillHeight, blurred: false),
+          // BASE LAYER (0.2.16): background ONLY — surface + border +
+          // sheen, NO buttons. The pill without blur, non-positioned
+          // so the Stack takes its 63 pt height from it. It must
+          // never render the nav items: the package bar below is the
+          // only item renderer, and a second copy of the icons +
+          // labels (slightly offset) is the "reflection" the user
+          // saw on 0.2.15.
+          _buildPill(
+            height: glassPillHeight,
+            blurred: false,
+            includeButtons: false,
+          ),
           glassInBox,
           // Thin neutral rim on the pill's exact outline, above the
           // glass so it reads on every theme. IgnorePointer so taps
@@ -193,19 +209,27 @@ class GlassNavBar extends StatelessWidget {
     return _buildPill(height: 64, blurred: true);
   }
 
-  /// The pill's painted content (surface + border + sheen + the five
-  /// icon buttons), shared by both styles so switching nav styles
-  /// never moves the pill. [blurred] wraps it in the BackdropFilter
-  /// for the frosted look; the glass base layer (0.2.14) skips the
-  /// blur so the package shader refracts a clean pill — a blurred
-  /// base would fog the liquid-glass look.
+  /// The pill's painted content (surface + border + sheen), shared
+  /// by both styles so switching nav styles never moves the pill.
+  /// [blurred] wraps it in the BackdropFilter for the frosted look;
+  /// the glass base layer (0.2.14) skips the blur so the package
+  /// shader refracts a clean pill — a blurred base would fog the
+  /// liquid-glass look. [includeButtons] adds the five icon buttons
+  /// (the 'blurry' style, which has no package bar, needs them);
+  /// the glass base layer passes false (0.2.16) — the package bar
+  /// renders the items, and a second copy in the base layer is the
+  /// ghost "reflection" the user saw on 0.2.15.
   ///
   /// 0.2.15: the surface is FULLY OPAQUE in both styles (dark
   /// 0xFF181C20 / solid white light). The glass base layer is the
   /// same pill, so the package bar's own translucent fill can no
   /// longer let the poster grid bleed through behind the icons —
   /// the opaque base sits behind it and blocks everything.
-  Widget _buildPill({required double height, required bool blurred}) {
+  Widget _buildPill({
+    required double height,
+    required bool blurred,
+    bool includeButtons = true,
+  }) {
     final ImageFilter filter = ImageFilter.blur(
       sigmaX: blurryBlurSigma,
       sigmaY: blurryBlurSigma,
@@ -230,20 +254,22 @@ class GlassNavBar extends StatelessWidget {
           ],
         ),
       ),
-      child: Row(
-        children: <Widget>[
-          for (int i = 0; i < _items.length; i++)
-            Expanded(
-              child: _NavButton(
-                item: _items[i],
-                selected: i == currentIndex,
-                accent: accent,
-                isDark: isDark,
-                onTap: () => onTap(i),
-              ),
-            ),
-        ],
-      ),
+      child: includeButtons
+          ? Row(
+              children: <Widget>[
+                for (int i = 0; i < _items.length; i++)
+                  Expanded(
+                    child: _NavButton(
+                      item: _items[i],
+                      selected: i == currentIndex,
+                      accent: accent,
+                      isDark: isDark,
+                      onTap: () => onTap(i),
+                    ),
+                  ),
+              ],
+            )
+          : null,
     );
     if (!blurred) return pill;
     return ClipRRect(
