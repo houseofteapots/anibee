@@ -14,16 +14,22 @@ import '../player/subtitle_style.dart';
 import '../player/trailer_player.dart';
 import '../services/anilist_service.dart';
 import '../services/aniskip_service.dart';
+import '../services/download_service.dart';
 import '../services/miruro_resolver.dart';
 import '../settings_store.dart';
 import '../theme.dart';
+import '../widgets/episode_card.dart';
 import '../widgets/poster.dart';
 import '../widgets/server_sheet.dart';
 import '../widgets/subtitle_overlay.dart';
 import '../widgets/top_notification.dart';
 
 /// Right-side slide-over panel kind (0.2.4, Zeus style).
-enum _PanelKind { sources, audio, subtitles, quality }
+enum _PanelKind { sources, audio, subtitles, quality, sleep }
+
+/// Sleep timer mode (0.2.11): off, stop at the end of the current
+/// episode, or stop after N minutes.
+enum _SleepMode { off, end, min15, min30, min60 }
 
 /// Full-screen player (Zeus feature set, AniBee accent).
 ///
@@ -80,6 +86,7 @@ class FullPlayerScreen extends StatefulWidget {
     this.currentDebrid,
     this.anilist,
     this.aniSkip,
+    this.downloads,
   });
 
   final TrailerPlayer trailer;
@@ -87,6 +94,12 @@ class FullPlayerScreen extends StatefulWidget {
   final Anime anime;
   final List<Episode> episodes;
   final Episode initialEpisode;
+
+  /// Download service for auto-delete (0.2.11): when an episode is
+  /// watched to completion and auto-delete is on, its downloaded
+  /// file is removed. Null in tests — the store record is cleared
+  /// directly instead.
+  final DownloadService? downloads;
 
   /// AniList service (0.2.4): resolves malId for AniSkip when the
   /// anime has an anilistId but no malId (the local catalogue). Null
@@ -168,6 +181,24 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   bool _autoplayShown = false;
   Timer? _autoplayTimer;
   int _autoplayCountdown = 5;
+
+  /// Sleep timer (0.2.11): 'off' | 'end' (stop at the end of the
+  /// current episode) | 15 / 30 / 60 minutes. A timed sleep pauses
+  /// playback when it fires; 'end' stops at EOF instead of
+  /// autoplaying. Per-session — not persisted.
+  _SleepMode _sleepMode = _SleepMode.off;
+  Timer? _sleepTimer;
+
+  /// True while the sleep timer is set to "end of episode" — the
+  /// EOF handler and the duration−3s autoplay trigger both check
+  /// this so the timer never fights autoplay.
+  bool get _sleepAtEpisodeEnd => _sleepMode == _SleepMode.end;
+
+  /// Episode number the completion push/auto-delete already ran for
+  /// (0.2.11): `_saveProgress` can hit the completion branch more
+  /// than once per episode (30 s saves + EOF), so the push/delete
+  /// run exactly once per episode.
+  int? _completedPushEpisode;
 
   /// 0.2.10: the Up-next card is visible independently of the
   /// countdown timer — with autoplay OFF there is no timer, the
@@ -394,6 +425,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _hideTimer?.cancel();
     _holdTimer?.cancel();
     _autoplayTimer?.cancel();
+    _sleepTimer?.cancel();
     _seekFlashTimer?.cancel();
     _hudHideTimer?.cancel();
     _videoScale.dispose();
@@ -436,7 +468,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     // was known — retry once now that it has arrived.
     _maybeRetrySkipTimes();
     // Autoplay-next countdown near the end of a real episode.
+    // 0.2.11: a sleep timer set to "end of episode" suppresses this
+    // — the timer must not fight autoplay by advancing anyway.
     if (!_autoplayShown &&
+        !_sleepAtEpisodeEnd &&
         _store.autoplayNext &&
         _nextEpisode != null &&
         duration.inSeconds > 10 &&
@@ -495,8 +530,50 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           durationSeconds: dur.inSeconds.toDouble(),
         ),
       );
+      // 0.2.11: episode watched to completion — push the episode
+      // number to AniList + auto-delete the download (once per
+      // episode; this branch can run on repeated 30 s saves).
+      unawaited(_onEpisodeCompleted(_currentEpisode));
     } else {
       unawaited(_store.clearResumeSeconds(_resumeKey));
+    }
+  }
+
+  /// Episode watched to completion (0.2.11): push the episode
+  /// number as progress to AniList (CURRENT, or COMPLETED on the
+  /// last episode) and, when auto-delete is on, delete the downloaded
+  /// file. Runs once per episode — `_saveProgress` can hit the
+  /// completion branch repeatedly near the end.
+  Future<void> _onEpisodeCompleted(Episode episode) async {
+    if (_completedPushEpisode == episode.number) return;
+    _completedPushEpisode = episode.number;
+    final Anime anime = widget.anime;
+    if (_store.anilistConnected && anime.anilistId != null) {
+      final bool isLast =
+          anime.episodeCount > 0 && episode.number >= anime.episodeCount;
+      try {
+        await widget.anilist?.saveListEntry(
+          _store.anilistToken!,
+          anime.anilistId!,
+          isLast ? 'COMPLETED' : 'CURRENT',
+          progress: episode.number,
+        );
+      } catch (_) {
+        // Best-effort: a failed push never breaks playback.
+      }
+      await _store.markProgress(anime, episode.number);
+    }
+    if (_store.autoDeleteDownloads) {
+      final String key = '${anime.id}:${episode.number}';
+      if (_store.downloadStatus[key] == 'downloaded') {
+        final DownloadService? downloads = widget.downloads;
+        if (downloads != null) {
+          await downloads.removeDownload(key, _store);
+        } else {
+          await _store.removeDownloadRecord(key);
+          await _store.removeDownload(key);
+        }
+      }
     }
   }
 
@@ -1015,6 +1092,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       _autoplayCancelled = false;
       _autoplayTimer?.cancel();
       _autoplayTimer = null;
+      _completedPushEpisode = null;
       _resumeApplied = true; // resume handled inline below
     });
     widget.onEpisodeChanged?.call(episode);
@@ -1089,6 +1167,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     unawaited(_player.pause());
     _saveProgress();
     _pokeControls();
+    // 0.2.11: sleep timer set to "end of episode" — stop here. No
+    // Up-next card, no advance; the timer is spent.
+    if (_sleepAtEpisodeEnd) {
+      _sleepMode = _SleepMode.off;
+      _snack('Sleep timer — playback stopped.');
+      return;
+    }
     if (_autoplayShown || _autoplayCancelled) return;
     if (_nextEpisode == null) return;
     _autoplayShown = true;
@@ -1096,7 +1181,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   }
 
   void _showAutoplayOverlay({bool withCountdown = true}) {
-    _autoplayCountdown = 5;
+    // 0.2.11: the countdown comes from Settings → Player (3/5/10 s),
+    // not the old hardcoded 5.
+    _autoplayCountdown = _store.autoplayCountdownSeconds;
     _autoplayTimer?.cancel();
     _autoplayTimer = null;
     if (withCountdown) {
@@ -1317,6 +1404,88 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   void _showQualityPanel() => _openPanel(_PanelKind.quality);
 
+  void _showSleepPanel() => _openPanel(_PanelKind.sleep);
+
+  /// Sleep timer (0.2.11): pick the mode, then close the panel. A
+  /// timed mode starts the countdown; 'end' stops at EOF instead of
+  /// autoplaying (see `_onPlaybackCompleted` + the duration−3s
+  /// trigger guard in `_onPosition`).
+  void _setSleepMode(_SleepMode mode) {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    setState(() => _sleepMode = mode);
+    if (mode == _SleepMode.min15 ||
+        mode == _SleepMode.min30 ||
+        mode == _SleepMode.min60) {
+      final int minutes = switch (mode) {
+        _SleepMode.min15 => 15,
+        _SleepMode.min30 => 30,
+        _SleepMode.min60 => 60,
+        _ => 0,
+      };
+      _sleepTimer = Timer(
+        Duration(minutes: minutes),
+        _onSleepTimerFired,
+      );
+      _snack('Sleep timer: $minutes min me playback ruk jayega.');
+    } else if (mode == _SleepMode.end) {
+      _snack('Sleep timer: episode khatam hote hi ruk jayega.');
+    }
+    _closePanel();
+  }
+
+  /// A timed sleep timer fired: pause, hide any Up-next card, clear
+  /// the mode. Never advances to the next episode.
+  void _onSleepTimerFired() {
+    _sleepTimer = null;
+    if (!mounted) return;
+    setState(() => _sleepMode = _SleepMode.off);
+    _autoplayTimer?.cancel();
+    _autoplayTimer = null;
+    _autoplayVisible = false;
+    unawaited(_player.pause());
+    _snack('Sleep timer — playback stopped.');
+  }
+
+  Widget _buildSleepPanelContent(Color accent) {
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 12),
+      children: <Widget>[
+        _panelSectionHeader('STOP PLAYBACK'),
+        _panelTrackRow(
+          label: 'Off',
+          selected: _sleepMode == _SleepMode.off,
+          accent: accent,
+          onTap: () => _setSleepMode(_SleepMode.off),
+        ),
+        _panelTrackRow(
+          label: 'End of episode',
+          selected: _sleepMode == _SleepMode.end,
+          accent: accent,
+          onTap: () => _setSleepMode(_SleepMode.end),
+        ),
+        _panelTrackRow(
+          label: 'After 15 minutes',
+          selected: _sleepMode == _SleepMode.min15,
+          accent: accent,
+          onTap: () => _setSleepMode(_SleepMode.min15),
+        ),
+        _panelTrackRow(
+          label: 'After 30 minutes',
+          selected: _sleepMode == _SleepMode.min30,
+          accent: accent,
+          onTap: () => _setSleepMode(_SleepMode.min30),
+        ),
+        _panelTrackRow(
+          label: 'After 60 minutes',
+          selected: _sleepMode == _SleepMode.min60,
+          accent: accent,
+          onTap: () => _setSleepMode(_SleepMode.min60),
+        ),
+      ],
+    );
+  }
+
   /// The right-side slide-over panel: a dim scrim on the left (tap
   /// to close) and the dark glossy panel on the right. Rendered above
   /// the controls in the build stack, independent of the controls'
@@ -1328,12 +1497,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       _PanelKind.audio => 'Audio',
       _PanelKind.subtitles => 'Subtitles',
       _PanelKind.quality => 'Quality',
+      _PanelKind.sleep => 'Sleep Timer',
     };
     final Widget content = switch (kind) {
       _PanelKind.sources => _buildSourcesPanelContent(),
       _PanelKind.audio => _buildAudioPanelContent(accent),
       _PanelKind.subtitles => _buildSubtitlesPanelContent(accent),
       _PanelKind.quality => _buildQualityPanelContent(accent),
+      _PanelKind.sleep => _buildSleepPanelContent(accent),
     };
     return Positioned.fill(
       child: Row(
@@ -2241,10 +2412,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     // eps = 3 grid rows) most of that height was empty space. Now
     // the sheet shrink-wraps to its content: a short anime gets a
     // SHORT sheet, and only a long list grows to the cap and scrolls.
-    // Short anime (<= 12 eps) get ONE horizontal row instead of a
-    // grid ("line se ana chaiye"); more than 12 keep the 5-column
-    // grid. Title is one line with ellipsis.
-    final bool singleRow = widget.episodes.length <= 12;
+    // 0.2.11: short anime (<= 12 eps) show the Detail-style episode
+    // CARDS (thumbnail + EP badge + title + 2-line synopsis + date,
+    // scrollable list) — the 0.2.10 single row of number boxes was
+    // not what the user asked for. Long anime keep the 5-column
+    // number grid. Title is one line with ellipsis.
+    final bool showCards = widget.episodes.length <= 12;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -2276,15 +2449,34 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   ),
                 ),
                 Flexible(
-                  child: singleRow
-                      ? _EpisodeRow(
-                          episodes: widget.episodes,
-                          current: _currentEpisode,
-                          accent: accent,
-                          onSelect: (Episode ep) {
-                            Navigator.of(context).pop();
-                            _selectEpisode(ep);
-                          },
+                  child: showCards
+                      ? Theme(
+                          // The sheet is dark-styled regardless of
+                          // the app theme (like the number cells
+                          // below) — force dark so the cards render
+                          // dark like on Detail.
+                          data: Theme.of(context).copyWith(
+                            brightness: Brightness.dark,
+                          ),
+                          child: ListView.builder(
+                            padding: const EdgeInsets.only(top: 6, bottom: 12),
+                            shrinkWrap: true,
+                            itemCount: widget.episodes.length,
+                            itemBuilder: (BuildContext context, int index) {
+                              final Episode ep = widget.episodes[index];
+                              return EpisodeCard(
+                                anime: widget.anime,
+                                episode: ep,
+                                store: _store,
+                                selected:
+                                    ep.number == _currentEpisode.number,
+                                onTap: () {
+                                  Navigator.of(context).pop();
+                                  _selectEpisode(ep);
+                                },
+                              );
+                            },
+                          ),
                         )
                       : GridView.builder(
                           padding: const EdgeInsets.all(12),
@@ -2799,23 +2991,32 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                         // 0.2.4: REAL AniSkip segments — "Skip Intro"
                         // only while the position is inside the OP
                         // segment, "Skip Outro" only inside the ED
-                        // segment. No AniSkip data -> no button at
+                        // segment. 0.2.11 adds "Skip Recap" the same
+                        // way. No AniSkip data -> no button at
                         // all, never the old hardcoded 85s jump.
                         final SkipInterval? op = _skipTimes?.op;
                         final SkipInterval? ed = _skipTimes?.ed;
+                        final SkipInterval? recap = _skipTimes?.recap;
                         final bool showIntro =
                             _store.skipIntro &&
                             op != null &&
                             op.contains(posSeconds);
+                        final bool showRecap =
+                            _store.skipIntro &&
+                            recap != null &&
+                            recap.contains(posSeconds);
                         final bool showOutro =
                             _store.skipIntro &&
                             ed != null &&
                             ed.contains(posSeconds);
                         // (label, seek target). Flow analysis: a true
-                        // showIntro/showOutro implies its interval is
-                        // non-null, so the accesses below are safe.
+                        // showIntro/showRecap/showOutro implies its
+                        // interval is non-null, so the accesses below
+                        // are safe.
                         final (String, double)? skip = showIntro
                             ? ('Skip Intro', op.endTime)
+                            : showRecap
+                            ? ('Skip Recap', recap.endTime)
                             : showOutro
                             ? ('Skip Outro', ed.endTime)
                             : null;
@@ -3211,6 +3412,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   onTap: () {
                     setState(() => _controlsLocked = true);
                   },
+                ),
+                const SizedBox(width: 4),
+                _RoundButton(
+                  icon: Icons.bedtime_rounded,
+                  size: 32,
+                  iconSize: 17,
+                  accent: accent,
+                  active: _sleepMode != _SleepMode.off,
+                  tooltip: 'Sleep timer',
+                  onTap: _showSleepPanel,
                 ),
                 const SizedBox(width: 4),
                 _RoundButton(
@@ -3739,45 +3950,5 @@ class _EpisodeCell extends StatelessWidget {
   }
 }
 
-/// Single horizontal episode row (0.2.10): short anime (<= 12
-/// episodes) show all episodes in ONE line instead of a grid, so
-/// the sheet stays short. Fixed 52pt row height; scrolls
-/// horizontally when the cells don't fit (12 cells).
-class _EpisodeRow extends StatelessWidget {
-  const _EpisodeRow({
-    required this.episodes,
-    required this.current,
-    required this.accent,
-    required this.onSelect,
-  });
-
-  final List<Episode> episodes;
-  final Episode current;
-  final Color accent;
-  final ValueChanged<Episode> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 52,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        itemCount: episodes.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (BuildContext context, int index) {
-          final Episode ep = episodes[index];
-          return SizedBox(
-            width: 64,
-            child: _EpisodeCell(
-              episode: ep,
-              selected: ep.number == current.number,
-              accent: accent,
-              onTap: () => onSelect(ep),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
+/// (The 0.2.10 single horizontal episode row was removed in 0.2.11:
+/// short anime now show Detail-style episode CARDS in the chooser.)

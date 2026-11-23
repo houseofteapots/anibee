@@ -6,6 +6,7 @@ import '../models.dart';
 import '../services/anilist_service.dart';
 import '../theme.dart';
 import '../widgets/poster.dart';
+import '../widgets/premium_picker.dart';
 
 /// Search: field + genre chips + poster grid.
 ///
@@ -32,6 +33,13 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _controller = TextEditingController();
   String _query = '';
   String _genre = 'All';
+  // 0.2.11 filters: genre (chips) + year / status / format (pickers).
+  // They apply to the live AniList search; locally only genre + year
+  // can filter (the bundled catalogue carries no airing status or
+  // format field).
+  int? _year;
+  String _status = 'All';
+  String _format = 'All';
   Timer? _debounce;
   List<Anime> _remote = <Anime>[];
   bool _searching = false;
@@ -46,6 +54,31 @@ class _SearchScreenState extends State<SearchScreen> {
     'Horror',
     'Adventure',
   ];
+
+  static const List<String> _statuses = <String>[
+    'All',
+    'Airing',
+    'Finished',
+    'Not Yet Aired',
+  ];
+
+  static const List<String> _formats = <String>['All', 'TV', 'Movie'];
+
+  bool get _filtersActive =>
+      _genre != 'All' || _year != null || _status != 'All' || _format != 'All';
+
+  String? get _statusFilter => switch (_status) {
+    'Airing' => 'RELEASING',
+    'Finished' => 'FINISHED',
+    'Not Yet Aired' => 'NOT_YET_RELEASED',
+    _ => null,
+  };
+
+  String? get _formatFilter => switch (_format) {
+    'TV' => 'TV',
+    'Movie' => 'MOVIE',
+    _ => null,
+  };
 
   @override
   void dispose() {
@@ -66,25 +99,47 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
     setState(() => _searching = true);
-    _debounce = Timer(const Duration(milliseconds: 400), () async {
-      final String q = _controller.text.trim();
-      if (q.length < 2) return;
-      try {
-        final List<Anime> results = await widget.anilist.searchAnime(q);
-        if (!mounted || _controller.text.trim() != q) return;
-        setState(() {
-          _remote = results;
-          _searching = false;
-          _remoteFailed = false;
-        });
-      } catch (_) {
-        if (!mounted) return;
-        setState(() {
-          _searching = false;
-          _remoteFailed = true;
-        });
-      }
-    });
+    _debounce = Timer(
+      const Duration(milliseconds: 400),
+      () => unawaited(_runRemoteSearch()),
+    );
+  }
+
+  /// Live AniList search with the current filters. Re-runs when a
+  /// filter changes while a query is active.
+  Future<void> _runRemoteSearch() async {
+    final String q = _controller.text.trim();
+    if (q.length < 2) return;
+    try {
+      final List<Anime> results = await widget.anilist.searchAnime(
+        q,
+        genre: _genre == 'All' ? null : _genre,
+        year: _year,
+        status: _statusFilter,
+        format: _formatFilter,
+      );
+      if (!mounted || _controller.text.trim() != q) return;
+      setState(() {
+        _remote = results;
+        _searching = false;
+        _remoteFailed = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _searching = false;
+        _remoteFailed = true;
+      });
+    }
+  }
+
+  void _onFilterChanged() {
+    if (_controller.text.trim().length >= 2) {
+      setState(() => _searching = true);
+      unawaited(_runRemoteSearch());
+    } else {
+      setState(() {});
+    }
   }
 
   List<Anime> _localResults() {
@@ -95,7 +150,8 @@ class _SearchScreenState extends State<SearchScreen> {
           a.title.toLowerCase().contains(q) ||
           a.genres.any((String g) => g.toLowerCase().contains(q));
       final bool matchesGenre = _genre == 'All' || a.genres.contains(_genre);
-      return matchesQuery && matchesGenre;
+      final bool matchesYear = _year == null || a.year == _year;
+      return matchesQuery && matchesGenre && matchesYear;
     }).toList();
   }
 
@@ -109,6 +165,53 @@ class _SearchScreenState extends State<SearchScreen> {
       if (seen.add(a.title.toLowerCase())) merged.add(a);
     }
     return merged;
+  }
+
+  Future<void> _pickYear(BuildContext context) async {
+    final int nowYear = DateTime.now().year;
+    final int? picked = await showPremiumPicker<int>(
+      context: context,
+      title: 'Year',
+      selected: _year ?? 0,
+      options: <PremiumPickerOption<int>>[
+        const PremiumPickerOption<int>(value: 0, label: 'All years'),
+        for (int y = nowYear; y >= 2000; y--)
+          PremiumPickerOption<int>(value: y, label: '$y'),
+      ],
+    );
+    if (picked == null) return;
+    setState(() => _year = picked == 0 ? null : picked);
+    _onFilterChanged();
+  }
+
+  Future<void> _pickStatus(BuildContext context) async {
+    final String? picked = await showPremiumPicker<String>(
+      context: context,
+      title: 'Status',
+      selected: _status,
+      options: <PremiumPickerOption<String>>[
+        for (final String s in _statuses)
+          PremiumPickerOption<String>(value: s, label: s),
+      ],
+    );
+    if (picked == null) return;
+    setState(() => _status = picked);
+    _onFilterChanged();
+  }
+
+  Future<void> _pickFormat(BuildContext context) async {
+    final String? picked = await showPremiumPicker<String>(
+      context: context,
+      title: 'Format',
+      selected: _format,
+      options: <PremiumPickerOption<String>>[
+        for (final String f in _formats)
+          PremiumPickerOption<String>(value: f, label: f),
+      ],
+    );
+    if (picked == null) return;
+    setState(() => _format = picked);
+    _onFilterChanged();
   }
 
   @override
@@ -192,13 +295,49 @@ class _SearchScreenState extends State<SearchScreen> {
                   color: selected ? Colors.white : primaryText,
                   fontWeight: FontWeight.w600,
                 ),
-                onSelected: (_) => setState(() => _genre = genre),
+                onSelected: (_) {
+                  setState(() => _genre = genre);
+                  _onFilterChanged();
+                },
               );
             },
           ),
         ),
+        const SizedBox(height: 10),
+        // 0.2.11 filters: year / status / format pickers. Each opens
+        // the premium picker; 'All' clears that filter.
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: <Widget>[
+              _FilterButton(
+                label: 'Year',
+                value: _year == null ? 'All' : '$_year',
+                active: _year != null,
+                accent: accent,
+                onTap: () => _pickYear(context),
+              ),
+              const SizedBox(width: 8),
+              _FilterButton(
+                label: 'Status',
+                value: _status,
+                active: _status != 'All',
+                accent: accent,
+                onTap: () => _pickStatus(context),
+              ),
+              const SizedBox(width: 8),
+              _FilterButton(
+                label: 'Format',
+                value: _format,
+                active: _format != 'All',
+                accent: accent,
+                onTap: () => _pickFormat(context),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 16),
-        if (_query.isNotEmpty || _genre != 'All')
+        if (_query.isNotEmpty || _filtersActive)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: Text(
@@ -248,6 +387,69 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// One filter pill (0.2.11): "Year · 2024" — tap opens the picker.
+/// Active filters (not 'All') carry the accent border.
+class _FilterButton extends StatelessWidget {
+  const _FilterButton({
+    required this.label,
+    required this.value,
+    required this.active,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final bool active;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color card = isDark ? AppTheme.cardDark : AppTheme.cardLight;
+    final Color primaryText =
+        isDark ? AppTheme.textPrimaryDark : AppTheme.textPrimaryLight;
+    final Color secondaryText =
+        isDark ? AppTheme.textSecondaryDark : AppTheme.textSecondaryLight;
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: BoxDecoration(
+            color: card,
+            borderRadius: BorderRadius.circular(10),
+            border: active ? Border.all(color: accent, width: 1.5) : null,
+          ),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  '$label · $value',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: active ? accent : primaryText,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: secondaryText,
+                size: 16,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

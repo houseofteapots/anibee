@@ -8,6 +8,7 @@ import 'download_service.dart';
 import 'miruro_resolver.dart';
 import 'oauth_service.dart';
 import 'provider_config.dart';
+import 'reanime_resolver.dart';
 
 /// All M2 services, created once in main() and passed down through
 /// AppShell so screens never construct their own clients.
@@ -15,19 +16,21 @@ class AppServices {
   AppServices({
     required this.anilist,
     required this.miruro,
+    ReAnimeResolver? reanime,
     required this.debrid,
     required this.oauth,
     required this.downloads,
     required this.airing,
     required this.airingNotifications,
     this.configService,
-  });
+  }) : reanime = reanime ?? ReAnimeResolver(anilist: anilist);
 
   factory AppServices.create({ProviderConfigService? configService}) {
     final AniListService anilist = AniListService();
     return AppServices(
       anilist: anilist,
       miruro: MiruroResolver(anilist: anilist),
+      reanime: ReAnimeResolver(anilist: anilist),
       debrid: DebridService(),
       oauth: OAuthService(),
       downloads: DownloadService(),
@@ -39,6 +42,10 @@ class AppServices {
 
   final AniListService anilist;
   final MiruroResolver miruro;
+
+  /// ReAnime (0.2.11): its own selectable resolver — flixcloud
+  /// decrypt on-device, no server.
+  final ReAnimeResolver reanime;
   final DebridService debrid;
   final OAuthService oauth;
 
@@ -64,8 +71,15 @@ class AppServices {
   final ProviderConfigService? configService;
 
   /// Resolve a playable stream for an episode.
-  /// [debrid] is null (Miruro/Anikoto) or 'torbox' / 'realdebrid'.
-  /// Returns null when nothing resolved — [miruro.lastError] /
+  /// [debrid] is null (source resolvers) or 'torbox' / 'realdebrid'.
+  /// [server] is the chosen source ('Miruro' | 'AniKoto' |
+  /// 'ReAnime') — 0.2.11 actually routes to it now: Miruro =
+  /// justanime chain, AniKoto = anikoto.cz chain, ReAnime = the
+  /// flixcloud chain. Previously every non-debrid resolve silently
+  /// went to Miruro and `preferredServer` was display-only. When the
+  /// chosen server fails and the user's fallback setting is on, the
+  /// other Miruro-family server is tried once. Returns null when
+  /// nothing resolved — [miruro.lastError] / [reanime.lastError] /
   /// the debrid path carries the reason.
   Future<ResolvedStream?> resolveEpisode({
     required Anime anime,
@@ -73,6 +87,7 @@ class AppServices {
     required String subDub,
     required SettingsStore store,
     String? debrid,
+    String? server,
     void Function(String status)? onProgress,
     bool Function()? isCancelled,
   }) async {
@@ -96,17 +111,34 @@ class AppServices {
         isCancelled: isCancelled,
       );
     }
-    return miruro.resolve(anime: anime, episodeNumber: episode, subDub: subDub);
+    final String chosen = server ?? store.preferredServer;
+    if (chosen == 'ReAnime') {
+      return reanime.resolve(
+        anime: anime,
+        episodeNumber: episode,
+        subDub: subDub,
+      );
+    }
+    return miruro.resolve(
+      anime: anime,
+      episodeNumber: episode,
+      subDub: subDub,
+      server: chosen == 'AniKoto' ? 'AniKoto' : 'Miruro',
+      fallback: store.fallbackProviders,
+    );
   }
 
   /// Push a Collection status to AniList + MAL (best-effort, never
   /// throws). Resolves the MAL id via AniList when the catalogue entry
   /// doesn't carry one. Called when the user changes My List status
-  /// or starts/finishes an anime.
+  /// or starts/finishes an anime. [progress] (0.2.11) is the episode
+  /// number just finished — when given, AniList also gets the
+  /// episode progress (e.g. 5/12), not just the status.
   Future<void> pushListStatus({
     required SettingsStore store,
     required Anime anime,
     required String status, // 'watching' | 'finished' | 'plan'
+    int? progress,
   }) async {
     if (store.anilistConnected && anime.anilistId != null) {
       final String anilistStatus = switch (status) {
@@ -118,6 +150,7 @@ class AppServices {
         store.anilistToken!,
         anime.anilistId!,
         anilistStatus,
+        progress: progress,
       );
     }
     if (store.malConnected) {
@@ -141,6 +174,70 @@ class AppServices {
         });
       }
     }
+  }
+
+  /// Two-way AniList sync, PULL half (0.2.11): fetch the user's
+  /// AniList list and merge it into the local Collection.
+  ///
+  /// AniList wins on first sync after login ([firstSync] — the
+  /// local status for every AniList entry is overwritten). On later
+  /// pulls, entries present on AniList update the local status and
+  /// progress; local-only titles are left alone (never deleted by a
+  /// pull). PAUSED / DROPPED are not synced at all. Synced titles
+  /// are kept in the store's synced library so Collection can show
+  /// titles that are not in the bundled catalogue.
+  ///
+  /// Returns the number of entries merged. Best-effort, never
+  /// throws. When [force] is false, pulls at most once every
+  /// 15 minutes (the Collection open/refresh path calls this
+  /// repeatedly).
+  Future<int> pullAnilistList({
+    required SettingsStore store,
+    bool force = false,
+    bool firstSync = false,
+  }) async {
+    if (!store.anilistConnected) return 0;
+    final String? token = store.anilistToken;
+    if (token == null || token.isEmpty) return 0;
+    if (!force) {
+      final int last = store.lastAnilistSyncAt;
+      if (last > 0 &&
+          DateTime.now().millisecondsSinceEpoch - last <
+              const Duration(minutes: 15).inMilliseconds) {
+        return 0;
+      }
+    }
+    final List<AnilistListEntry> entries = await anilist.fetchUserList(
+      token,
+    );
+    if (entries.isEmpty) return 0;
+    int merged = 0;
+    for (final AnilistListEntry entry in entries) {
+      final String localStatus = switch (entry.status) {
+        'COMPLETED' => 'finished',
+        'PLANNING' => 'plan',
+        _ => 'watching',
+      };
+      // listStatus is keyed by anime.id (see SettingsStore.statusOf);
+      // synced titles carry id 'anilist-<id>' from animeFromMedia.
+      final String? existing = store.listStatus[entry.anime.id];
+      // First sync after login: AniList wins outright. Later pulls:
+      // AniList still wins for entries it has (the user's AniList is
+      // the source of truth for those titles), but a local-only
+      // title is never touched — it is not in this list at all.
+      if (firstSync || existing == null || existing != localStatus) {
+        await store.setListStatus(entry.anime.id, localStatus);
+      }
+      if (entry.progress > 0) {
+        await store.markProgress(entry.anime, entry.progress);
+      }
+      await store.upsertSyncedAnime(entry.anime);
+      merged++;
+    }
+    await store.setLastAnilistSyncAt(
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    return merged;
   }
 
   /// Run a MAL call with a fresh token (refresh when expired).

@@ -1,7 +1,12 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:reicon_flutter/reicon_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../services/app_services.dart';
+import '../services/backup_service.dart';
 import '../services/oauth_service.dart';
 import '../services/provider_config.dart';
 import '../settings_store.dart';
@@ -349,6 +354,33 @@ class SettingsScreen extends StatelessWidget {
                         onChanged: store.setWifiOnly,
                       ),
                     ),
+                    const SettingsDivider(),
+                    SettingsTile(
+                      title: 'Auto-delete watched downloads',
+                      leading: _icon(Reicon.outline.trash, context),
+                      trailing: Switch(
+                        value: store.autoDeleteDownloads,
+                        onChanged: store.setAutoDeleteDownloads,
+                      ),
+                    ),
+                  ],
+                ),
+                SettingsSection(
+                  title: 'BACKUP',
+                  children: <Widget>[
+                    SettingsTile(
+                      title: 'Export backup',
+                      leading: _icon(Reicon.outline.upload, context),
+                      showChevron: true,
+                      onTap: () => _exportBackup(context),
+                    ),
+                    const SettingsDivider(),
+                    SettingsTile(
+                      title: 'Import backup',
+                      leading: _icon(Reicon.outline.download, context),
+                      showChevron: true,
+                      onTap: () => _importBackup(context),
+                    ),
                   ],
                 ),
                 SettingsSection(
@@ -438,7 +470,7 @@ class SettingsScreen extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          'AniBee 0.2.8 • Personal build',
+                          'AniBee 0.2.11 • Personal build',
                           style: TextStyle(
                             color: isDark
                                 ? AppTheme.textSecondaryDark
@@ -593,10 +625,24 @@ class SettingsScreen extends StatelessWidget {
         token,
       );
       await store.setAnilistSession(token, viewer.name);
+      // 0.2.11: pull the AniList list right after login — AniList
+      // wins on this first sync, so Collection fills with the
+      // user's real list immediately.
+      int synced = 0;
+      try {
+        synced = await services.pullAnilistList(
+          store: store,
+          force: true,
+          firstSync: true,
+        );
+      } catch (_) {
+        synced = 0;
+      }
       if (!context.mounted) return;
       _notify(
         context,
-        'Connected to AniList as ${viewer.name}.',
+        'Connected to AniList as ${viewer.name}.'
+        '${synced > 0 ? ' $synced titles synced.' : ''}',
         success: true,
       );
     } catch (e) {
@@ -842,6 +888,53 @@ class SettingsScreen extends StatelessWidget {
       ],
     );
     if (picked != null) await store.setDownloadQuality(picked);
+  }
+
+  /// Backup export (0.2.11): write the versioned JSON to a temp
+  /// file and open the iOS share sheet so the user can save it in
+  /// Files / send it anywhere. No tokens, keys or PIN in the file.
+  Future<void> _exportBackup(BuildContext context) async {
+    try {
+      final File file = await BackupService.exportToFile(store);
+      if (!context.mounted) return;
+      await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(file.path)],
+          subject: 'AniBee backup',
+          text: 'AniBee backup — watch history + settings.',
+        ),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      _notify(context, 'Backup export nahi hua — dobara try karo.');
+    }
+  }
+
+  /// Backup import (0.2.11): pick the .json from Files, validate
+  /// the version, restore lists + positions + settings.
+  Future<void> _importBackup(BuildContext context) async {
+    final PlatformFile? picked = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: <String>['json'],
+    );
+    final String? path = picked?.path;
+    if (path == null) return;
+    final Map<String, dynamic>? data =
+        BackupService.parseBackupText(await File(path).readAsString());
+    if (data == null) {
+      if (!context.mounted) return;
+      _notify(context, 'Ye backup file padhi nahi gayi.');
+      return;
+    }
+    final ({bool ok, String message, int lists}) result =
+        await BackupService.importBackup(store, data);
+    if (!context.mounted) return;
+    _notify(
+      context,
+      result.message,
+      success: result.ok,
+      detail: result.ok ? '${result.lists} list entries restored.' : null,
+    );
   }
 
   Future<void> _editDebridKey(

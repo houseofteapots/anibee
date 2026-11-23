@@ -8,6 +8,10 @@ import '../models.dart';
 /// AniList GraphQL — metadata, search, lists, progress sync.
 /// Public queries need no key; user sync needs an OAuth token (M2).
 /// Endpoint: https://graphql.anilist.co (30 req/min, no key).
+
+/// One entry of the user's AniList list (0.2.11 two-way sync).
+typedef AnilistListEntry = ({Anime anime, String status, int progress});
+
 class AniListService {
   AniListService({http.Client? client}) : _client = client ?? http.Client();
 
@@ -18,20 +22,31 @@ class AniListService {
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
       'AppleWebKit/605.1.15 (KHTML, like Gecko) AniBee/0.2.1';
 
-  /// Search AniList by title. Returns Anime objects with anilistId,
+  /// Search AniList by title, with optional filters (0.2.11).
+  /// Filters map to AniList's own args: genre, seasonYear, status
+  /// (FINISHED / RELEASING / NOT_YET_RELEASED), format (TV / MOVIE).
+  /// Null = no filter. Returns Anime objects with anilistId,
   /// poster, rating, year, episode count, genres, synopsis (HTML
   /// stripped) and MAL id when present.
-  Future<List<Anime>> searchAnime(String query, {int page = 1}) async {
-    const String q =
-        r'query($p:Int,$n:Int,$q:String){Page(page:$p,perPage:$n)'
-        r'{pageInfo{hasNextPage}media(search:$q,type:ANIME,isAdult:false)'
-        r'{id idMal title{romaji english}coverImage{large extraLarge}'
-        r' format episodes seasonYear averageScore genres description}}}';
-    final Map<String, dynamic>? data = await _postSafe(q, <String, Object?>{
-      'p': page,
-      'n': 20,
-      'q': query.trim(),
-    });
+  Future<List<Anime>> searchAnime(
+    String query, {
+    int page = 1,
+    String? genre,
+    int? year,
+    String? status,
+    String? format,
+  }) async {
+    final Map<String, dynamic>? data = await _postSafe(
+      _searchQuery,
+      searchVariables(
+        query,
+        page: page,
+        genre: genre,
+        year: year,
+        status: status,
+        format: format,
+      ),
+    );
     final List<dynamic> media =
         (data?['Page'] as Map<String, dynamic>?)?['media'] as List<dynamic>? ??
         <dynamic>[];
@@ -39,6 +54,35 @@ class AniListService {
         .map((dynamic e) => animeFromMedia(e as Map<String, dynamic>))
         .whereType<Anime>()
         .toList();
+  }
+
+  static const String _searchQuery =
+      r'query($p:Int,$n:Int,$q:String,$g:String,$y:Int,$s:MediaStatus,'
+      r'$f:MediaFormat){Page(page:$p,perPage:$n)'
+      r'{pageInfo{hasNextPage}media(search:$q,type:ANIME,isAdult:false,'
+      r'genre:$g,seasonYear:$y,status:$s,format:$f)'
+      r'{id idMal title{romaji english}coverImage{large extraLarge}'
+      r' format episodes seasonYear averageScore genres description}}}';
+
+  /// Variables for [searchAnime]. Pure — unit-tested. Null filter
+  /// values are sent as null, which AniList treats as "not set".
+  static Map<String, Object?> searchVariables(
+    String query, {
+    int page = 1,
+    String? genre,
+    int? year,
+    String? status,
+    String? format,
+  }) {
+    return <String, Object?>{
+      'p': page,
+      'n': 20,
+      'q': query.trim(),
+      'g': genre,
+      'y': year,
+      's': status,
+      'f': format,
+    };
   }
 
   /// Popular anime movies for the Home MOVIES row (0.2.9): AniList
@@ -327,24 +371,92 @@ class AniListService {
   }
 
   /// Push a Collection status to the user's AniList list
-  /// ('CURRENT' | 'COMPLETED' | 'PLANNING'). Best-effort: failures are
+  /// ('CURRENT' | 'COMPLETED' | 'PLANNING'). [progress] is the
+  /// episode number just finished (0.2.11) — when given, the
+  /// mutation also sets the entry's progress, so AniList shows
+  /// e.g. 5/12 instead of just "Watching". Best-effort: failures are
   /// swallowed so a list tap never breaks the local Collection.
   Future<bool> saveListEntry(
     String token,
     int mediaId,
-    String anilistStatus,
-  ) async {
-    const String mutation =
-        r'mutation($id:Int,$status:MediaListStatus){SaveMediaListEntry'
-        r'(mediaId:$id,status:$status){id status}}';
+    String anilistStatus, {
+    int? progress,
+  }) async {
+    final String mutation = progress == null
+        ? r'mutation($id:Int,$status:MediaListStatus){SaveMediaListEntry'
+              r'(mediaId:$id,status:$status){id status}}'
+        : r'mutation($id:Int,$status:MediaListStatus,$p:Int)'
+              r'{SaveMediaListEntry(mediaId:$id,status:$status,progress:$p)'
+              r'{id status progress}}';
+    final Map<String, Object?> variables = <String, Object?>{
+      'id': mediaId,
+      'status': anilistStatus,
+    };
+    if (progress != null) variables['p'] = progress;
     try {
-      await _post(mutation, <String, Object?>{
-        'id': mediaId,
-        'status': anilistStatus,
-      }, token: token);
+      await _post(mutation, variables, token: token);
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// One entry of the user's AniList list: the title, its AniList
+  /// list status, and the episode progress (0 = not started).
+  static List<AnilistListEntry> parseUserListEntries(
+    Map<String, dynamic> data,
+  ) {
+    final List<AnilistListEntry> out = <AnilistListEntry>[];
+    final Map<String, dynamic>? collection =
+        data['MediaListCollection'] as Map<String, dynamic>?;
+    final List<dynamic> lists =
+        collection?['lists'] as List<dynamic>? ?? <dynamic>[];
+    for (final dynamic list in lists) {
+      final List<dynamic> entries =
+          (list as Map<String, dynamic>)['entries'] as List<dynamic>? ??
+          <dynamic>[];
+      for (final dynamic e in entries) {
+        final Map<String, dynamic> entry = e as Map<String, dynamic>;
+        final Map<String, dynamic>? media =
+            entry['media'] as Map<String, dynamic>?;
+        if (media == null) continue;
+        final Anime? anime = animeFromMedia(media);
+        if (anime == null) continue;
+        final String status = entry['status'] as String? ?? '';
+        if (status.isEmpty) continue;
+        out.add(
+          (
+            anime: anime,
+            status: status,
+            progress: (entry['progress'] as num?)?.toInt() ?? 0,
+          ),
+        );
+      }
+    }
+    return out;
+  }
+
+  /// Fetch the user's AniList list (CURRENT / COMPLETED / PLANNING
+  /// only — PAUSED / DROPPED are out of scope). Returns the parsed
+  /// entries; empty on any failure (best-effort, never throws).
+  Future<List<AnilistListEntry>> fetchUserList(String token) async {
+    try {
+      final ({int id, String name}) me = await viewer(token);
+      const String q =
+          r'query($u:Int){MediaListCollection(userId:$u,type:ANIME,'
+          r'status_in:[CURRENT,COMPLETED,PLANNING]){lists{entries{'
+          r'status progress media{id idMal title{romaji english native}'
+          r'coverImage{large extraLarge}format episodes seasonYear'
+          r'averageScore genres description status}}}}';
+      final Map<String, dynamic>? data = await _post(
+        q,
+        <String, Object?>{'u': me.id},
+        token: token,
+      );
+      if (data == null) return <AnilistListEntry>[];
+      return parseUserListEntries(data);
+    } catch (_) {
+      return <AnilistListEntry>[];
     }
   }
 

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -75,17 +76,37 @@ class HlsVariant {
 /// - Each segment is retried (3 attempts) before the download is
 ///   marked 'failed'; the record is kept so the user can retry.
 class DownloadService {
-  // The base-dir parameter keeps its public name (baseDirOverride)
-  // for tests; it is assigned in the body, not the initializer list,
-  // so prefer_initializing_formals does not apply (the ignore
-  // comment that was here did not cover the initializer line).
-  DownloadService({http.Client? client, Directory? baseDirOverride})
-    : _client = client ?? http.Client() {
+  DownloadService({
+    http.Client? client,
+    Directory? baseDirOverride,
+    this.isWifiOverride,
+  }) : _client = client ?? http.Client() {
     _baseDirOverride = baseDirOverride;
   }
 
   final http.Client _client;
   Directory? _baseDirOverride;
+
+  /// Test seam: when set, the Wi-Fi check uses this instead of the
+  /// real connectivity plugin (whose platform channel has no mock in
+  /// unit tests).
+  final Future<bool> Function()? isWifiOverride;
+
+  /// True when the device is on Wi-Fi (or ethernet) right now.
+  /// A failed platform call is treated as "not Wi-Fi" — Wi-Fi-only
+  /// must fail closed, never silently download on mobile data.
+  Future<bool> _isWifi() async {
+    final Future<bool> Function()? override = isWifiOverride;
+    if (override != null) return override();
+    try {
+      final List<ConnectivityResult> results =
+          await Connectivity().checkConnectivity();
+      return results.contains(ConnectivityResult.wifi) ||
+          results.contains(ConnectivityResult.ethernet);
+    } catch (_) {
+      return false;
+    }
+  }
 
   static const int _maxSegmentAttempts = 3;
   static const Duration _retryDelay = Duration(seconds: 1);
@@ -291,14 +312,22 @@ class DownloadService {
   /// Start (or resume) downloading an episode's resolved stream.
   /// No-op when this episode is already downloading. Throws nothing:
   /// failures mark the download 'failed' (record kept for retry).
-  Future<void> startDownload({
+  /// Returns true when the download started, false when it did not
+  /// (already running, failed to start, or blocked by the Wi-Fi-only
+  /// rule — 0.2.11: when Wi-Fi-only is ON and the device is on mobile
+  /// data, the download is marked 'paused' and never starts).
+  Future<bool> startDownload({
     required Anime anime,
     required Episode episode,
     required ResolvedStream stream,
     required SettingsStore store,
   }) async {
     final String key = '${anime.id}:${episode.number}';
-    if (_active.contains(key)) return;
+    if (_active.contains(key)) return false;
+    if (store.wifiOnly && !(await _isWifi())) {
+      await store.setDownloadStatus(key, 'paused');
+      return false;
+    }
     _active.add(key);
     _cancelled.remove(key);
     try {
@@ -326,10 +355,12 @@ class DownloadService {
           existing: existing,
         );
       }
+      return store.downloadStatus[key] == 'downloaded';
     } catch (_) {
       // A failed download keeps its record (partial segments stay on
       // disk) so the next tap resumes instead of starting over.
       await store.setDownloadStatus(key, 'failed');
+      return false;
     } finally {
       _active.remove(key);
     }
@@ -408,9 +439,11 @@ class DownloadService {
       if (status == 'downloaded' && !hasFile) {
         await store.removeDownloadRecord(key);
         await store.removeDownload(key);
-      } else if (status == 'downloading' && record == null) {
-        // Simulated in-progress download (timer-based, no file):
-        // drop it so the button offers a real download again.
+      } else if ((status == 'downloading' || status == 'paused') &&
+          record == null) {
+        // Simulated in-progress download (timer-based, no file): drop
+        // it so the button offers a real download again. A 'paused'
+        // row with no record is the same stale state.
         await store.removeDownload(key);
       }
     }
@@ -579,6 +612,13 @@ class DownloadService {
     for (int i = 0; i < playlist.segments.length; i++) {
       if (_cancelled.contains(key)) return;
       if (done.contains(i)) continue;
+      // 0.2.11: Wi-Fi-only is enforced mid-download too — when the
+      // device leaves Wi-Fi, stop here and mark 'paused' (the record
+      // keeps the finished segments, so the next tap resumes).
+      if (store.wifiOnly && !(await _isWifi())) {
+        await store.setDownloadStatus(key, 'paused');
+        return;
+      }
       final HlsSegment seg = playlist.segments[i];
       final String name = _segmentFile(i, seg.uri);
       final File f = File('${dir.path}/$name');

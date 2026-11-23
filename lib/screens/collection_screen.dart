@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../models.dart';
+import '../services/app_services.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/poster.dart';
@@ -11,12 +12,19 @@ import '../widgets/reicon_icon.dart';
 /// Finished, To Be Watched. No separate Saved list (a saved title goes
 /// into one of the three, default To Be Watched), no Downloads here
 /// (Settings → Downloads only), no Continue Watching row (Home only).
+///
+/// 0.2.11: the grid is the bundled catalogue PLUS titles pulled
+/// from the user's AniList list — synced titles are not in the
+/// catalogue, so without the merge a pulled list would be invisible.
+/// The pull runs when the tab opens (throttled to once per 15
+/// minutes inside the service) and on the refresh button.
 class CollectionScreen extends StatefulWidget {
   const CollectionScreen({
     super.key,
     required this.store,
     required this.onOpenAnime,
     required this.onBrowse,
+    this.services,
   });
 
   final SettingsStore store;
@@ -25,12 +33,66 @@ class CollectionScreen extends StatefulWidget {
   /// Jump to the Search tab (used by the empty-state Browse button).
   final VoidCallback onBrowse;
 
+  /// App services for the AniList pull (null in tests that only
+  /// check the local lists — no pull happens then).
+  final AppServices? services;
+
+  /// Bundled catalogue + AniList-synced titles, deduped: when a
+  /// synced title has the same AniList id as a catalogue entry, the
+  /// synced entry wins (fresher metadata). Pure — unit-tested.
+  /// (Static on the public widget, not the private State, so tests
+  /// can reach it.)
+  static List<Anime> mergeCatalogue(
+    List<Anime> catalogue,
+    List<Anime> synced,
+  ) {
+    final Map<int, Anime> byAnilistId = <int, Anime>{};
+    final List<Anime> out = <Anime>[];
+    for (final Anime a in catalogue) {
+      out.add(a);
+      if (a.anilistId != null) byAnilistId[a.anilistId!] = a;
+    }
+    for (final Anime s in synced) {
+      final int? id = s.anilistId;
+      if (id != null && byAnilistId.containsKey(id)) {
+        final int index = out.indexOf(byAnilistId[id]!);
+        out[index] = s;
+      } else if (!out.any((Anime a) => a.id == s.id)) {
+        out.add(s);
+      }
+    }
+    return out;
+  }
+
   @override
   State<CollectionScreen> createState() => _CollectionScreenState();
 }
 
 class _CollectionScreenState extends State<CollectionScreen> {
   int _tab = 0;
+  bool _syncing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _pullAnilist());
+  }
+
+  /// Pull the AniList list into Collection (best-effort, silent —
+  /// a failed pull leaves the local lists untouched).
+  Future<void> _pullAnilist({bool force = false}) async {
+    final AppServices? services = widget.services;
+    if (services == null || !widget.store.anilistConnected) return;
+    if (_syncing) return;
+    setState(() => _syncing = true);
+    try {
+      await services.pullAnilistList(store: widget.store, force: force);
+    } catch (_) {
+      // Best-effort: never surface a sync error on the Collection tab.
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
 
   static const List<({String label, String status})> _tabs =
       <({String label, String status})>[
@@ -53,7 +115,10 @@ class _CollectionScreenState extends State<CollectionScreen> {
     return ListenableBuilder(
       listenable: widget.store,
       builder: (BuildContext context, Widget? _) {
-        final List<Anime> catalogue = mockCatalogue();
+        final List<Anime> catalogue = CollectionScreen.mergeCatalogue(
+          mockCatalogue(),
+          widget.store.syncedAnimeList,
+        );
         List<Anime> inList(String status) {
           return catalogue
               .where((Anime a) => widget.store.statusOf(a) == status)
@@ -72,13 +137,33 @@ class _CollectionScreenState extends State<CollectionScreen> {
           children: <Widget>[
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 56, 16, 12),
-              child: Text(
-                'Collection',
-                style: TextStyle(
-                  color: primaryText,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                ),
+              child: Row(
+                children: <Widget>[
+                  Text(
+                    'Collection',
+                    style: TextStyle(
+                      color: primaryText,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (widget.store.anilistConnected)
+                    _syncing
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : IconButton(
+                            icon: Icon(
+                              Icons.sync_rounded,
+                              color: secondaryText,
+                            ),
+                            tooltip: 'Sync from AniList',
+                            onPressed: () => _pullAnilist(force: true),
+                          ),
+                ],
               ),
             ),
             Padding(

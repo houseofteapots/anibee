@@ -89,6 +89,60 @@ class Anime {
       nextEpisodeAt: nextEpisodeAt ?? this.nextEpisodeAt,
     );
   }
+
+  /// 0.2.11: JSON for AniList-sync persistence + backup/restore.
+  /// Gradient is a UI constant (not per-title data) — it is NOT
+  /// stored; fromJson restores the default purple gradient.
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'title': title,
+      'rating': rating,
+      'year': year,
+      'episodeCount': episodeCount,
+      'genres': genres,
+      'synopsis': synopsis,
+      'posterUrl': posterUrl,
+      'anilistId': anilistId,
+      'malId': malId,
+      'currentEpisode': currentEpisode,
+      'minutesLeft': minutesLeft,
+      'isSaved': isSaved,
+      'nextEpisode': nextEpisode,
+      'nextEpisodeIn': nextEpisodeIn,
+      'nextEpisodeAt': nextEpisodeAt,
+    };
+  }
+
+  static Anime? fromJson(Map<String, dynamic> json) {
+    final String? id = json['id'] as String?;
+    final String? title = json['title'] as String?;
+    if (id == null || id.isEmpty || title == null || title.isEmpty) {
+      return null;
+    }
+    return Anime(
+      id: id,
+      title: title,
+      rating: (json['rating'] as num?)?.toDouble() ?? 0,
+      year: (json['year'] as num?)?.toInt() ?? 0,
+      episodeCount: (json['episodeCount'] as num?)?.toInt() ?? 0,
+      genres: (json['genres'] as List<dynamic>?)
+              ?.map((dynamic e) => e.toString())
+              .toList() ??
+          <String>[],
+      synopsis: json['synopsis'] as String? ?? '',
+      gradient: const <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
+      posterUrl: json['posterUrl'] as String?,
+      anilistId: (json['anilistId'] as num?)?.toInt(),
+      malId: (json['malId'] as num?)?.toInt(),
+      currentEpisode: (json['currentEpisode'] as num?)?.toInt(),
+      minutesLeft: (json['minutesLeft'] as num?)?.toInt(),
+      isSaved: json['isSaved'] as bool? ?? false,
+      nextEpisode: (json['nextEpisode'] as num?)?.toInt(),
+      nextEpisodeIn: json['nextEpisodeIn'] as String?,
+      nextEpisodeAt: json['nextEpisodeAt'] as String?,
+    );
+  }
 }
 
 class Episode {
@@ -873,16 +927,10 @@ List<ProviderSource> defaultSources() {
       enabled: true,
     ),
     ProviderSource(
-      name: 'AllAnime',
-      tagline: '720p • Sub/Dub • Standard',
+      name: 'ReAnime',
+      tagline: 'HD • Sub/Dub',
       enabled: true,
     ),
-    ProviderSource(
-      name: 'AnimeKai',
-      tagline: '1080p • Sub • Backup',
-      enabled: true,
-    ),
-    ProviderSource(name: 'ReAnime', tagline: '720p • Sub', enabled: false),
     ProviderSource(name: 'AniZone', tagline: '1080p • Sub', enabled: false),
   ];
 }

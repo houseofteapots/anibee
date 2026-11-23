@@ -1,4 +1,5 @@
 import 'package:anibee/models.dart';
+import 'package:anibee/widgets/episode_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,12 +7,15 @@ import 'player_skip_times_harness.dart';
 
 /// 0.2.10 in-player episode chooser: the 0.2.9 sheet was a fixed
 /// 0.55 box PLUS SafeArea/chrome on top, so it rendered ~0.63 tall
-/// on the phone — and for a short anime (Demon Slayer Entertainment
-/// District Arc, 11 eps) most of that was empty space. Now the sheet
-/// is CONTENT-DRIVEN (shrink-wrapped, 0.55 max cap): a short anime
-/// gets a SHORT sheet with its episodes in ONE horizontal row; more
-/// than 12 episodes keep the 5-column grid. Title is one line with
-/// ellipsis. Accent selected cell + tap-to-select unchanged.
+/// on the phone — and for a short anime (11 eps = 3 grid rows) most
+/// of that height was empty space. Now the sheet is CONTENT-DRIVEN
+/// (shrink-wrapped, 0.55 max cap): a short anime gets a SHORT sheet,
+/// and only a long list grows to the cap and scrolls. 0.2.11: short
+/// anime (<= 12 eps) show the Detail-style episode CARDS (thumbnail
+/// + EP badge + title + 2-line synopsis + date, scrollable list),
+/// not the 0.2.10 single row of number boxes; more than 12 episodes
+/// keep the 5-column grid. Title is one line with ellipsis. Accent
+/// selected card + tap-to-select unchanged.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -92,7 +96,7 @@ void main() {
   double sheetHeight(WidgetTester tester) =>
       tester.getSize(find.byType(BottomSheet)).height;
 
-  testWidgets('11 episodes: one row, short sheet, tap still switches', (
+  testWidgets('11 episodes: episode CARDS (Detail style), tap switches', (
     WidgetTester tester,
   ) async {
     final SkipPlayerHarness harness = await openSheet(tester, shortAnime);
@@ -102,25 +106,24 @@ void main() {
     expect(title, findsOneWidget);
     expect(tester.getSize(title).height, lessThan(30));
 
-    // All episodes in ONE horizontal row: same vertical center.
-    final double rowY = tester.getCenter(find.text('1')).dy;
-    expect(tester.getCenter(find.text('5')).dy, rowY);
-    expect(tester.getCenter(find.text('7')).dy, rowY);
+    // Cards, not number boxes: EP badges + titles, same visuals as
+    // the Detail screen (mock episode 1 is 'Infiltration Protocol').
+    expect(find.byType(EpisodeCard), findsWidgets);
+    expect(find.text('EP 1'), findsOneWidget);
+    expect(find.text('Infiltration Protocol'), findsOneWidget);
 
-    // The row (11 x 64pt + spacing) is wider than the sheet, so the
-    // last cell starts off-screen — it is still in the SAME row:
-    // drag the row left and it appears at the same height.
-    await tester.drag(find.byType(ListView), const Offset(-200, 0));
+    // 11 cards grow to the 0.55 cap (330pt of the 600pt test
+    // viewport) and scroll: the last card appears after scrolling.
+    expect(sheetHeight(tester), closeTo(330.0, 1.0));
+    await tester.scrollUntilVisible(find.text('EP 11'), 300);
     await tester.pump();
-    expect(find.text('11'), findsOneWidget);
-    expect(tester.getCenter(find.text('11')).dy, rowY);
+    expect(find.text('EP 11'), findsOneWidget);
 
-    // Content-driven height: title (~40) + one 52pt row ≈ 92pt —
-    // far shorter than the 330pt cap, and far shorter than the
-    // 0.2.9 fixed sheet.
-    expect(sheetHeight(tester), lessThan(200));
-
-    await closeSheetByTap(tester, '11');
+    // Tap the last card — the sheet closes and the episode switches.
+    await tester.tap(find.text('EP 11'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
     expect(find.textContaining('Episodes — '), findsNothing);
     expect(harness.playerState(tester).currentEpisodeForTest, 11);
 

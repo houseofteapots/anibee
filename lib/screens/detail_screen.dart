@@ -218,6 +218,9 @@ class _DetailScreenState extends State<DetailScreen> {
       subDub: _subDub,
       store: _store,
       debrid: _selectedDebrid,
+      // 0.2.11: the chosen server is actually routed now (before,
+      // every non-debrid resolve silently went to Miruro).
+      server: _store.preferredServer,
       onProgress: (String s) {
         if (!cancelled) status.value = s;
       },
@@ -317,7 +320,8 @@ class _DetailScreenState extends State<DetailScreen> {
     if (stream == null) {
       if (!mounted) return;
       await _showResolveError(
-        _services.miruro.lastError ??
+        _services.reanime.lastError ??
+            _services.miruro.lastError ??
             'No sources found for episode ${initial.number}. '
                 'Check your connection or try another server.',
         initial,
@@ -362,6 +366,7 @@ class _DetailScreenState extends State<DetailScreen> {
           subDub: _subDub,
           currentDebrid: _selectedDebrid,
           onServerChanged: _onPlayerServerChanged,
+          downloads: _services.downloads,
           onResolveEpisode: (Episode episode) async {
             return _services.resolveEpisode(
               anime: _anime,
@@ -369,6 +374,7 @@ class _DetailScreenState extends State<DetailScreen> {
               subDub: _subDub,
               store: _store,
               debrid: _selectedDebrid,
+              server: _store.preferredServer,
             );
           },
         ),
@@ -451,7 +457,7 @@ class _DetailScreenState extends State<DetailScreen> {
     }
     final ResolvedStream? stream = await _resolveForEpisode(episode);
     if (stream == null || !mounted) return;
-    await _services.downloads.startDownload(
+    final bool started = await _services.downloads.startDownload(
       anime: _anime,
       episode: episode,
       stream: stream,
@@ -460,6 +466,13 @@ class _DetailScreenState extends State<DetailScreen> {
     if (!mounted) return;
     if (_store.downloadStatus[key] == 'failed') {
       TopNotification.show(context, 'Download failed — tap again to retry.');
+    } else if (!started && _store.downloadStatus[key] == 'paused') {
+      // 0.2.11: Wi-Fi-only blocked the start on mobile data.
+      TopNotification.show(
+        context,
+        'Wi-Fi only on hai — mobile data pe download nahi hoga.',
+        detail: 'Wi-Fi pe aate hi dobara tap karo.',
+      );
     }
   }
 

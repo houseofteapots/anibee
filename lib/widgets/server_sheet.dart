@@ -62,9 +62,7 @@ Future<({String server, String subDub, String? debrid})?> showServerSheet({
 const Map<String, List<String>> kServerLanguages = <String, List<String>>{
   'Miruro': <String>['English'],
   'AniKoto': <String>['English', 'Japanese'],
-  'AllAnime': <String>['English'],
-  'AnimeKai': <String>['English', 'French'],
-  'ReAnime': <String>['English', 'German'],
+  'ReAnime': <String>['English'],
   'AniZone': <String>['English', 'Spanish'],
 };
 

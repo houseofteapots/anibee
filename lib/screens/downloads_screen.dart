@@ -160,6 +160,8 @@ class _DownloadsList extends StatelessWidget {
             ? 'Episode $epNum • Downloading ${(progress * 100).toInt()}%'
             : status == 'failed'
             ? 'Episode $epNum • Failed — re-download from the episode list'
+            : status == 'paused'
+            ? 'Episode $epNum • Paused — Wi-Fi only hai'
             : 'Episode $epNum • Queued';
         return Container(
           margin: const EdgeInsets.only(bottom: 8),

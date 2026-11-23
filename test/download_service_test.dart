@@ -175,6 +175,9 @@ void main() {
     final DownloadService service = DownloadService(
       client: hlsClient(counts),
       baseDirOverride: tempDir,
+      // 0.2.11: the test store defaults wifiOnly=true; the real
+      // connectivity channel has no mock in unit tests, so force Wi-Fi.
+      isWifiOverride: () async => true,
     );
     final List<Episode> eps = mockEpisodes(anime);
     await service.startDownload(
@@ -235,6 +238,9 @@ void main() {
     DownloadService service = DownloadService(
       client: hlsClient(counts, failSeg1: true),
       baseDirOverride: tempDir,
+      // 0.2.11: the test store defaults wifiOnly=true; the real
+      // connectivity channel has no mock in unit tests, so force Wi-Fi.
+      isWifiOverride: () async => true,
     );
     await service.startDownload(
       anime: anime,
@@ -260,6 +266,9 @@ void main() {
     service = DownloadService(
       client: hlsClient(counts),
       baseDirOverride: tempDir,
+      // 0.2.11: the test store defaults wifiOnly=true; the real
+      // connectivity channel has no mock in unit tests, so force Wi-Fi.
+      isWifiOverride: () async => true,
     );
     await service.startDownload(
       anime: anime,
@@ -295,6 +304,9 @@ void main() {
     final DownloadService service = DownloadService(
       client: client,
       baseDirOverride: tempDir,
+      // 0.2.11: the test store defaults wifiOnly=true; the real
+      // connectivity channel has no mock in unit tests, so force Wi-Fi.
+      isWifiOverride: () async => true,
     );
     final List<Episode> eps = mockEpisodes(anime);
     const String key = 'dl-test-file:1';

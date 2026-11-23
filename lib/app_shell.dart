@@ -175,6 +175,7 @@ class _AppShellState extends State<AppShell> {
                 active: _tab == 2,
                 child: CollectionScreen(
                   store: widget.store,
+                  services: widget.services,
                   onOpenAnime: _openAnime,
                   onBrowse: () => setState(() => _tab = 1),
                 ),

@@ -229,8 +229,13 @@ class SettingsStore extends ChangeNotifier {
   bool skipIntro = true;
 
   /// Auto-play the next episode when the current one ends (player overlay
-  /// with a 5 s countdown; tap to cancel).
+  /// with a countdown; tap to cancel). The countdown length is
+  /// [autoplayCountdownSeconds] (0.2.11).
   bool autoplayNext = true;
+
+  /// Up-next countdown length in seconds (0.2.11): 3 / 5 / 10.
+  /// Default 5 — the old hardcoded value.
+  int autoplayCountdownSeconds = 5;
 
   /// Airing episode alerts (0.2.10): notify 15 minutes before a
   /// followed anime airs. Default ON; the schedule only runs while
@@ -286,8 +291,14 @@ class SettingsStore extends ChangeNotifier {
   String downloadQuality = '1080p';
   bool wifiOnly = true;
 
+  /// Auto-delete a downloaded episode once it is watched to
+  /// completion (0.2.11). Default ON.
+  bool autoDeleteDownloads = true;
+
   /// Per-episode download state. Key: "$animeId:$episodeNumber".
-  /// Values: 'queued' | 'downloading' | 'downloaded' | 'failed'.
+  /// Values: 'queued' | 'downloading' | 'downloaded' | 'failed' |
+  /// 'paused' (0.2.11: Wi-Fi-only stopped it on mobile data —
+  /// tapping Download resumes it).
   /// 0.2.5: real files — see DownloadService + [downloadRecords].
   /// 'downloaded' with no record = pre-0.2.5 simulation, pruned.
   Map<String, String> downloadStatus = <String, String>{};
@@ -332,6 +343,18 @@ class SettingsStore extends ChangeNotifier {
   Set<String> savedIds = <String>{};
   Map<String, int> progressEpisodes = <String, int>{};
 
+  /// AniList sync (0.2.11): epoch millis of the last successful
+  /// list pull. 0 = never synced.
+  int lastAnilistSyncAt = 0;
+
+  /// AniList-synced library (0.2.11): titles pulled from the user's
+  /// AniList list that are not in the bundled catalogue, keyed by
+  /// anime id. Collection merges these with the catalogue.
+  Map<String, Anime> syncedAnime = <String, Anime>{};
+
+  /// Synced titles as a list (insertion order = pull order).
+  List<Anime> get syncedAnimeList => syncedAnime.values.toList();
+
   bool get hasPin => pinHash != null && pinHash!.isNotEmpty;
 
   void _readAll() {
@@ -365,6 +388,7 @@ class SettingsStore extends ChangeNotifier {
     hwDecoding = _prefs.getBool('hw_decoding') ?? true;
     skipIntro = _prefs.getBool('skip_intro') ?? true;
     autoplayNext = _prefs.getBool('autoplay_next') ?? true;
+    autoplayCountdownSeconds = _prefs.getInt('autoplay_countdown') ?? 5;
     airingNotifications = _prefs.getBool('airing_notifications') ?? true;
     airingPermissionAsked = _prefs.getBool('airing_perm_asked') ?? false;
     final String? resumeJson = _prefs.getString('resume_seconds');
@@ -422,6 +446,7 @@ class SettingsStore extends ChangeNotifier {
     fallbackProviders = _prefs.getBool('fallback_providers') ?? true;
     downloadQuality = _prefs.getString('download_quality') ?? '1080p';
     wifiOnly = _prefs.getBool('wifi_only') ?? true;
+    autoDeleteDownloads = _prefs.getBool('auto_delete_downloads') ?? true;
     final String? downloadsJson = _prefs.getString('download_status');
     if (downloadsJson != null) {
       try {
@@ -476,6 +501,22 @@ class SettingsStore extends ChangeNotifier {
         listStatus = <String, String>{};
       }
     }
+    lastAnilistSyncAt = _prefs.getInt('anilist_last_sync') ?? 0;
+    final String? syncedJson = _prefs.getString('synced_anime');
+    if (syncedJson != null) {
+      try {
+        final Map<String, dynamic> decoded =
+            jsonDecode(syncedJson) as Map<String, dynamic>;
+        syncedAnime = <String, Anime>{};
+        for (final MapEntry<String, dynamic> e in decoded.entries) {
+          final Anime? anime =
+              Anime.fromJson(e.value as Map<String, dynamic>);
+          if (anime != null) syncedAnime[e.key] = anime;
+        }
+      } catch (_) {
+        syncedAnime = <String, Anime>{};
+      }
+    }
     final String? sourcesJson = _prefs.getString('sources');
     if (sourcesJson != null) {
       try {
@@ -489,6 +530,39 @@ class SettingsStore extends ChangeNotifier {
             preferred: m['preferred'] as bool? ?? false,
           );
         }).toList();
+        // 0.2.11 migration: AllAnime has no resolver (removed) and
+        // AnimeKai shut down permanently (May 10, 2026 — the domain
+        // is parked). Drop both from any persisted list so the
+        // picker never offers a source that cannot resolve. Add
+        // ReAnime (new real resolver) when it is missing.
+        sources = sources
+            .where(
+              (ProviderSource s) =>
+                  s.name != 'AllAnime' && s.name != 'AnimeKai',
+            )
+            .toList();
+        if (!sources.any((ProviderSource s) => s.name == 'ReAnime')) {
+          sources.add(
+            const ProviderSource(
+              name: 'ReAnime',
+              tagline: 'HD • Sub/Dub',
+              enabled: true,
+            ),
+          );
+        }
+        if (preferredServer == 'AllAnime' ||
+            preferredServer == 'AnimeKai') {
+          preferredServer = 'Miruro';
+        }
+        if (!sources.any((ProviderSource s) => s.preferred)) {
+          sources = sources
+              .map(
+                (ProviderSource s) => s.copyWith(
+                  preferred: s.name == preferredServer,
+                ),
+              )
+              .toList();
+        }
       } catch (_) {
         sources = defaultSources();
       }
@@ -750,6 +824,34 @@ class SettingsStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Up-next countdown length (0.2.11): 3 / 5 / 10 seconds.
+  Future<void> setAutoplayCountdownSeconds(int value) async {
+    autoplayCountdownSeconds = value.clamp(3, 10);
+    await _save('autoplay_countdown', autoplayCountdownSeconds);
+    notifyListeners();
+  }
+
+  /// Last successful AniList list pull, epoch millis (0.2.11).
+  Future<void> setLastAnilistSyncAt(int millis) async {
+    lastAnilistSyncAt = millis;
+    await _save('anilist_last_sync', millis);
+  }
+
+  /// Remember one AniList-synced title in the synced library
+  /// (0.2.11). Idempotent — re-pulls overwrite with fresh metadata.
+  Future<void> upsertSyncedAnime(Anime anime) async {
+    syncedAnime[anime.id] = anime;
+    await _prefs.setString(
+      'synced_anime',
+      jsonEncode(
+        syncedAnime.map(
+          (String k, Anime v) => MapEntry(k, v.toJson()),
+        ),
+      ),
+    );
+    notifyListeners();
+  }
+
   Future<void> setAiringNotifications(bool value) async {
     airingNotifications = value;
     await _save('airing_notifications', value);
@@ -944,6 +1046,13 @@ class SettingsStore extends ChangeNotifier {
   Future<void> setWifiOnly(bool value) async {
     wifiOnly = value;
     await _save('wifi_only', value);
+    notifyListeners();
+  }
+
+  /// Auto-delete watched downloads (0.2.11). Default ON.
+  Future<void> setAutoDeleteDownloads(bool value) async {
+    autoDeleteDownloads = value;
+    await _save('auto_delete_downloads', value);
     notifyListeners();
   }
 
@@ -1153,6 +1262,185 @@ class SettingsStore extends ChangeNotifier {
     if (i >= 0) {
       watchHistory[i] = watchHistory[i].copyWith(episode: episode);
       await _saveWatchHistory();
+    }
+    notifyListeners();
+  }
+
+  /// Restore a 0.2.11 backup (see BackupService). Replaces the
+  /// local lists, positions, history and settings with the backup's.
+  /// Downloaded FILES are not part of a backup (device-local) — the
+  /// download records/status are left untouched, and any stale rows
+  /// are pruned at launch as usual. Secrets (tokens, debrid keys,
+  /// PIN) are never in a backup and are left untouched.
+  Future<void> restoreFromBackup(Map<String, dynamic> data) async {
+    final Map<String, dynamic> lists =
+        data['lists'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    listStatus = lists.map(
+      (String k, dynamic v) => MapEntry(k, v as String),
+    );
+    await _saveListStatus();
+    final Map<String, dynamic> progress =
+        data['progressEpisodes'] as Map<String, dynamic>? ??
+        <String, dynamic>{};
+    progressEpisodes = progress.map(
+      (String k, dynamic v) => MapEntry(k, (v as num).toInt()),
+    );
+    await _prefs.setString('progress_eps', jsonEncode(progressEpisodes));
+    final List<dynamic> history =
+        data['watchHistory'] as List<dynamic>? ?? <dynamic>[];
+    watchHistory = history
+        .map((dynamic e) => WatchEntry.fromJson(e as Map<String, dynamic>))
+        .where((WatchEntry e) => e.key.isNotEmpty)
+        .toList();
+    await _saveWatchHistory();
+    final Map<String, dynamic> resume =
+        data['resumeSeconds'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    resumeSeconds = resume.map(
+      (String k, dynamic v) => MapEntry(k, (v as num).toDouble()),
+    );
+    await _prefs.setString('resume_seconds', jsonEncode(resumeSeconds));
+    final Map<String, dynamic> durations =
+        data['resumeDurations'] as Map<String, dynamic>?
+        ?? <String, dynamic>{};
+    resumeDurations = durations.map(
+      (String k, dynamic v) => MapEntry(k, (v as num).toDouble()),
+    );
+    await _prefs.setString('resume_durations', jsonEncode(resumeDurations));
+    completedEpisodes = (data['completedEpisodes'] as List<dynamic>?)
+            ?.map((dynamic e) => e.toString())
+            .toSet() ??
+        <String>{};
+    await _prefs.setStringList(
+      'completed_eps',
+      completedEpisodes.toList(),
+    );
+    final Map<String, dynamic> synced =
+        data['syncedAnime'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    syncedAnime = <String, Anime>{};
+    for (final MapEntry<String, dynamic> e in synced.entries) {
+      final Anime? anime = Anime.fromJson(e.value as Map<String, dynamic>);
+      if (anime != null) syncedAnime[e.key] = anime;
+    }
+    await _prefs.setString(
+      'synced_anime',
+      jsonEncode(
+        syncedAnime.map((String k, Anime v) => MapEntry(k, v.toJson())),
+      ),
+    );
+    final Map<String, dynamic> settings =
+        data['settings'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    if (settings['themeMode'] is String) {
+      themeMode = switch (settings['themeMode'] as String) {
+        'light' => ThemeMode.light,
+        'system' => ThemeMode.system,
+        _ => ThemeMode.dark,
+      };
+      await _save('theme_mode', settings['themeMode'] as String);
+    }
+    if (settings['accentIndex'] is num) {
+      accentIndex = (settings['accentIndex'] as num).toInt();
+      await _save('accent_index', accentIndex);
+    }
+    if (settings['navStyle'] is String) {
+      navStyle = settings['navStyle'] as String;
+      await _save('nav_style', navStyle);
+    }
+    if (settings['subFont'] is String) {
+      subFont = settings['subFont'] as String;
+      await _save('sub_font', subFont);
+    }
+    if (settings['subSize'] is num) {
+      subSize = (settings['subSize'] as num).toDouble();
+      await _save('sub_size', subSize);
+    }
+    if (settings['subColorIndex'] is num) {
+      subColorIndex = (settings['subColorIndex'] as num).toInt();
+      await _save('sub_color', subColorIndex);
+    }
+    if (settings['subBackgroundMode'] is String) {
+      subBackgroundMode = settings['subBackgroundMode'] as String;
+      await _save('sub_background_mode', subBackgroundMode);
+    }
+    if (settings['subPosition'] is String) {
+      subPosition = settings['subPosition'] as String;
+      await _save('sub_position', subPosition);
+    }
+    if (settings['subDelayMs'] is num) {
+      subDelayMs = (settings['subDelayMs'] as num).toInt();
+      await _save('sub_delay_ms', subDelayMs);
+    }
+    if (settings['doubleTapSeek'] is num) {
+      doubleTapSeek = (settings['doubleTapSeek'] as num).toInt();
+      await _save('double_tap_seek', doubleTapSeek);
+    }
+    if (settings['playbackSpeed'] is num) {
+      playbackSpeed = (settings['playbackSpeed'] as num).toDouble();
+      await _save('playback_speed', playbackSpeed);
+    }
+    if (settings['gestures'] is bool) {
+      gestures = settings['gestures'] as bool;
+      await _save('gestures', gestures);
+    }
+    if (settings['hwDecoding'] is bool) {
+      hwDecoding = settings['hwDecoding'] as bool;
+      await _save('hw_decoding', hwDecoding);
+    }
+    if (settings['skipIntro'] is bool) {
+      skipIntro = settings['skipIntro'] as bool;
+      await _save('skip_intro', skipIntro);
+    }
+    if (settings['autoplayNext'] is bool) {
+      autoplayNext = settings['autoplayNext'] as bool;
+      await _save('autoplay_next', autoplayNext);
+    }
+    if (settings['autoplayCountdownSeconds'] is num) {
+      autoplayCountdownSeconds =
+          (settings['autoplayCountdownSeconds'] as num).toInt().clamp(3, 10);
+      await _save('autoplay_countdown', autoplayCountdownSeconds);
+    }
+    if (settings['airingNotifications'] is bool) {
+      airingNotifications = settings['airingNotifications'] as bool;
+      await _save('airing_notifications', airingNotifications);
+    }
+    if (settings['preferredServer'] is String) {
+      preferredServer = settings['preferredServer'] as String;
+      await _save('preferred_server', preferredServer);
+    }
+    if (settings['fallbackProviders'] is bool) {
+      fallbackProviders = settings['fallbackProviders'] as bool;
+      await _save('fallback_providers', fallbackProviders);
+    }
+    if (settings['downloadQuality'] is String) {
+      downloadQuality = settings['downloadQuality'] as String;
+      await _save('download_quality', downloadQuality);
+    }
+    if (settings['wifiOnly'] is bool) {
+      wifiOnly = settings['wifiOnly'] as bool;
+      await _save('wifi_only', wifiOnly);
+    }
+    if (settings['autoDeleteDownloads'] is bool) {
+      autoDeleteDownloads = settings['autoDeleteDownloads'] as bool;
+      await _save('auto_delete_downloads', autoDeleteDownloads);
+    }
+    if (settings['sources'] is List) {
+      final List<ProviderSource> restored = <ProviderSource>[];
+      for (final dynamic s in settings['sources'] as List<dynamic>) {
+        final Map<String, dynamic> m = s as Map<String, dynamic>;
+        final String? name = m['name'] as String?;
+        if (name == null) continue;
+        restored.add(
+          ProviderSource(
+            name: name,
+            tagline: m['tagline'] as String? ?? '',
+            enabled: m['enabled'] as bool? ?? true,
+            preferred: m['preferred'] as bool? ?? false,
+          ),
+        );
+      }
+      if (restored.isNotEmpty) {
+        sources = restored;
+        await _saveSources();
+      }
     }
     notifyListeners();
   }

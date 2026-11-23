@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:reicon_flutter/reicon_flutter.dart';
 
 import '../models.dart';
 import '../settings_store.dart';
 import '../theme.dart';
-import 'poster.dart';
+import 'episode_card.dart';
 import 'premium_picker.dart';
-import 'reicon_icon.dart';
 
 /// Episode list (user rules 01:44 + 01:45; refs in the goal files/):
 ///
@@ -238,7 +236,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
         if (_gridMode)
           _buildGrid(isDark, card, primaryText, secondaryText, accent)
         else
-          _buildCards(isDark, card, primaryText, secondaryText, accent),
+          _buildCards(),
         if (widget.anime.nextEpisode != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
@@ -565,216 +563,20 @@ class _EpisodeSectionState extends State<EpisodeSection> {
     );
   }
 
-  Widget _buildCards(
-    bool isDark,
-    Color card,
-    Color primaryText,
-    Color secondaryText,
-    Color accent,
-  ) {
+  Widget _buildCards() {
     final List<Episode> eps = _visibleEpisodes;
     return Column(
-      children: eps.map((Episode ep) {
-        final String key = '${widget.anime.id}:${ep.number}';
-        final String? status = widget.store.downloadStatus[key];
-        final double progress = widget.store.downloadProgress[key] ?? 0;
-        // 0.2.5: real watch progress (accent bar) + completed state.
-        final double watchProgress = widget.store.episodeProgressFor(
-          widget.anime,
-          ep,
-        );
-        final bool completed = widget.store.isEpisodeCompleted(
-          widget.anime,
-          ep,
-        );
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: InkWell(
-            onTap: () => widget.onPlay(ep),
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              decoration: BoxDecoration(
-                color: card,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        SizedBox(
-                          width: 104,
-                          height: 82,
-                          child: Stack(
-                            children: <Widget>[
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: SizedBox(
-                                  width: 104,
-                                  height: 82,
-                                  // 0.2.9: per-episode thumbnail from
-                                  // AniList streamingEpisodes. The
-                                  // poster stays underneath — while the
-                                  // thumbnail loads (or if it fails),
-                                  // the poster shows, never a blank tile.
-                                  child: Stack(
-                                    fit: StackFit.expand,
-                                    children: <Widget>[
-                                      PosterArt(
-                                        anime: widget.anime,
-                                        showTitle: false,
-                                      ),
-                                      if (ep.thumbnailUrl != null)
-                                        Image.network(
-                                          ep.thumbnailUrl!,
-                                          fit: BoxFit.cover,
-                                          loadingBuilder:
-                                              (
-                                                BuildContext context,
-                                                Widget child,
-                                                ImageChunkEvent? progress,
-                                              ) {
-                                                if (progress == null) {
-                                                  return child;
-                                                }
-                                                return const SizedBox.shrink();
-                                              },
-                                          errorBuilder:
-                                              (
-                                                BuildContext context,
-                                                Object error,
-                                                StackTrace? stackTrace,
-                                              ) {
-                                                return const SizedBox.shrink();
-                                              },
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                left: 6,
-                                bottom: 6,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.65),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Text(
-                                    'EP ${ep.number}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              if (completed)
-                                Positioned(
-                                  top: 6,
-                                  right: 6,
-                                  child: Container(
-                                    width: 20,
-                                    height: 20,
-                                    decoration: BoxDecoration(
-                                      color: accent,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(
-                                      Icons.check_rounded,
-                                      size: 13,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: <Widget>[
-                                Text(
-                                  ep.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: primaryText,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  ep.synopsis,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: secondaryText,
-                                    fontSize: 12,
-                                    height: 1.35,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Row(
-                                  children: <Widget>[
-                                    Icon(
-                                      Icons.closed_caption_rounded,
-                                      size: 18,
-                                      color: secondaryText,
-                                    ),
-                                    const Spacer(),
-                                    Text(
-                                      ep.airDate,
-                                      style: TextStyle(
-                                        color: secondaryText,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 2),
-                                    _DownloadButton(
-                                      status: status,
-                                      progress: progress,
-                                      accent: accent,
-                                      onTap: () => widget.onToggleDownload(ep),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    // 0.2.5: thin accent progress bar along the card's
-                    // bottom edge (full when completed). Unwatched = none.
-                    if (watchProgress > 0)
-                      SizedBox(
-                        height: 3,
-                        child: LinearProgressIndicator(
-                          value: watchProgress,
-                          backgroundColor: Colors.transparent,
-                          color: accent,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+      children: eps
+          .map(
+            (Episode ep) => EpisodeCard(
+              anime: widget.anime,
+              episode: ep,
+              store: widget.store,
+              onTap: () => widget.onPlay(ep),
+              onToggleDownload: () => widget.onToggleDownload(ep),
             ),
-          ),
-        );
-      }).toList(),
+          )
+          .toList(),
     );
   }
 }
@@ -894,55 +696,6 @@ class _DropdownBox extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
       ),
       child: child,
-    );
-  }
-}
-
-/// Per-episode download button: download -> progress -> downloaded.
-class _DownloadButton extends StatelessWidget {
-  const _DownloadButton({
-    required this.status,
-    required this.progress,
-    required this.accent,
-    required this.onTap,
-  });
-
-  final String? status;
-  final double progress;
-  final Color accent;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    Widget child;
-    if (status == 'downloaded') {
-      // Reicon check (not a generic Material download icon).
-      child = ReiconIcon(Reicon.outline.check, size: 22, color: accent);
-    } else if (status == 'downloading') {
-      child = SizedBox(
-        width: 22,
-        height: 22,
-        child: CircularProgressIndicator(
-          value: progress,
-          strokeWidth: 2.5,
-          color: accent,
-        ),
-      );
-    } else {
-      // Reicon Outline download (reicon.dev) — the app's download mark.
-      child = ReiconIcon(
-        Reicon.outline.download,
-        size: 22,
-        color: Theme.of(context).brightness == Brightness.dark
-            ? AppTheme.textSecondaryDark
-            : AppTheme.textSecondaryLight,
-      );
-    }
-    return IconButton(
-      onPressed: onTap,
-      icon: child,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
     );
   }
 }

@@ -215,6 +215,16 @@ class PlayerSettingsScreen extends StatelessWidget {
                   ),
                   const SettingsDivider(),
                   SettingsTile(
+                    title: 'Autoplay countdown',
+                    trailing: Text(
+                      '${store.autoplayCountdownSeconds} seconds',
+                      style: TextStyle(color: secondaryText, fontSize: 14),
+                    ),
+                    showChevron: true,
+                    onTap: () => _pickAutoplayCountdown(context),
+                  ),
+                  const SettingsDivider(),
+                  SettingsTile(
                     title: 'Gestures',
                     trailing: Switch(
                       value: store.gestures,
@@ -334,5 +344,20 @@ class PlayerSettingsScreen extends StatelessWidget {
       ],
     );
     if (picked != null) await store.setPlaybackSpeed(picked);
+  }
+
+  /// Up-next countdown (0.2.11): how long the player waits before
+  /// auto-playing the next episode — 3 / 5 / 10 seconds.
+  Future<void> _pickAutoplayCountdown(BuildContext context) async {
+    final int? picked = await showPremiumPicker<int>(
+      context: context,
+      title: 'Autoplay countdown',
+      selected: store.autoplayCountdownSeconds,
+      options: <PremiumPickerOption<int>>[
+        for (final int s in <int>[3, 5, 10])
+          PremiumPickerOption<int>(value: s, label: '$s seconds'),
+      ],
+    );
+    if (picked != null) await store.setAutoplayCountdownSeconds(picked);
   }
 }

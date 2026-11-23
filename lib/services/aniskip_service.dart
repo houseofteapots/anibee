@@ -2,15 +2,16 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-/// Real Skip Intro / Skip Outro data from AniSkip
+/// Real Skip Intro / Skip Outro / Skip Recap data from AniSkip
 /// (https://api.aniskip.com/v2). 0.2.4 replaces the hardcoded
 /// "jump to 85s for the first 95s" button: the player shows
 /// "Skip Intro" only while the position is inside the real OP
 /// segment, and "Skip Outro" only inside the real ED segment.
+/// 0.2.11 adds the recap segment the same way ("Skip Recap").
 /// No AniSkip data for an episode -> no button at all.
 ///
 /// API: GET /v2/skip-times/{malId}/{episode}?types[]=op&types[]=ed
-///      [&episodeLength={seconds}]
+///      [&types[]=recap][&episodeLength={seconds}]
 /// 200 + {"found": true, "results": [{"skipType": "op",
 ///      "interval": {"startTime": 0, "endTime": 85}}]}.
 /// 404 (or found:false) = no data for this episode — not an error.
@@ -27,7 +28,7 @@ class AniSkipService {
     int? episodeLength,
   }) async {
     final StringBuffer url = StringBuffer(
-      '$baseUrl/skip-times/$malId/$episode?types[]=op&types[]=ed',
+      '$baseUrl/skip-times/$malId/$episode?types[]=op&types[]=ed&types[]=recap',
     );
     if (episodeLength != null && episodeLength > 0) {
       url.write('&episodeLength=$episodeLength');
@@ -56,13 +57,14 @@ class AniSkipService {
   }
 }
 
-/// The OP / ED intervals for one episode. Either may be null.
+/// The OP / ED / recap intervals for one episode. Any may be null.
 class SkipTimes {
-  const SkipTimes({this.op, this.ed});
+  const SkipTimes({this.op, this.ed, this.recap});
 
   factory SkipTimes.fromJson(Map<String, dynamic> json) {
     SkipInterval? op;
     SkipInterval? ed;
+    SkipInterval? recap;
     final List<dynamic> results =
         json['results'] as List<dynamic>? ?? <dynamic>[];
     for (final dynamic r in results) {
@@ -78,15 +80,21 @@ class SkipTimes {
         op = parsed;
       } else if (m['skipType'] == 'ed') {
         ed = parsed;
+      } else if (m['skipType'] == 'recap') {
+        recap = parsed;
       }
     }
-    return SkipTimes(op: op, ed: ed);
+    return SkipTimes(op: op, ed: ed, recap: recap);
   }
 
   final SkipInterval? op;
   final SkipInterval? ed;
 
-  bool get hasAny => op != null || ed != null;
+  /// Recap segment (0.2.11) — "Previously on…" at the episode
+  /// start. Null = AniSkip has no recap data for this episode.
+  final SkipInterval? recap;
+
+  bool get hasAny => op != null || ed != null || recap != null;
 }
 
 /// One skip segment, in seconds from the episode start.

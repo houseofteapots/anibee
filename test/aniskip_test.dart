@@ -14,7 +14,7 @@ void main() {
         expect(req.url.path, '/v2/skip-times/113415/1');
         expect(
           req.url.queryParametersAll['types[]'],
-          <String>['op', 'ed'],
+          <String>['op', 'ed', 'recap'],
         );
         return http.Response(
           jsonEncode(<String, Object>{
@@ -136,12 +136,29 @@ void main() {
         'found': true,
         'results': <Object>[
           <String, Object>{
-            'skipType': 'recap',
+            'skipType': 'preview',
             'interval': <String, Object>{'startTime': 10, 'endTime': 20},
           },
         ],
       });
       expect(times.hasAny, isFalse);
+    });
+
+    test('0.2.11: parses the recap segment like op/ed', () {
+      final SkipTimes times = SkipTimes.fromJson(<String, dynamic>{
+        'found': true,
+        'results': <Object>[
+          <String, Object>{
+            'skipType': 'recap',
+            'interval': <String, Object>{'startTime': 0, 'endTime': 90},
+          },
+        ],
+      });
+      expect(times.recap?.startTime, 0);
+      expect(times.recap?.endTime, 90);
+      expect(times.hasAny, isTrue);
+      expect(times.op, isNull);
+      expect(times.ed, isNull);
     });
   });
 }

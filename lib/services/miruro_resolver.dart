@@ -155,13 +155,46 @@ class MiruroResolver {
   }
 
   /// Resolve a playable stream for [anime] episode [episodeNumber].
-  /// [subDub] is 'Sub' or 'Dub'. Returns null when nothing resolved.
+  /// [subDub] is 'Sub' or 'Dub'. [server] is the chosen source:
+  /// 'Miruro' = justanime chain first (megaplay, then animegg);
+  /// 'AniKoto' = the anikoto.cz chain only. When [fallback] is true
+  /// (the user's fallback-providers setting) and the chosen server
+  /// fails, the other server is tried once — the played stream's
+  /// `source` always says which one actually resolved.
+  /// Returns null when nothing resolved.
   Future<ResolvedStream?> resolve({
     required Anime anime,
     required int episodeNumber,
     required String subDub,
+    String server = 'Miruro',
+    bool fallback = true,
   }) async {
     lastError = null;
+    if (server == 'AniKoto') {
+      final ResolvedStream? stream = await _tryAnikoto(
+        anime.title,
+        episodeNumber,
+        subDub,
+      );
+      if (stream != null) return stream;
+      if (!fallback) {
+        lastError ??= 'AniKoto has no sources for episode $episodeNumber.';
+        return null;
+      }
+      // Chosen server failed and fallback is on: try Miruro once.
+      final int? anilistId =
+          anime.anilistId ?? await _anilist.resolveId(anime.title);
+      if (anilistId != null) {
+        final ResolvedStream? miruroStream = await _tryJustAnime(
+          anilistId,
+          episodeNumber,
+          subDub,
+        );
+        if (miruroStream != null) return miruroStream;
+      }
+      lastError ??= 'No sources found for episode $episodeNumber.';
+      return null;
+    }
     final int? anilistId =
         anime.anilistId ?? await _anilist.resolveId(anime.title);
     if (anilistId == null) {
@@ -169,6 +202,33 @@ class MiruroResolver {
       return null;
     }
     // justanime first: megaplay (HLS, usually 1080p), then animegg.
+    final ResolvedStream? justAnime = await _tryJustAnime(
+      anilistId,
+      episodeNumber,
+      subDub,
+    );
+    if (justAnime != null) return justAnime;
+    if (!fallback) {
+      lastError ??= 'No sources found for episode $episodeNumber.';
+      return null;
+    }
+    // justanime unreachable on this network: Anikoto fallback by title.
+    final ResolvedStream? anikoto = await _tryAnikoto(
+      anime.title,
+      episodeNumber,
+      subDub,
+    );
+    if (anikoto != null) return anikoto;
+    lastError ??= 'No sources found for episode $episodeNumber.';
+    return null;
+  }
+
+  /// JustAnime chain only (megaplay, then animegg). Null on failure.
+  Future<ResolvedStream?> _tryJustAnime(
+    int anilistId,
+    int episodeNumber,
+    String subDub,
+  ) async {
     for (final String provider in <String>['megaplay', 'animegg']) {
       try {
         final ResolvedStream? stream = await _resolveJustAnime(
@@ -182,20 +242,27 @@ class MiruroResolver {
         // Provider failed — move on.
       }
     }
-    // justanime unreachable on this network: Anikoto fallback by title.
-    try {
-      final ResolvedStream? stream = await _resolveAnikoto(
-        anime.title,
-        episodeNumber,
-        subDub,
-      );
-      if (stream != null) return stream;
-    } catch (_) {
-      // Fallback failed.
-    }
-    lastError ??= 'No sources found for episode $episodeNumber.';
     return null;
   }
+
+  /// Anikoto chain only, by title. Null on failure.
+  Future<ResolvedStream?> _tryAnikoto(
+    String title,
+    int episode,
+    String subDub,
+  ) async {
+    try {
+      return await resolveAnikoto(title, episode, subDub);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The anikoto.cz chain as its own selectable resolver (0.2.11):
+  /// search by title -> watch page -> episode token -> server list ->
+  /// megaplay embed -> getSources -> AES-256-CBC decrypt -> master
+  /// m3u8 -> signed variants. Previously this only ran as Miruro's
+  /// hidden fallback; now the server picker can choose it directly.
 
   // ------------------------------------------------------------ justanime
 
@@ -400,7 +467,7 @@ class MiruroResolver {
 
   // ------------------------------------------------------------- Anikoto
 
-  Future<ResolvedStream?> _resolveAnikoto(
+  Future<ResolvedStream?> resolveAnikoto(
     String title,
     int episode,
     String subDub,
