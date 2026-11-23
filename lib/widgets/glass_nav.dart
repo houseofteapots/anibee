@@ -34,13 +34,19 @@ class GlassNavBar extends StatelessWidget {
   final bool isDark;
   final String navStyle;
 
-  /// Frosted design values — exactly what 'glass' rendered in
-  /// 0.2.9–0.2.11 (blur sigma 4 over the dark 0x0A181C20 surface):
-  /// the frosted look the user sees today, kept as the 'blurry'
-  /// option (the default). The old blurry (colour-matrix + blur 18
-  /// over 0x38) is retired.
+  /// Frosted design values — the blur sigma 4 of the 0.2.9–0.2.11
+  /// 'glass' look, kept as the 'blurry' option (the default). The
+  /// old blurry (colour-matrix + blur 18 over 0x38) is retired.
+  ///
+  /// 0.2.15: the dark surface is FULLY OPAQUE (0xFF181C20 — same
+  /// RGB as the old 0x0A181C20, alpha 1.0). The user reported the
+  /// poster grid bleeding through the pill behind the nav icons
+  /// ("navigation k andar k icon ka reflect naho") — the old 4%
+  /// fill let scrolling content show through. Readability wins
+  /// over the see-through effect: no content may show behind the
+  /// icons in either style.
   static const double blurryBlurSigma = 4.0;
-  static const Color blurrySurfaceDark = Color(0x0A181C20);
+  static const Color blurrySurfaceDark = Color(0xFF181C20);
 
   /// Pill geometry, shared by both styles so switching nav styles
   /// never moves the pill: 63 pt tall (the package's fixed height),
@@ -179,9 +185,10 @@ class GlassNavBar extends StatelessWidget {
     );
   }
 
-  /// Frosted (the default): plain blur sigma 4 over the old glass
-  /// surface (0x0A181C20 dark / white 0.30 light), exactly the
-  /// 0.2.9–0.2.11 'glass' look.
+  /// Frosted (the default): plain blur sigma 4 over the opaque
+  /// surface (0xFF181C20 dark / solid white light). The blur is
+  /// kept for the frosted edge treatment; the surface itself is
+  /// opaque (0.2.15) so no scrolling content shows behind the icons.
   Widget _buildBlurry() {
     return _buildPill(height: 64, blurred: true);
   }
@@ -192,14 +199,18 @@ class GlassNavBar extends StatelessWidget {
   /// for the frosted look; the glass base layer (0.2.14) skips the
   /// blur so the package shader refracts a clean pill — a blurred
   /// base would fog the liquid-glass look.
+  ///
+  /// 0.2.15: the surface is FULLY OPAQUE in both styles (dark
+  /// 0xFF181C20 / solid white light). The glass base layer is the
+  /// same pill, so the package bar's own translucent fill can no
+  /// longer let the poster grid bleed through behind the icons —
+  /// the opaque base sits behind it and blocks everything.
   Widget _buildPill({required double height, required bool blurred}) {
     final ImageFilter filter = ImageFilter.blur(
       sigmaX: blurryBlurSigma,
       sigmaY: blurryBlurSigma,
     );
-    final Color bgColor = isDark
-        ? blurrySurfaceDark
-        : Colors.white.withValues(alpha: 0.30);
+    final Color bgColor = isDark ? blurrySurfaceDark : Colors.white;
     final Color borderColor = Colors.white.withValues(
       alpha: isDark ? 0.28 : 0.45,
     );

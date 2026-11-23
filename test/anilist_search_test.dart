@@ -13,6 +13,18 @@ void main() {
   group('AniListService.searchAnime', () {
     MockClient clientFor(Map<String, dynamic> body, {int status = 200}) {
       return MockClient((http.Request req) async {
+        // 0.2.15: the Kitsu fallback fires for empty/failed AniList
+        // lookups — it is a GET with no body, so route it to an
+        // empty Kitsu payload instead of the AniList URL assertion.
+        if (req.url.host == 'kitsu.io') {
+          return http.Response(
+            jsonEncode(<String, dynamic>{
+              'data': <dynamic>[],
+              'included': <dynamic>[],
+            }),
+            200,
+          );
+        }
         expect(req.url.toString(), AniListService.graphqlUrl);
         return http.Response(jsonEncode(body), status);
       });
@@ -360,6 +372,18 @@ void main() {
       final AniListService svc = AniListService(
         client: MockClient((http.Request req) async {
           calls++;
+          // 0.2.15: the Kitsu fallback fires between the simplified
+          // retry and the stripped search — it is a GET with no
+          // body, so route it before the AniList body parse.
+          if (req.url.host == 'kitsu.io') {
+            return http.Response(
+              jsonEncode(<String, dynamic>{
+                'data': <dynamic>[],
+                'included': <dynamic>[],
+              }),
+              200,
+            );
+          }
           final Map<String, dynamic> body =
               jsonDecode(req.body) as Map<String, dynamic>;
           final String q =
@@ -380,7 +404,10 @@ void main() {
         }),
       );
       final results = await svc.searchAnime('Black Clover S2');
-      expect(calls, 2);
+      // 0.2.15: 4 calls — primary (empty) → simplified retry
+      // (empty) → Kitsu fallback (empty) → stripped "Black Clover"
+      // (hit).
+      expect(calls, 4);
       expect(results.map((a) => a.title), contains('Black Clover'));
       expect(results.first.anilistId, 97940);
     });
@@ -598,6 +625,220 @@ void main() {
       expect(d!.rawMediaCount, 2);
       expect(d.mappedCount, 1);
       expect(d.summary, contains('1 shown (2 from AniList)'));
+    });
+  });
+
+  group('search fallback (0.2.15)', () {
+    Map<String, dynamic> pageJson(List<Map<String, dynamic>> m) {
+      return <String, dynamic>{
+        'data': <String, dynamic>{
+          'Page': <String, dynamic>{'media': m},
+        },
+      };
+    }
+
+    Map<String, dynamic> media({
+      required int id,
+      required String english,
+      String format = 'TV',
+      int? episodes = 12,
+    }) {
+      return <String, dynamic>{
+        'id': id,
+        'idMal': null,
+        'title': <String, dynamic>{'romaji': english, 'english': english},
+        'coverImage': <String, dynamic>{
+          'large': 'https://cdn.example.com/large.jpg',
+        },
+        'format': format,
+        'episodes': episodes,
+        'seasonYear': 2023,
+        'averageScore': 80,
+        'genres': <String>['Action'],
+        'description': 'Test title.',
+      };
+    }
+
+    http.Response bytesJson(Object body, int status) =>
+        http.Response.bytes(utf8.encode(jsonEncode(body)), status);
+
+    Map<String, dynamic> kitsuEmpty() =>
+        <String, dynamic>{'data': <dynamic>[], 'included': <dynamic>[]};
+
+    /// Minimal Kitsu payload: Noblesse with a direct AniList
+    /// mapping (real ids from the live VM probe: Kitsu 43019 →
+    /// AniList 116005, MAL 41345).
+    Map<String, dynamic> kitsuNoblesse() {
+      return <String, dynamic>{
+        'data': <dynamic>[
+          <String, dynamic>{
+            'id': '43019',
+            'type': 'anime',
+            'attributes': <String, dynamic>{
+              'canonicalTitle': 'Noblesse',
+              'averageRating': '69.23',
+              'episodeCount': 13,
+              'startDate': '2020-10-07',
+              'showType': 'TV',
+              'synopsis': 'A noble vampire awakens.',
+              'posterImage': <String, dynamic>{
+                'large':
+                    'https://media.kitsu.app/anime/poster_images/43019/large.jpg',
+              },
+            },
+            'relationships': <String, dynamic>{
+              'mappings': <String, dynamic>{
+                'data': <dynamic>[
+                  <String, dynamic>{'id': 'm-anilist', 'type': 'mappings'},
+                ],
+              },
+            },
+          },
+        ],
+        'included': <dynamic>[
+          <String, dynamic>{
+            'id': 'm-anilist',
+            'type': 'mappings',
+            'attributes': <String, dynamic>{
+              'externalSite': 'anilist/anime',
+              'externalId': '116005',
+            },
+          },
+        ],
+      };
+    }
+
+    test('primary 0 -> simplified retry returns results', () async {
+      // 0.2.13 phone symptom: "noblesse" = "ok · 0 from AniList".
+      // The full filtered query returns nothing, the MINIMAL query
+      // (only search + type:ANIME, no filter vars at all) finds it.
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          if (req.url.host == 'kitsu.io') {
+            return bytesJson(kitsuEmpty(), 200);
+          }
+          final Map<String, dynamic> body =
+              jsonDecode(req.body) as Map<String, dynamic>;
+          final Map<String, dynamic> vars =
+              body['variables'] as Map<String, dynamic>;
+          // The minimal query sends NO null filter variables — its
+          // variables map has no 'g' key at all.
+          final bool minimal = !vars.containsKey('g');
+          if (minimal) {
+            return bytesJson(
+              pageJson(<Map<String, dynamic>>[
+                media(id: 116005, english: 'Noblesse', episodes: 13),
+              ]),
+              200,
+            );
+          }
+          return bytesJson(pageJson(<Map<String, dynamic>>[]), 200);
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('noblesse');
+      expect(r.lookupFailed, isFalse);
+      expect(r.results.map((a) => a.title), contains('Noblesse'));
+      expect(r.results.first.anilistId, 116005);
+      final SearchDiagnostic? d = svc.lastSearchDiagnostic;
+      expect(d!.source, 'anilist-simplified');
+      expect(d.summary, 'ok · 1 from AniList (simplified retry)');
+    });
+
+    test('AniList empty + Kitsu returns Noblesse', () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          if (req.url.host == 'kitsu.io') {
+            return bytesJson(kitsuNoblesse(), 200);
+          }
+          return bytesJson(pageJson(<Map<String, dynamic>>[]), 200);
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('noblesse');
+      expect(r.lookupFailed, isFalse);
+      expect(r.results.length, 1);
+      expect(r.results.first.title, 'Noblesse');
+      expect(r.results.first.anilistId, 116005);
+      // The Kitsu result carries a REAL AniList id — Detail opens
+      // it and plays it, same as any AniList result.
+      expect(r.results.first.id, 'anilist-116005');
+      final SearchDiagnostic? d = svc.lastSearchDiagnostic;
+      expect(d!.source, 'kitsu');
+      expect(d.summary, 'ok · 1 from Kitsu (AniList empty)');
+    });
+
+    test('AniList fails -> Kitsu still serves the search', () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          if (req.url.host == 'kitsu.io') {
+            return bytesJson(kitsuNoblesse(), 200);
+          }
+          return http.Response('rate limited', 429);
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('noblesse');
+      expect(r.lookupFailed, isFalse);
+      expect(r.results.map((a) => a.title), contains('Noblesse'));
+      final SearchDiagnostic? d = svc.lastSearchDiagnostic;
+      expect(d!.source, 'kitsu');
+      expect(
+        d.summary,
+        'ok · 1 from Kitsu (AniList failed: rate limited)',
+      );
+    });
+
+    test('diagnostic shows the primary variables when all paths empty',
+        () async {
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          if (req.url.host == 'kitsu.io') {
+            return bytesJson(kitsuEmpty(), 200);
+          }
+          return bytesJson(pageJson(<Map<String, dynamic>>[]), 200);
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('noblesse');
+      expect(r.results, isEmpty);
+      expect(r.lookupFailed, isFalse);
+      final SearchDiagnostic? d = svc.lastSearchDiagnostic;
+      expect(d!.source, 'none');
+      expect(
+        d.summary,
+        'ok · 0 from AniList · q=noblesse · genre=All · year=All · '
+        'status=All · format=All',
+      );
+    });
+
+    test('Kitsu entries without an AniList id are dropped, never shown',
+        () async {
+      final Map<String, dynamic> kitsu = kitsuNoblesse();
+      // A second entry with no mapping at all — unplayable, must
+      // not appear as a result.
+      (kitsu['data'] as List<dynamic>).add(<String, dynamic>{
+        'id': '99999',
+        'type': 'anime',
+        'attributes': <String, dynamic>{
+          'canonicalTitle': 'Unmapped Title',
+          'episodeCount': 12,
+          'showType': 'TV',
+        },
+        'relationships': <String, dynamic>{
+          'mappings': <String, dynamic>{'data': <dynamic>[]},
+        },
+      });
+      final AniListService svc = AniListService(
+        client: MockClient((http.Request req) async {
+          if (req.url.host == 'kitsu.io') {
+            return bytesJson(kitsu, 200);
+          }
+          return bytesJson(pageJson(<Map<String, dynamic>>[]), 200);
+        }),
+      );
+      final r = await svc.searchAnimeDetailed('noblesse');
+      expect(r.results.length, 1);
+      expect(r.results.first.title, 'Noblesse');
+      final SearchDiagnostic? d = svc.lastSearchDiagnostic;
+      expect(d!.droppedCount, 1);
+      expect(d.summary, contains('1 unmapped'));
     });
   });
 }

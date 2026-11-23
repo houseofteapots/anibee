@@ -240,4 +240,91 @@ void main() {
     await tester.pump();
     expect(tapped, 3);
   });
+
+  /// 0.2.15 OPAQUE PILL (user 2026-11-24 01:21, from his 0.2.14
+  /// phone test: "navigation k andar k icon ka reflect naho"): the
+  /// 0.2.14 glass pill's ~4% fill let the poster grid bleed through
+  /// behind the nav icons (year/episodes text visible behind them).
+  /// The pill surface is now FULLY OPAQUE in both styles — dark
+  /// 0xFF181C20 / solid white light — so no scrolling content can
+  /// show behind the icons. Geometry, tabs and tappability are
+  /// unchanged (the 0.2.14 tests above still cover them).
+  group('0.2.15 opaque pill — no content behind the icons', () {
+    testWidgets('blurry dark pill surface is opaque',
+        (WidgetTester tester) async {
+      await pumpNav(tester, navStyle: 'blurry', isDark: true);
+      expect(GlassNavBar.blurrySurfaceDark.a, 1.0);
+      final Container container = tester.widget<Container>(
+        find.descendant(
+          of: find.byType(BackdropFilter),
+          matching: find.byType(Container),
+        ),
+      );
+      final Color? color = (container.decoration as BoxDecoration).color;
+      expect(color, GlassNavBar.blurrySurfaceDark);
+      expect(color!.a, 1.0);
+    });
+
+    testWidgets('blurry light pill surface is opaque',
+        (WidgetTester tester) async {
+      await pumpNav(tester, navStyle: 'blurry', isDark: false);
+      final Container container = tester.widget<Container>(
+        find.descendant(
+          of: find.byType(BackdropFilter),
+          matching: find.byType(Container),
+        ),
+      );
+      final Color? color = (container.decoration as BoxDecoration).color;
+      expect(color, Colors.white);
+      expect(color!.a, 1.0);
+    });
+
+    testWidgets('glass dark base layer is opaque',
+        (WidgetTester tester) async {
+      await pumpNavInShell(
+        tester,
+        navStyle: 'glass',
+        isDark: true,
+        onTap: (_) {},
+      );
+      // The base pill is the _buildPill Container whose fill is
+      // blurrySurfaceDark — it sits behind the package bar's own
+      // translucent fill and blocks everything behind it.
+      final Iterable<Container> bases = tester.widgetList<Container>(
+        find.byWidgetPredicate(
+          (Widget w) =>
+              w is Container &&
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).color ==
+                  GlassNavBar.blurrySurfaceDark,
+        ),
+      );
+      expect(bases, isNotEmpty);
+      for (final Container c in bases) {
+        expect((c.decoration as BoxDecoration).color!.a, 1.0);
+      }
+    });
+
+    testWidgets('glass light base layer is opaque',
+        (WidgetTester tester) async {
+      await pumpNavInShell(
+        tester,
+        navStyle: 'glass',
+        isDark: false,
+        onTap: (_) {},
+      );
+      final Iterable<Container> bases = tester.widgetList<Container>(
+        find.byWidgetPredicate(
+          (Widget w) =>
+              w is Container &&
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).color == Colors.white,
+        ),
+      );
+      expect(bases, isNotEmpty);
+      for (final Container c in bases) {
+        expect((c.decoration as BoxDecoration).color!.a, 1.0);
+      }
+    });
+  });
 }

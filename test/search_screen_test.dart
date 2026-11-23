@@ -49,6 +49,18 @@ void main() {
 
   MockClient clientFor(Map<String, List<Map<String, dynamic>>> byQuery) {
     return MockClient((http.Request req) async {
+      // 0.2.15: the Kitsu fallback is a GET with no body — route it
+      // to an empty Kitsu payload instead of parsing a body that
+      // isn't there.
+      if (req.url.host == 'kitsu.io') {
+        return http.Response.bytes(
+          utf8.encode(jsonEncode(<String, dynamic>{
+            'data': <dynamic>[],
+            'included': <dynamic>[],
+          })),
+          200,
+        );
+      }
       final Map<String, dynamic> body =
           jsonDecode(req.body) as Map<String, dynamic>;
       final String q =

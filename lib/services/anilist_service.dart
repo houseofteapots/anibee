@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'airing_format.dart';
+import 'kitsu_search.dart';
 import '../models.dart';
 
 /// AniList GraphQL — metadata, search, lists, progress sync.
@@ -47,6 +48,9 @@ class SearchDiagnostic {
     this.rawMediaCount = 0,
     this.mappedCount = 0,
     required this.attempts,
+    this.source = 'anilist',
+    this.variables,
+    this.droppedCount = 0,
   });
 
   final String query;
@@ -56,11 +60,43 @@ class SearchDiagnostic {
   final int mappedCount;
   final int attempts;
 
+  /// Which path produced the results (0.2.15): 'anilist' (the full
+  /// filtered query), 'anilist-simplified' (the minimal retry),
+  /// 'kitsu' (the Kitsu fallback), 'none' (every path came back
+  /// empty — a genuine no-match).
+  final String source;
+
+  /// The exact variables the primary AniList call was sent with
+  /// (0.2.15), e.g. "q=noblesse · genre=All · year=All ·
+  /// status=All · format=All" — shown when the primary returns 0,
+  /// so the phone can prove what was asked for.
+  final String? variables;
+
+  /// Kitsu entries dropped for having no AniList id (0.2.15) —
+  /// shown, never silently hidden.
+  final int droppedCount;
+
   /// One short line for the Search screen, e.g. "ok · 12 from
-  /// AniList" / "failed (HTTP 403) · local only".
+  /// AniList" / "failed (HTTP 403) · local only". The plain primary
+  /// path keeps its exact 0.2.13 text; every other path names
+  /// itself so the phone can tell them apart.
   String get summary {
     if (!ok) return 'failed (${error ?? 'unknown'}) · local only';
+    if (source == 'anilist-simplified') {
+      return 'ok · $mappedCount from AniList (simplified retry)';
+    }
+    if (source == 'kitsu') {
+      final String why = error == null
+          ? 'AniList empty'
+          : 'AniList failed: $error';
+      final String dropped =
+          droppedCount > 0 ? ' · $droppedCount unmapped' : '';
+      return 'ok · $mappedCount from Kitsu ($why)$dropped';
+    }
     if (rawMediaCount == mappedCount) {
+      if (mappedCount == 0 && variables != null) {
+        return 'ok · 0 from AniList · $variables';
+      }
       return 'ok · $mappedCount from AniList';
     }
     return 'ok · $mappedCount shown ($rawMediaCount from AniList)';
@@ -130,6 +166,17 @@ class AniListService {
   /// results. The season-suffix fallback (see [searchAnime]) runs
   /// inside here too — it only fires when the primary search
   /// succeeded but found nothing for the base title.
+  ///
+  /// 0.2.15: four paths, in order — (1) the full filtered query
+  /// (one 300 ms retry on failure); (2) if AniList is DEAD, the
+  /// Kitsu fallback before giving up; (3) if AniList answered but
+  /// returned NOTHING, one simplified retry (minimal query, no
+  /// filters at all); (4) if that is empty too, the Kitsu fallback.
+  /// The final [SearchDiagnostic] names the path that produced the
+  /// results (or the variables the primary call was sent with when
+  /// everything came back empty), so the phone can prove what
+  /// happened. [lookupFailed] is true only when AniList failed AND
+  /// Kitsu had nothing either.
   Future<({List<Anime> results, bool lookupFailed})> searchAnimeDetailed(
     String query, {
     int page = 1,
@@ -138,7 +185,18 @@ class AniListService {
     String? status,
     String? format,
   }) async {
-    ({List<Anime> results, bool failed}) primary = await _searchOnce(
+    final String variables = _variablesSummary(
+      query,
+      genre: genre,
+      year: year,
+      status: status,
+      format: format,
+    );
+    // 1. PRIMARY — the full filtered query, one 300 ms retry on
+    // failure (0.2.13: a single dropped request must not wipe the
+    // whole search; attempts: 2 tells the phone a retry happened).
+    ({List<Anime> results, bool failed, String? error, int raw, int mapped})
+        primary = await _searchOnce(
       query,
       page: page,
       genre: genre,
@@ -146,11 +204,8 @@ class AniListService {
       status: status,
       format: format,
     );
+    int attempts = 1;
     if (primary.failed) {
-      // 0.2.13: one retry — a single dropped request (timeout /
-      // transient block) must not wipe the whole search. The
-      // diagnostic keeps the final attempt's outcome; attempts: 2
-      // tells the phone a retry happened.
       await Future<void>.delayed(const Duration(milliseconds: 300));
       primary = await _searchOnce(
         query,
@@ -160,22 +215,74 @@ class AniListService {
         status: status,
         format: format,
       );
-      final SearchDiagnostic? d = _lastSearchDiagnostic;
-      if (d != null) {
-        _lastSearchDiagnostic = SearchDiagnostic(
-          query: d.query,
-          ok: d.ok,
-          error: d.error,
-          rawMediaCount: d.rawMediaCount,
-          mappedCount: d.mappedCount,
-          attempts: 2,
-        );
-      }
+      attempts = 2;
     }
+    String source = 'anilist';
+    List<Anime> results = primary.results;
+    int raw = primary.raw;
+    int mapped = primary.mapped;
+    int dropped = 0;
+    final String? anilistError = primary.error;
     if (primary.failed) {
+      // 2. AniList DEAD → Kitsu fallback before giving up. If Kitsu
+      // answers, the search still succeeds — the screen shows the
+      // Kitsu results and the diagnostic names the path.
+      final kitsu = await KitsuSearch.search(query, client: _client);
+      if (kitsu.results.isNotEmpty) {
+        _writeDiagnostic(
+          query: query,
+          ok: true,
+          error: anilistError,
+          rawMediaCount: kitsu.results.length + kitsu.dropped,
+          mappedCount: kitsu.results.length,
+          attempts: attempts,
+          source: 'kitsu',
+          variables: variables,
+          droppedCount: kitsu.dropped,
+        );
+        return (results: kitsu.results, lookupFailed: false);
+      }
+      _writeDiagnostic(
+        query: query,
+        ok: false,
+        error: anilistError ?? 'unknown',
+        attempts: attempts,
+        source: 'anilist',
+        variables: variables,
+      );
       return (results: <Anime>[], lookupFailed: true);
     }
-    final List<Anime> results = primary.results;
+    if (results.isEmpty) {
+      // 3. SIMPLIFIED RETRY — the primary call succeeded but
+      // returned nothing (the 0.2.13 phone symptom: "noblesse" →
+      // "ok · 0 from AniList"). Retry once with a MINIMAL query —
+      // only `search` + `type:ANIME`, no filter args at all, no null
+      // filter variables sent — in case some filter combination
+      // makes AniList return empty.
+      final simplified = await _searchOnceMinimal(query, page: page);
+      if (!simplified.failed && simplified.results.isNotEmpty) {
+        results = simplified.results;
+        raw = simplified.raw;
+        mapped = simplified.mapped;
+        source = 'anilist-simplified';
+      } else {
+        // 4. KITSU FALLBACK — AniList genuinely has nothing for
+        // this title (or the simplified retry failed too).
+        final kitsu = await KitsuSearch.search(query, client: _client);
+        if (kitsu.results.isNotEmpty) {
+          results = kitsu.results;
+          raw = kitsu.results.length + kitsu.dropped;
+          mapped = kitsu.results.length;
+          dropped = kitsu.dropped;
+          source = 'kitsu';
+        } else {
+          source = 'none';
+        }
+      }
+    }
+    // 5. Season-suffix fallback (0.2.12, unchanged): "Black Clover
+    // S2" has no separate AniList entry — when the results hold no
+    // base-title match, search the stripped query too and merge.
     final String stripped = stripSeasonSuffix(query);
     if (stripped != query.trim()) {
       final String base = normalizeTitle(stripped);
@@ -184,8 +291,8 @@ class AniListService {
         return n.contains(base) || base.contains(n);
       });
       if (!hasBase) {
-        final ({List<Anime> results, bool failed}) extra =
-            await _searchOnce(
+        final ({List<Anime> results, bool failed, String? error, int raw, int mapped})
+            extra = await _searchOnce(
           stripped,
           page: page,
           genre: genre,
@@ -202,12 +309,67 @@ class AniListService {
         }
       }
     }
+    _writeDiagnostic(
+      query: query,
+      ok: true,
+      error: source == 'kitsu' ? anilistError : null,
+      rawMediaCount: raw,
+      mappedCount: mapped,
+      attempts: attempts,
+      source: source,
+      variables: variables,
+      droppedCount: dropped,
+    );
     return (results: results, lookupFailed: false);
   }
 
-  /// One AniList search page. Returns `failed: true` (empty
-  /// results) when the GraphQL call throws — the caller decides
-  /// what the failure means.
+  /// The exact variables the primary AniList call was sent with, as
+  /// one short line for the diagnostic (0.2.15). Null filters read
+  /// as 'All' — the UI state — so the phone can prove no filter was
+  /// excluding the title.
+  static String _variablesSummary(
+    String query, {
+    String? genre,
+    int? year,
+    String? status,
+    String? format,
+  }) {
+    return 'q=${query.trim()} · genre=${genre ?? 'All'} · '
+        'year=${year?.toString() ?? 'All'} · status=${status ?? 'All'} · '
+        'format=${format ?? 'All'}';
+  }
+
+  /// Record the final search diagnostic (0.2.15): one write per
+  /// [searchAnimeDetailed] call, naming the path that produced the
+  /// results — the per-call writes used to live inside [_searchOnce],
+  /// which made the diagnostic lie about multi-path searches.
+  void _writeDiagnostic({
+    required String query,
+    required bool ok,
+    String? error,
+    int rawMediaCount = 0,
+    int mappedCount = 0,
+    required int attempts,
+    String source = 'anilist',
+    String? variables,
+    int droppedCount = 0,
+  }) {
+    _lastSearchDiagnostic = SearchDiagnostic(
+      query: query,
+      ok: ok,
+      error: error,
+      rawMediaCount: rawMediaCount,
+      mappedCount: mappedCount,
+      attempts: attempts,
+      source: source,
+      variables: variables,
+      droppedCount: droppedCount,
+    );
+  }
+
+  /// One AniList search page with the full filtered query. Returns
+  /// `failed: true` (empty results) when the GraphQL call throws —
+  /// the caller decides what the failure means.
   ///
   /// 0.2.13: a null `data` (or a missing `Page`) is ALSO a failure.
   /// Before, `_post` returning null data — a 200 with no `data`
@@ -215,10 +377,14 @@ class AniListService {
   /// SUCCESS, which is exactly the 0.2.12 phone symptom ("noblesse"
   /// = 0 results, no "Couldn't reach AniList" banner): the lookup
   /// had failed, but the screen was told it succeeded with nothing.
-  /// Every call also records a [SearchDiagnostic] (raw media count
-  /// vs mapped count, error) so the phone can show what the API
-  /// actually returned.
-  Future<({List<Anime> results, bool failed})> _searchOnce(
+  ///
+  /// 0.2.15: the diagnostic is NO LONGER written here — one search
+  /// can take up to four paths (primary / retry / simplified /
+  /// Kitsu) and only [searchAnimeDetailed] knows which one won, so
+  /// it writes the single final diagnostic. This method just
+  /// reports its own outcome (error / raw / mapped counts).
+  Future<({List<Anime> results, bool failed, String? error, int raw, int mapped})>
+      _searchOnce(
     String query, {
     int page = 1,
     String? genre,
@@ -226,27 +392,51 @@ class AniListService {
     String? status,
     String? format,
   }) async {
+    return _executeSearch(
+      _searchQuery,
+      searchVariables(
+        query,
+        page: page,
+        genre: genre,
+        year: year,
+        status: status,
+        format: format,
+      ),
+    );
+  }
+
+  /// Minimal search (0.2.15): only `search` + `type:ANIME` — no
+  /// filter args at all, and NO null filter variables are sent. The
+  /// simplified retry when the full filtered query returns 0: if
+  /// some filter combination makes AniList return empty, this is
+  /// the query that proves it.
+  Future<({List<Anime> results, bool failed, String? error, int raw, int mapped})>
+      _searchOnceMinimal(String query, {int page = 1}) async {
+    return _executeSearch(
+      _searchQueryMinimal,
+      <String, Object?>{'p': page, 'n': 20, 'q': query.trim()},
+    );
+  }
+
+  /// Run one AniList search page and map it. Shared by [_searchOnce]
+  /// and [_searchOnceMinimal] so the two queries cannot drift apart
+  /// in failure handling.
+  Future<({List<Anime> results, bool failed, String? error, int raw, int mapped})>
+      _executeSearch(
+    String queryString,
+    Map<String, Object?> variables,
+  ) async {
     late final Map<String, dynamic>? data;
     try {
-      data = await _post(
-        _searchQuery,
-        searchVariables(
-          query,
-          page: page,
-          genre: genre,
-          year: year,
-          status: status,
-          format: format,
-        ),
-      );
+      data = await _post(queryString, variables);
     } catch (e) {
-      _lastSearchDiagnostic = SearchDiagnostic(
-        query: query,
-        ok: false,
+      return (
+        results: <Anime>[],
+        failed: true,
         error: _shortSearchError(e),
-        attempts: 1,
+        raw: 0,
+        mapped: 0,
       );
-      return (results: <Anime>[], failed: true);
     }
     final List<dynamic>? media =
         (data?['Page'] as Map<String, dynamic>?)?['media']
@@ -256,26 +446,25 @@ class AniListService {
       // genuine no-match — report it as a failure so the screen
       // shows the "Couldn't reach AniList" banner instead of a
       // bare "0 results".
-      _lastSearchDiagnostic = SearchDiagnostic(
-        query: query,
-        ok: false,
+      return (
+        results: <Anime>[],
+        failed: true,
         error: 'no data',
-        attempts: 1,
+        raw: 0,
+        mapped: 0,
       );
-      return (results: <Anime>[], failed: true);
     }
     final List<Anime> mapped = media
         .map((dynamic e) => animeFromMedia(e as Map<String, dynamic>))
         .whereType<Anime>()
         .toList();
-    _lastSearchDiagnostic = SearchDiagnostic(
-      query: query,
-      ok: true,
-      rawMediaCount: media.length,
-      mappedCount: mapped.length,
-      attempts: 1,
+    return (
+      results: mapped,
+      failed: false,
+      error: null,
+      raw: media.length,
+      mapped: mapped.length,
     );
-    return (results: mapped, failed: false);
   }
 
   /// Short human-readable cause for a search failure, for the
@@ -331,6 +520,16 @@ class AniListService {
       r'$f:MediaFormat){Page(page:$p,perPage:$n)'
       r'{pageInfo{hasNextPage}media(search:$q,type:ANIME,isAdult:false,'
       r'genre:$g,seasonYear:$y,status:$s,format:$f)'
+      r'{id idMal title{romaji english}coverImage{large extraLarge}'
+      r' format episodes seasonYear averageScore genres description}}}';
+
+  /// Minimal search query (0.2.15): only `search` + `type:ANIME`.
+  /// Same fields as [_searchQuery] so results map identically —
+  /// the ONLY difference is the missing filter args (and no null
+  /// filter variables sent at all).
+  static const String _searchQueryMinimal =
+      r'query($p:Int,$n:Int,$q:String){Page(page:$p,perPage:$n)'
+      r'{pageInfo{hasNextPage}media(search:$q,type:ANIME)'
       r'{id idMal title{romaji english}coverImage{large extraLarge}'
       r' format episodes seasonYear averageScore genres description}}}';
 
