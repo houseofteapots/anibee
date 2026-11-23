@@ -1,7 +1,7 @@
 name: anibee
 description: "aniBee — personal iOS anime app. Miruro-linked, AniList-powered."
 publish_to: 'none'
-version: 0.2.4+8
+version: 0.2.5+9
 
 environment:
   sdk: ^3.13.5
@@ -29,6 +29,10 @@ dependencies:
   shared_preferences: ^2.5.4
   local_auth: ^3.0.2
   crypto: ^3.0.7
+
+  # 0.2.5: real offline downloads — app documents dir for HLS
+  # segments / playlist and direct files.
+  path_provider: ^2.1.5
 
   # M2 real services: HTTP clients, secure token/key storage, OAuth
   # webview, AES-CBC (megaplay) + HTML parsing (Anikoto).

@@ -10,9 +10,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// 0.2.4: double-tap must NOT show the player details/controls
 /// overlay — it only seeks (with the flash) or play/pauses, and the
-/// overlay stays exactly as it was. Plus the 0.2.4 layout proofs:
-/// center cluster at the exact vertical center, bottom row clustered
-/// at the far right, glossy gradient buttons, right-side panels.
+/// overlay stays exactly as it was. Plus the layout proofs: center
+/// cluster at the exact vertical center, bottom row clustered flush
+/// at the far right (0.2.5: 32px buttons, 4px gaps, 8pt right
+/// padding), flat buttons with no circular background (0.2.5),
+/// right-side panels.
 ///
 /// The player is constructed for real (real libmpv on the VM, so the
 /// VideoController init runs) but NO media is loaded: the screen's
@@ -145,8 +147,9 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('double-tap left seeks without showing the controls overlay',
-      (WidgetTester tester) async {
+  testWidgets('double-tap left seeks without showing the controls overlay', (
+    WidgetTester tester,
+  ) async {
     await pumpPlayer(tester);
     // Controls start visible; hide them through the test seam.
     playerState(tester).hideControlsForTest();
@@ -171,8 +174,9 @@ void main() {
     expect(find.text(anime.title), findsNothing);
   });
 
-  testWidgets('double-tap center play/pauses without showing the overlay',
-      (WidgetTester tester) async {
+  testWidgets('double-tap center play/pauses without showing the overlay', (
+    WidgetTester tester,
+  ) async {
     await pumpPlayer(tester);
     playerState(tester).hideControlsForTest();
     await tester.pump();
@@ -189,61 +193,118 @@ void main() {
     expect(find.text(anime.title), findsNothing);
   });
 
-  testWidgets('single tap still shows the controls overlay',
-      (WidgetTester tester) async {
+  testWidgets('single tap toggles the controls overlay off and on', (
+    WidgetTester tester,
+  ) async {
     await pumpPlayer(tester);
-    playerState(tester).hideControlsForTest();
-    await tester.pump();
-    expect(find.text(anime.title), findsNothing);
-
-    await tester.tapAt(const Offset(400, 300));
+    // Tap an EMPTY part of the video (150,150): the center cluster
+    // sits at (400,300) and the top/bottom bars own the edges, so a
+    // tap there would hit a button, not the video.
+    const Offset emptySpot = Offset(150, 150);
+    // Controls start visible: one tap hides them all.
+    expect(playerState(tester).controlsVisibleForTest, isTrue);
+    await tester.tapAt(emptySpot);
     // A lone tap fires onTap only after the double-tap window.
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
+    expect(playerState(tester).controlsVisibleForTest, isFalse);
+    expect(find.text(anime.title), findsNothing);
 
+    // The next single tap shows them all again…
+    await tester.tapAt(emptySpot);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
     expect(playerState(tester).controlsVisibleForTest, isTrue);
     expect(find.text(anime.title), findsOneWidget);
+
+    // …and one more tap hides them again.
+    await tester.tapAt(emptySpot);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(playerState(tester).controlsVisibleForTest, isFalse);
   });
 
-  testWidgets('center cluster sits at the exact vertical center',
-      (WidgetTester tester) async {
+  testWidgets('tapping a control button does not toggle the overlay', (
+    WidgetTester tester,
+  ) async {
     await pumpPlayer(tester);
-    final Offset center = tester.getCenter(
-      find.byTooltip('Back 10 seconds'),
-    );
+    expect(playerState(tester).controlsVisibleForTest, isTrue);
+    // The Subtitles button opens its panel; the overlay stays up —
+    // the tap is absorbed by the button, never reaching the root
+    // GestureDetector's toggle.
+    await tester.tap(find.byTooltip('Subtitles'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(playerState(tester).controlsVisibleForTest, isTrue);
+    expect(find.text('SUBTITLE STYLE'), findsOneWidget);
+  });
+
+  testWidgets('center cluster sits at the exact vertical center', (
+    WidgetTester tester,
+  ) async {
+    await pumpPlayer(tester);
+    final Offset center = tester.getCenter(find.byTooltip('Back 10 seconds'));
     expect(center.dy, closeTo(300, 2));
     expect(center.dx, lessThan(400));
   });
 
-  testWidgets('bottom button row is clustered at the far right',
-      (WidgetTester tester) async {
+  testWidgets('bottom button row is clustered at the far right', (
+    WidgetTester tester,
+  ) async {
     await pumpPlayer(tester);
-    // Last button (Next) ends 12pt from the right edge: center at
-    // 800 - 12 - 18 = 770 on the 800pt test surface.
+    // 0.2.5: Last button (Next) ends 8pt from the right edge:
+    // center at 800 - 8 - 16 = 776 on the 800pt test surface
+    // (32px buttons, 4px gaps).
     final Offset next = tester.getCenter(find.byTooltip('Next episode'));
-    expect(next.dx, closeTo(770, 2));
+    expect(next.dx, closeTo(776, 2));
     // First button (CC) starts in the right half, never mid-screen.
     final Offset cc = tester.getCenter(find.byTooltip('Subtitles'));
     expect(cc.dx, greaterThan(400));
   });
 
-  testWidgets('round buttons have a glossy vertical gradient',
-      (WidgetTester tester) async {
+  testWidgets('round buttons have no circular background', (
+    WidgetTester tester,
+  ) async {
     await pumpPlayer(tester);
-    final Container button = tester.widget<Container>(
-      find
-          .descendant(
-            of: find.byTooltip('Back 10 seconds'),
-            matching: find.byType(Container),
-          )
-          .first,
+    // 0.2.5: the icons float directly over the video — no glossy
+    // circle, no gradient, no border under any player button.
+    final Iterable<Container> circles = tester.widgetList<Container>(
+      find.byWidgetPredicate(
+        (Widget w) =>
+            w is Container &&
+            w.decoration is BoxDecoration &&
+            (w.decoration! as BoxDecoration).shape == BoxShape.circle,
+      ),
     );
-    final BoxDecoration decoration = button.decoration! as BoxDecoration;
-    expect(decoration.gradient, isA<LinearGradient>());
+    expect(circles, isEmpty);
+    // No glossy CIRCULAR button either: a Container pairing a
+    // LinearGradient with a circle shape. (A blanket "no gradient
+    // anywhere" check false-positives on the video area's own
+    // gradient backdrop, which is a rounded rect, not a circle.)
+    final Iterable<Container> glossyCircles =
+        tester.widgetList<Container>(
+          find.byWidgetPredicate(
+            (Widget w) =>
+                w is Container &&
+                w.decoration is BoxDecoration &&
+                (w.decoration! as BoxDecoration).shape ==
+                    BoxShape.circle &&
+                (w.decoration! as BoxDecoration).gradient
+                    is LinearGradient,
+          ),
+        );
+    expect(glossyCircles, isEmpty);
+    // The buttons themselves are still there (0.2.5 bottom row:
+    // 32px hit areas, Next center at 776 — see the far-right test).
+    expect(find.byTooltip('Back 10 seconds'), findsOneWidget);
+    expect(find.byTooltip('Next episode'), findsOneWidget);
+    final Offset next = tester.getCenter(find.byTooltip('Next episode'));
+    expect(next.dx, closeTo(776, 2));
   });
 
-  testWidgets('subtitles button opens the right-side panel',
-      (WidgetTester tester) async {
+  testWidgets('subtitles button opens the right-side panel', (
+    WidgetTester tester,
+  ) async {
     await pumpPlayer(tester);
     await tester.tap(find.byTooltip('Subtitles'));
     await tester.pump();

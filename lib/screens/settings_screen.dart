@@ -24,11 +24,16 @@ class SettingsScreen extends StatelessWidget {
     required this.store,
     required this.configService,
     required this.services,
+    this.onPlayDownload,
   });
 
   final SettingsStore store;
   final ProviderConfigService configService;
   final AppServices services;
+
+  /// Tapping a downloaded row plays the local file (wired from
+  /// AppShell, which owns the player navigation).
+  final ValueChanged<String>? onPlayDownload;
 
   /// Row icons: white in dark mode, accent in light mode — full
   /// contrast on the tinted tile (the M1.1 icons rendered dark-on-dark
@@ -84,8 +89,8 @@ class SettingsScreen extends StatelessWidget {
                       status: store.anilistConnected
                           ? 'Connected as ${store.anilistUsername ?? 'AniList user'}'
                           : configService.config.anilistClientId.isEmpty
-                              ? 'Login setup in progress'
-                              : 'Not connected • Tap to log in',
+                          ? 'Login setup in progress'
+                          : 'Not connected • Tap to log in',
                       buttonLabel: store.anilistConnected ? 'Logout' : 'Login',
                       onButton: () => store.anilistConnected
                           ? _logoutAccount(context, 'AniList')
@@ -99,8 +104,8 @@ class SettingsScreen extends StatelessWidget {
                       status: store.malConnected
                           ? 'Connected as ${store.malUsername ?? 'MAL user'}'
                           : configService.config.malClientId.isEmpty
-                              ? 'Login setup in progress'
-                              : 'Not connected • Tap to log in',
+                          ? 'Login setup in progress'
+                          : 'Not connected • Tap to log in',
                       buttonLabel: store.malConnected ? 'Logout' : 'Login',
                       onButton: () => store.malConnected
                           ? _logoutAccount(context, 'MyAnimeList')
@@ -288,8 +293,11 @@ class SettingsScreen extends StatelessWidget {
                   showChevron: true,
                   onTap: () => Navigator.of(context).push(
                     SmoothPageRoute<void>(
-                      builder: (BuildContext context) =>
-                          DownloadsScreen(store: store),
+                      builder: (BuildContext context) => DownloadsScreen(
+                        store: store,
+                        services: services,
+                        onPlayDownload: onPlayDownload,
+                      ),
                     ),
                   ),
                 ),
@@ -445,9 +453,8 @@ class SettingsScreen extends StatelessWidget {
   }
 
   void _snack(BuildContext context, String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   // ---------------------------------------------------------- accounts
@@ -484,7 +491,23 @@ class SettingsScreen extends StatelessWidget {
     final String? token = OAuthService.parseAnilistRedirect(redirect);
     if (token == null) {
       if (!context.mounted) return;
-      _snack(context, 'AniList login failed — no token returned.');
+      // The provider may have redirected with an error instead of a
+      // token (fragment: #error=unsupported_grant_type&...): show the
+      // readable reason, not the generic "no token" line.
+      final String? error = Uri.splitQueryString(
+        redirect.fragment,
+      )['error'];
+      if (error != null && error.isNotEmpty) {
+        _snack(
+          context,
+          OAuthService.readableOAuthError(
+            provider: 'AniList',
+            error: error,
+          ),
+        );
+      } else {
+        _snack(context, 'AniList login failed — no token returned.');
+      }
       return;
     }
     try {
@@ -537,7 +560,18 @@ class SettingsScreen extends StatelessWidget {
     final String? code = OAuthService.parseMalRedirect(redirect, state);
     if (code == null) {
       if (!context.mounted) return;
-      _snack(context, 'MyAnimeList login failed — no code returned.');
+      final String? error = redirect.queryParameters['error'];
+      if (error != null && error.isNotEmpty) {
+        _snack(
+          context,
+          OAuthService.readableOAuthError(
+            provider: 'MyAnimeList',
+            error: error,
+          ),
+        );
+      } else {
+        _snack(context, 'MyAnimeList login failed — no code returned.');
+      }
       return;
     }
     try {
@@ -555,9 +589,7 @@ class SettingsScreen extends StatelessWidget {
       await store.setMalSession(
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        expiry: DateTime.now().add(
-          Duration(seconds: tokens.expiresInSeconds),
-        ),
+        expiry: DateTime.now().add(Duration(seconds: tokens.expiresInSeconds)),
         username: name,
       );
       if (!context.mounted) return;
@@ -911,8 +943,8 @@ class _DebridTile extends StatelessWidget {
       subtitle: verified
           ? 'Connected${account != null ? ' as $account' : ''}'
           : hasKey
-              ? 'Key saved • not verified — tap to retry'
-              : 'Not connected • Tap to add API key',
+          ? 'Key saved • not verified — tap to retry'
+          : 'Not connected • Tap to add API key',
       trailing: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'models.dart';
+import 'player/trailer_player.dart';
+import 'screens/full_player_screen.dart';
 import 'services/app_services.dart';
+import 'services/miruro_resolver.dart';
 import 'services/provider_config.dart';
 import 'settings_store.dart';
 import 'screens/collection_screen.dart';
@@ -48,6 +51,101 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  /// Play a completed download offline (0.2.5): rebuild the anime
+  /// from the download record, open the local file in the full
+  /// player. Episode switches inside the player prefer the local
+  /// file when that episode is downloaded, else resolve online.
+  void _playOffline(String key) {
+    final Map<String, dynamic>? record = widget.store.downloadRecordFor(key);
+    if (record == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Download not found — please download it again.'),
+        ),
+      );
+      return;
+    }
+    final String status = widget.store.downloadStatus[key] ?? '';
+    if (status == 'downloading') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Still downloading — please wait.')),
+      );
+      return;
+    }
+    if (status == 'failed') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Download failed — re-download it from the episode list.',
+          ),
+        ),
+      );
+      return;
+    }
+    final Anime anime = Anime(
+      id: record['animeId'] as String? ?? '',
+      anilistId: (record['anilistId'] as num?)?.toInt(),
+      title: record['title'] as String? ?? 'Unknown',
+      rating: 0,
+      year: 0,
+      episodeCount: (record['episodeCount'] as num?)?.toInt() ?? 0,
+      genres: const <String>[],
+      synopsis: '',
+      gradient: const <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
+      posterUrl: record['posterUrl'] as String?,
+    );
+    final List<Episode> episodes = mockEpisodes(anime);
+    final int epNum = (record['episode'] as num?)?.toInt() ?? 1;
+    final Episode initial = episodes.firstWhere(
+      (Episode e) => e.number == epNum,
+      orElse: () => episodes.first,
+    );
+    final ResolvedStream? local = widget.services.downloads.localStreamFor(
+      key,
+      widget.store,
+    );
+    if (local == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Download file not found — please download it again.'),
+        ),
+      );
+      return;
+    }
+    final TrailerPlayer trailer = TrailerPlayer();
+    Navigator.of(context)
+        .push(
+          SmoothPageRoute<void>(
+            builder: (BuildContext context) => FullPlayerScreen(
+              trailer: trailer,
+              store: widget.store,
+              anime: anime,
+              episodes: episodes,
+              initialEpisode: initial,
+              stream: local,
+              onEpisodeChanged: (Episode ep) =>
+                  widget.store.markProgress(anime, ep.number),
+              resolver: widget.services.miruro,
+              anilist: widget.services.anilist,
+              subDub: 'Sub',
+              onResolveEpisode: (Episode episode) async {
+                final String k = '${anime.id}:${episode.number}';
+                final ResolvedStream? offline = widget.services.downloads
+                    .localStreamFor(k, widget.store);
+                if (offline != null) return offline;
+                return widget.services.resolveEpisode(
+                  anime: anime,
+                  episode: episode.number,
+                  subDub: 'Sub',
+                  store: widget.store,
+                );
+              },
+            ),
+          ),
+        )
+        .then((_) => trailer.dispose());
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
@@ -86,7 +184,12 @@ class _AppShellState extends State<AppShell> {
               ),
               _TabFade(
                 active: _tab == 3,
-                child: DownloadsScreen(store: widget.store, embedded: true),
+                child: DownloadsScreen(
+                  store: widget.store,
+                  services: widget.services,
+                  onPlayDownload: _playOffline,
+                  embedded: true,
+                ),
               ),
               _TabFade(
                 active: _tab == 4,
@@ -94,6 +197,7 @@ class _AppShellState extends State<AppShell> {
                   store: widget.store,
                   configService: widget.configService,
                   services: widget.services,
+                  onPlayDownload: _playOffline,
                 ),
               ),
             ],

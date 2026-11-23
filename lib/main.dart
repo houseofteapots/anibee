@@ -20,9 +20,11 @@ void main() async {
   // The config service is passed in so MAL token refresh can use the
   // config's client ID (0.2.3: client IDs live in the remote config,
   // never typed in by the user).
-  final AppServices services = AppServices.create(
-    configService: configService,
-  );
+  final AppServices services = AppServices.create(configService: configService);
+  // 0.2.5: drop download rows the M1 simulation left behind (they
+  // claim 'downloaded' but no file was ever saved — tapping them
+  // did nothing). Real records + files are untouched.
+  await services.downloads.pruneStale(store);
   runApp(
     AniBeeApp(store: store, configService: configService, services: services),
   );

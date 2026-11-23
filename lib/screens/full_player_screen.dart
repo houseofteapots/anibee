@@ -9,6 +9,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../models.dart';
+import '../player/subtitle_style.dart';
 import '../player/trailer_player.dart';
 import '../services/anilist_service.dart';
 import '../services/aniskip_service.dart';
@@ -343,22 +344,53 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// Save the current position: resume key (canonical — Home and
   /// Search share it) + the real Continue Watching entry. Called on
   /// pause, periodically while playing, on episode switch and on exit.
+  ///
+  /// 0.2.5: three cases, so the episode list can show real progress:
+  /// - mid-episode: save resume position + duration + CW entry.
+  /// - watched to the end (last 20 s): clear the resume, mark the
+  ///   episode completed, CW entry at 100%.
+  /// - barely started: clear the resume, mark nothing.
   void _saveProgress() {
     final Duration pos = _player.state.position;
     final Duration dur = _player.state.duration;
+    if (dur.inSeconds <= 30) {
+      // Too short to judge: only a mid position counts, never
+      // completed.
+      if (pos.inSeconds > 10 && pos < dur - const Duration(seconds: 20)) {
+        _saveInProgress(pos, dur);
+      }
+      return;
+    }
     if (pos.inSeconds > 10 && pos < dur - const Duration(seconds: 20)) {
-      unawaited(_store.setResumeSeconds(_resumeKey, pos.inSeconds.toDouble()));
+      _saveInProgress(pos, dur);
+    } else if (pos >= dur - const Duration(seconds: 20)) {
+      unawaited(_store.clearResumeSeconds(_resumeKey));
+      unawaited(_store.clearResumeDuration(_resumeKey));
+      unawaited(_store.markEpisodeCompleted(_resumeKey));
       unawaited(
         _store.recordWatch(
           anime: widget.anime,
           episode: _currentEpisode.number,
-          positionSeconds: pos.inSeconds.toDouble(),
+          positionSeconds: dur.inSeconds.toDouble(),
           durationSeconds: dur.inSeconds.toDouble(),
         ),
       );
     } else {
       unawaited(_store.clearResumeSeconds(_resumeKey));
     }
+  }
+
+  void _saveInProgress(Duration pos, Duration dur) {
+    unawaited(_store.setResumeSeconds(_resumeKey, pos.inSeconds.toDouble()));
+    unawaited(_store.setResumeDuration(_resumeKey, dur.inSeconds.toDouble()));
+    unawaited(
+      _store.recordWatch(
+        anime: widget.anime,
+        episode: _currentEpisode.number,
+        positionSeconds: pos.inSeconds.toDouble(),
+        durationSeconds: dur.inSeconds.toDouble(),
+      ),
+    );
   }
 
   // ------------------------------------------------------- subtitle styling
@@ -387,77 +419,42 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           0,
           kSubtitleColors.length - 1,
         )];
-    // mpv sub-color is #AARRGGBB — the alpha carries the text opacity.
-    final int alpha = ((_store.subOpacity.clamp(0, 100) / 100) * 255).round();
-    final String hex =
-        '#${alpha.toRadixString(16).padLeft(2, '0')}'
-        '${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
-    unawaited(
-      _setMpvProperty(
-        _player,
-        'sub-font-size',
-        (_store.subSize * 2).toString(),
-      ),
+    // 0.2.5: the property map is built pure (subtitle_style.dart) so
+    // it is unit-tested — it sets sub-ass-override=force, without
+    // which mpv ignores every style option for ASS subtitles (the
+    // "nothing works" bug), plus sub-pos from _subtitlePosValue().
+    final Map<String, String> props = buildSubtitleMpvProperties(
+      subSize: _store.subSize,
+      subFont: _store.subFont,
+      subColor: color,
+      subOpacity: _store.subOpacity,
+      subBold: _store.subBold,
+      subOutline: _store.subOutline,
+      subBackgroundMode: _store.subBackgroundMode,
+      subEncoding: _store.subEncoding,
+      subDelayMs: _store.subDelayMs,
+      subPos: _subtitlePosValue(),
     );
-    unawaited(
-      _setMpvProperty(_player, 'sub-font', _mpvFontName(_store.subFont)),
-    );
-    unawaited(_setMpvProperty(_player, 'sub-color', hex));
-    unawaited(
-      _setMpvProperty(
-        _player,
-        'sub-bold',
-        _store.subBold ? 'yes' : 'no',
-      ),
-    );
-    unawaited(
-      _setMpvProperty(
-        _player,
-        'sub-border-size',
-        switch (_store.subOutline) {
-          'none' => '0',
-          'thin' => '1',
-          'thick' => '3',
-          _ => '2',
-        },
-      ),
-    );
-    unawaited(
-      _setMpvProperty(
-        _player,
-        'sub-back-color',
-        switch (_store.subBackgroundMode) {
-          'solid' => '#FF000000',
-          'dark' => '#CC000000',
-          _ => '#00000000',
-        },
-      ),
-    );
-    unawaited(
-      _setMpvProperty(
-        _player,
-        'sub-codepage',
-        _store.subEncoding == 'auto' ? 'auto' : _store.subEncoding,
-      ),
-    );
-    unawaited(
-      _setMpvProperty(
-        _player,
-        'sub-delay',
-        (_store.subDelayMs / 1000).toStringAsFixed(2),
-      ),
-    );
-    _applySubtitleOffset();
+    for (final MapEntry<String, String> entry in props.entries) {
+      unawaited(_setMpvProperty(_player, entry.key, entry.value));
+    }
   }
 
-  /// mpv fontconfig family for the Settings font names.
-  String _mpvFontName(String font) {
-    return switch (font) {
-      'System' => 'sans-serif',
-      'Rounded' => 'Arial Rounded MT Bold',
-      'Mono' => 'monospace',
-      _ => 'Inter Semi Bold',
-    };
+  /// Re-select the current subtitle track so a new sub-codepage takes
+  /// effect: mpv only reads the encoding when the subtitle file is
+  /// (re)loaded, so changing Encoding mid-playback otherwise does
+  /// nothing until the next episode. Best-effort; playback continues
+  /// either way.
+  Future<void> _reloadSubtitleTrack() async {
+    final SubtitleTrack current = _player.state.track.subtitle;
+    if (current.id == 'no' || current.id == 'auto') return;
+    try {
+      await _player.setSubtitleTrack(SubtitleTrack.no());
+      await _player.setSubtitleTrack(current);
+      _applySubtitleStyle();
+    } catch (_) {
+      // Best-effort only.
+    }
   }
 
   /// Subtitle vertical position (mpv sub-pos, 0 = top, 100 = bottom):
@@ -522,13 +519,29 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   void _scheduleHide() {
     _hideTimer?.cancel();
-    _hideTimer = Timer(const Duration(milliseconds: 3500), () {
+    _hideTimer = Timer(const Duration(milliseconds: 3000), () {
       if (mounted && _player.state.playing) {
         setState(() => _controlsVisible = false);
         // Controls hid: the subtitle drops back to the very bottom.
         _applySubtitleOffset();
       }
     });
+  }
+
+  /// Single-tap toggle (0.2.5): one tap hides ALL controls, the next
+  /// shows them again. The root GestureDetector already
+  /// disambiguates: onTap fires only once the double-tap window has
+  /// passed, so a double-tap's first tap never toggles. Showing
+  /// restarts the 3 s auto-hide; hiding cancels it — hidden stays
+  /// hidden until the next tap.
+  void _toggleControls() {
+    if (_controlsVisible) {
+      _hideTimer?.cancel();
+      setState(() => _controlsVisible = false);
+      _applySubtitleOffset();
+    } else {
+      _pokeControls();
+    }
   }
 
   /// Show the controls overlay (single tap, button taps, episode
@@ -685,7 +698,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       unawaited(_switchToEpisode(episode, previous));
       return;
     }
-    final double? saved = _store.resumePositionFor(widget.anime, episode.number);
+    final double? saved = _store.resumePositionFor(
+      widget.anime,
+      episode.number,
+    );
     unawaited(
       _player.seek(
         saved != null && saved > 10
@@ -713,7 +729,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     await _loadStream(stream);
     if (!mounted) return;
     setState(() => _resolving = false);
-    final double? saved = _store.resumePositionFor(widget.anime, episode.number);
+    final double? saved = _store.resumePositionFor(
+      widget.anime,
+      episode.number,
+    );
     unawaited(
       _player.seek(
         saved != null && saved > 10
@@ -772,7 +791,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       );
       await _setMpvProperty(pipPlayer, 'hwdec', 'videotoolbox-copy');
       await pipPlayer.open(
-        Media(url, httpHeaders: _currentStream?.headers ?? const <String, String>{}),
+        Media(
+          url,
+          httpHeaders: _currentStream?.headers ?? const <String, String>{},
+        ),
       );
       await pipPlayer.seek(pos);
       await pipPlayer.setVolume(_player.state.volume);
@@ -912,9 +934,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _closePanel,
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.35),
-              ),
+              child: Container(color: Colors.black.withValues(alpha: 0.35)),
             ),
           ),
           Container(
@@ -926,9 +946,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 colors: <Color>[Color(0xFF23232F), Color(0xFF121218)],
               ),
               border: Border(
-                left: BorderSide(
-                  color: Colors.white.withValues(alpha: 0.14),
-                ),
+                left: BorderSide(color: Colors.white.withValues(alpha: 0.14)),
               ),
             ),
             child: Column(
@@ -1113,6 +1131,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   accent: accent,
                   onTap: () async {
                     await _player.setSubtitleTrack(t);
+                    _applySubtitleStyle();
                     if (mounted) setState(() {});
                   },
                 ),
@@ -1214,10 +1233,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 value: _store.subBackgroundMode,
                 items: const <DropdownMenuItem<String>>[
                   DropdownMenuItem<String>(value: 'off', child: Text('Off')),
-                  DropdownMenuItem<String>(
-                    value: 'dark',
-                    child: Text('Dark'),
-                  ),
+                  DropdownMenuItem<String>(value: 'dark', child: Text('Dark')),
                   DropdownMenuItem<String>(
                     value: 'solid',
                     child: Text('Solid'),
@@ -1233,14 +1249,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 label: 'Outline',
                 value: _store.subOutline,
                 items: const <DropdownMenuItem<String>>[
-                  DropdownMenuItem<String>(
-                    value: 'none',
-                    child: Text('None'),
-                  ),
-                  DropdownMenuItem<String>(
-                    value: 'thin',
-                    child: Text('Thin'),
-                  ),
+                  DropdownMenuItem<String>(value: 'none', child: Text('None')),
+                  DropdownMenuItem<String>(value: 'thin', child: Text('Thin')),
                   DropdownMenuItem<String>(
                     value: 'medium',
                     child: Text('Medium'),
@@ -1268,10 +1278,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     value: 'Middle',
                     child: Text('Middle'),
                   ),
-                  DropdownMenuItem<String>(
-                    value: 'Top',
-                    child: Text('Top'),
-                  ),
+                  DropdownMenuItem<String>(value: 'Top', child: Text('Top')),
                 ],
                 onChanged: (String? p) {
                   if (p == null) return;
@@ -1283,15 +1290,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 label: 'Text opacity',
                 value: '${_store.subOpacity}%',
                 onMinus: () {
-                  unawaited(
-                    _store.setSubOpacity(_store.subOpacity - 5),
-                  );
+                  unawaited(_store.setSubOpacity(_store.subOpacity - 5));
                   _applySubtitleStyle();
                 },
                 onPlus: () {
-                  unawaited(
-                    _store.setSubOpacity(_store.subOpacity + 5),
-                  );
+                  unawaited(_store.setSubOpacity(_store.subOpacity + 5));
                   _applySubtitleStyle();
                 },
               ),
@@ -1299,10 +1302,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 label: 'Encoding',
                 value: _store.subEncoding,
                 items: const <DropdownMenuItem<String>>[
-                  DropdownMenuItem<String>(
-                    value: 'auto',
-                    child: Text('Auto'),
-                  ),
+                  DropdownMenuItem<String>(value: 'auto', child: Text('Auto')),
                   DropdownMenuItem<String>(
                     value: 'utf-8',
                     child: Text('UTF-8'),
@@ -1328,6 +1328,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   if (e == null) return;
                   unawaited(_store.setSubEncoding(e));
                   _applySubtitleStyle();
+                  // sub-codepage only takes effect when the subtitle
+                  // file is (re)loaded — re-select the track so the
+                  // new encoding applies live.
+                  unawaited(_reloadSubtitleTrack());
                 },
               ),
               _toggleRow(
@@ -1376,22 +1380,24 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 min: 0,
                 max: 100,
                 activeColor: accent,
-                // Manual position only applies when auto-adjust is off.
-                onChanged: _store.subAutoAdjust
-                    ? null
-                    : (double v) {
-                        unawaited(_store.setSubManualPercent(v));
-                        _applySubtitleStyle();
-                      },
+                // 0.2.5: always draggable — dragging IS manual mode,
+                // so it turns Auto-Adjust off. Before, the slider
+                // was disabled while auto-adjust was on (the
+                // default), so out of the box it could not be moved
+                // at all — the "manual slider nahi chalrha" report.
+                onChanged: (double v) {
+                  if (_store.subAutoAdjust) {
+                    unawaited(_store.setSubAutoAdjust(false));
+                  }
+                  unawaited(_store.setSubManualPercent(v));
+                  _applySubtitleStyle();
+                },
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
                   'Delay: ${(_store.subDelayMs / 1000).toStringAsFixed(1)}s',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                  ),
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
                 ),
               ),
               Slider(
@@ -1429,17 +1435,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.55),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.12),
-          ),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
         ),
         child: Text(
           'This is a subtitle preview',
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: _store.subSize,
-            fontWeight:
-                _store.subBold ? FontWeight.w700 : FontWeight.w500,
+            fontWeight: _store.subBold ? FontWeight.w700 : FontWeight.w500,
             color: color.withValues(
               alpha: _store.subOpacity.clamp(0, 100) / 100,
             ),
@@ -1894,11 +1897,15 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 ValueListenableBuilder<double>(
                   valueListenable: _brightnessLevel,
                   builder: (BuildContext context, double level, Widget? _) {
-                    final double opacity =
-                        ((100 - level) / 100 * 0.75).clamp(0, 0.75);
+                    final double opacity = ((100 - level) / 100 * 0.75).clamp(
+                      0,
+                      0.75,
+                    );
                     if (opacity <= 0) return const SizedBox.shrink();
                     return IgnorePointer(
-                      child: Container(color: Colors.black.withValues(alpha: opacity)),
+                      child: Container(
+                        color: Colors.black.withValues(alpha: opacity),
+                      ),
                     );
                   },
                 ),
@@ -2041,7 +2048,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   Widget _buildGestures() {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onTap: _pokeControls,
+      onTap: _toggleControls,
       onDoubleTapDown: (TapDownDetails details) {
         _lastDoubleTapX = details.globalPosition.dx;
         // Zoomed in: center double-tap resets to fit. Side double-taps
@@ -2069,11 +2076,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           );
         } else if (x > w * 2 / 3) {
           unawaited(
-            _seekBy(
-              _store.doubleTapSeek,
-              showFlash: true,
-              showControls: false,
-            ),
+            _seekBy(_store.doubleTapSeek, showFlash: true, showControls: false),
           );
         } else {
           _flashPlayPause();
@@ -2092,9 +2095,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         _dragAccumDx += details.delta.dx;
         final int seconds = (_dragAccumDx / 10).round();
         _dragHintTarget = _dragStartPosition! + Duration(seconds: seconds);
-        _showHud(
-          _HudState.seek(label: '${seconds >= 0 ? '+' : ''}$seconds s'),
-        );
+        _showHud(_HudState.seek(label: '${seconds >= 0 ? '+' : ''}$seconds s'));
       },
       onHorizontalDragEnd: (DragEndDetails details) {
         if (!_store.gestures || _dragStartPosition == null) return;
@@ -2128,8 +2129,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         if (_dragVerticalRight) {
           // Right half = volume. Swipe up raises it; ~200 px spans
           // the full 0..100 range.
-          final double v =
-              (_dragStartVolume - _dragAccumDy * 0.5).clamp(0, 100);
+          final double v = (_dragStartVolume - _dragAccumDy * 0.5).clamp(
+            0,
+            100,
+          );
           unawaited(_player.setVolume(v));
           _showHud(
             _HudState.volume(value: v / 100, label: 'Volume ${v.round()}%'),
@@ -2138,8 +2141,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           // Left half = brightness (overlay dim layer — mpv's
           // `brightness` property is a no-op under hwdec on iOS).
           // Swipe up brightens; ~250 px spans the full range.
-          final double b =
-              (_dragStartBrightnessLevel - _dragAccumDy * 0.4).clamp(0, 100);
+          final double b = (_dragStartBrightnessLevel - _dragAccumDy * 0.4)
+              .clamp(0, 100);
           _brightnessLevel.value = b;
           _showHud(
             _HudState.brightness(
@@ -2157,8 +2160,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   }
 
   /// Zeus/Steps layout (0.2.3): NO top bar, NO bottom bar — every
-  /// control floats directly over the video. Dark translucent circles
-  /// (never milky liquid glass), accent color from Settings.
+  /// control floats directly over the video. Buttons are flat icons
+  /// with no circular background (0.2.5), accent color from Settings.
   ///
   /// 0.2.4: a Stack, not a Column — the center cluster sits at the
   /// EXACT vertical center of the screen (the old Column centered it
@@ -2187,12 +2190,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       duration: const Duration(milliseconds: 250),
       child: Stack(
         children: <Widget>[
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _buildTopBar(accent),
-          ),
+          Positioned(top: 0, left: 0, right: 0, child: _buildTopBar(accent)),
           // Exact vertical center of the screen.
           Center(child: _buildCenterControls(accent)),
           Positioned(
@@ -2208,8 +2206,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   builder:
                       (BuildContext context, AsyncSnapshot<Duration> snap) {
                         final Duration pos = snap.data ?? Duration.zero;
-                        final double posSeconds =
-                            pos.inMilliseconds / 1000.0;
+                        final double posSeconds = pos.inMilliseconds / 1000.0;
                         // 0.2.4: REAL AniSkip segments — "Skip Intro"
                         // only while the position is inside the OP
                         // segment, "Skip Outro" only inside the ED
@@ -2283,8 +2280,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     );
   }
 
-  /// Center cluster: medium round dark buttons — -10s / play-pause /
-  /// +10s (the red-circled area of the reference).
+  /// Center cluster: medium flat buttons — -10s / play-pause /
+  /// +10s (the red-circled area of the reference). No circles (0.2.5).
   Widget _buildCenterControls(Color accent) {
     return Center(
       child: Row(
@@ -2485,7 +2482,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 12, 12),
+        padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
@@ -2564,83 +2561,83 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               children: <Widget>[
                 _RoundButton(
                   icon: Icons.closed_caption_rounded,
-                  size: 36,
-                  iconSize: 19,
+                  size: 32,
+                  iconSize: 17,
                   accent: accent,
                   active: subtitlesOn,
                   tooltip: 'Subtitles',
                   onTap: _showSubtitlesPanel,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 _RoundButton(
                   icon: Icons.music_note_rounded,
-                  size: 36,
-                  iconSize: 19,
+                  size: 32,
+                  iconSize: 17,
                   accent: accent,
                   tooltip: 'Audio',
                   onTap: _showAudioPanel,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 _RoundButton(
                   icon: Icons.storage_rounded,
-                  size: 36,
-                  iconSize: 19,
+                  size: 32,
+                  iconSize: 17,
                   accent: accent,
                   tooltip: 'Server',
                   onTap: _showSourcesPanel,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 _RoundButton(
                   icon: Icons.tune_rounded,
-                  size: 36,
-                  iconSize: 19,
+                  size: 32,
+                  iconSize: 17,
                   accent: accent,
                   tooltip: 'Quality',
                   onTap: _showQualityPanel,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 _RoundButton(
                   icon: Icons.volume_up_rounded,
-                  size: 36,
-                  iconSize: 19,
+                  size: 32,
+                  iconSize: 17,
                   accent: accent,
                   tooltip: 'Volume',
                   onTap: _showVolumeSheet,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 _RoundButton(
                   label: rateLabel,
-                  size: 36,
+                  size: 32,
                   accent: accent,
                   tooltip: 'Playback speed',
                   onTap: _cycleSpeed,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 _RoundButton(
                   icon: Icons.lock_rounded,
-                  size: 36,
-                  iconSize: 18,
+                  size: 32,
+                  iconSize: 17,
                   accent: accent,
                   tooltip: 'Lock controls',
                   onTap: () {
                     setState(() => _controlsLocked = true);
                   },
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 _RoundButton(
                   icon: Icons.aspect_ratio_rounded,
-                  size: 36,
-                  iconSize: 18,
+                  size: 32,
+                  iconSize: 17,
                   accent: accent,
                   active: _videoFit != BoxFit.contain,
                   tooltip: 'Aspect ratio ($_aspectLabel)',
                   onTap: _cycleAspect,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 _RoundButton(
                   icon: Icons.skip_next_rounded,
-                  size: 36,
-                  iconSize: 20,
+                  size: 32,
+                  iconSize: 19,
                   accent: accent,
                   tooltip: 'Next episode',
                   enabled: _nextEpisode != null,
@@ -2664,13 +2661,15 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   }
 }
 
-/// One round player control button — GLOSSY dark (0.2.4): a gentle
-/// vertical gradient (soft top highlight fading to dark at the
-/// bottom) + thin light border, never flat matte and never milky
-/// liquid glass. The icon/text turns the Settings accent color when
-/// the control is active (e.g. subtitles on, speed chip, locked) —
-/// the player color follows the accent picker, never a hardcoded
-/// color.
+/// One player control button — FLAT floating icon (0.2.5): the icon
+/// (or the speed label) floats directly over the video with NO
+/// circular background — no glossy gradient, no border, no circle,
+/// no shadow blob. Only a soft drop shadow under the glyph itself,
+/// so it stays readable over bright video (same trick as the title
+/// text above it). The tap hit area stays the same size as before;
+/// only the visible circle goes. The icon turns the Settings accent
+/// color when the control is active (e.g. subtitles on) — the player
+/// color follows the accent picker, never a hardcoded color.
 class _RoundButton extends StatelessWidget {
   const _RoundButton({
     this.icon,
@@ -2699,65 +2698,72 @@ class _RoundButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool useAccent = active || accentIcon;
-    final Widget content = Container(
+    final Color iconColor = useAccent
+        ? accent
+        : enabled
+        ? Colors.white
+        : Colors.white38;
+    final Widget content = SizedBox(
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        // Glossy (0.2.4): soft top highlight fading into a dark base.
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: <Color>[
-            (useAccent ? accent : Colors.white).withValues(
-              alpha: useAccent ? 0.38 : 0.18,
-            ),
-            Colors.black.withValues(alpha: 0.62),
-            Colors.black.withValues(alpha: 0.55),
-          ],
-          stops: const <double>[0.0, 0.45, 1.0],
-        ),
-        border: Border.all(
-          color: (useAccent ? accent : Colors.white).withValues(
-            alpha: useAccent ? 0.65 : 0.30,
-          ),
-        ),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
+      child: Center(
+        child: label != null
+            ? Text(
+                label!,
+                style: TextStyle(
+                  color: accent,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                  shadows: const <Shadow>[
+                    Shadow(
+                      color: Colors.black54,
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+              )
+            : _ShadowIcon(icon: icon!, size: iconSize, color: iconColor),
       ),
-      alignment: Alignment.center,
-      child: label != null
-          ? Text(
-              label!,
-              style: TextStyle(
-                color: accent,
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
-            )
-          : Icon(
-              icon,
-              color: useAccent
-                  ? accent
-                  : enabled
-                  ? Colors.white
-                  : Colors.white38,
-              size: iconSize,
-            ),
     );
     final Widget button = InkWell(
       onTap: enabled ? onTap : null,
-      customBorder: const CircleBorder(),
+      borderRadius: BorderRadius.circular(10),
       child: content,
     );
-    return tooltip == null
-        ? button
-        : Tooltip(message: tooltip!, child: button);
+    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
+  }
+}
+
+/// An icon with a soft drop shadow and no background of its own:
+/// the glyph twice, a dark copy offset 1px down behind the real one.
+class _ShadowIcon extends StatelessWidget {
+  const _ShadowIcon({
+    required this.icon,
+    required this.size,
+    required this.color,
+  });
+
+  final IconData icon;
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.center,
+      children: <Widget>[
+        Transform.translate(
+          offset: const Offset(0, 1),
+          child: Icon(
+            icon,
+            size: size,
+            color: Colors.black.withValues(alpha: 0.45),
+          ),
+        ),
+        Icon(icon, size: size, color: color),
+      ],
+    );
   }
 }
 
@@ -2778,10 +2784,7 @@ class _PanelRadio extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: selected ? accent : Colors.transparent,
-        border: Border.all(
-          color: selected ? accent : Colors.white38,
-          width: 2,
-        ),
+        border: Border.all(color: selected ? accent : Colors.white38, width: 2),
       ),
       alignment: Alignment.center,
       child: selected
@@ -2816,9 +2819,7 @@ class _StepperButton extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: Colors.white.withValues(alpha: 0.08),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.20),
-          ),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
         ),
         child: Icon(icon, color: Colors.white, size: 16),
       ),

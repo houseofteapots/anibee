@@ -11,7 +11,6 @@ class Anime {
     required this.synopsis,
     required this.gradient,
     this.posterUrl,
-    this.trailerUrl,
     this.anilistId,
     this.malId,
     this.currentEpisode,
@@ -34,8 +33,6 @@ class Anime {
   /// Real cover poster URL (AniList CDN s4, or TMDB w500). Null = no
   /// poster yet; the UI falls back to the gradient art.
   final String? posterUrl;
-
-  final String? trailerUrl;
 
   /// AniList media id (from the s4 poster URL where known, else
   /// resolved at play time via AniList search). Needed for Miruro
@@ -81,7 +78,6 @@ class Anime {
       synopsis: synopsis,
       gradient: gradient,
       posterUrl: posterUrl,
-      trailerUrl: trailerUrl,
       anilistId: anilistId ?? this.anilistId,
       malId: malId ?? this.malId,
       currentEpisode: currentEpisode ?? this.currentEpisode,

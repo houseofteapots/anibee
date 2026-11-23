@@ -12,9 +12,14 @@ import 'package:http/http.dart' as http;
 /// Client IDs are NOT invented: the user creates them
 /// (AniList: anilist.co/settings/developer; MAL: myanimelist.net/apiconfig,
 /// App Type iOS, public, no secret) and pastes them in
-/// Settings → Accounts. Redirects use the custom scheme `anibee://`
+/// Settings → Accounts. MAL redirects use the custom scheme `anibee://`
 /// (registered in Info.plist) and are intercepted inside the in-app
-/// webview — no external browser round-trip.
+/// webview — no external browser round-trip. AniList sends NO
+/// redirect_uri at all (0.2.5, Zeus-proven): AniList answers on its
+/// default PIN page (`/api/v2/oauth/pin#access_token=...`), which the
+/// webview intercepts. Sending a redirect_uri made AniList reject the
+/// authorize request (unsupported_grant_type) over redirect matching
+/// — even after the registered URL was fixed, it still failed.
 class OAuthService {
   OAuthService({http.Client? client}) : _client = client ?? http.Client();
 
@@ -27,8 +32,10 @@ class OAuthService {
 
   // ------------------------------------------------------------ AniList
 
-  /// Implicit-grant authorize URL. The access token arrives in the
-  /// redirect fragment: anibee://anilist-auth#access_token=...&...
+  /// Implicit-grant authorize URL. NO redirect_uri (0.2.5, Zeus-proven):
+  /// with none sent, AniList answers on its default PIN page and the
+  /// token arrives in that URL's fragment:
+  /// anilist.co/api/v2/oauth/pin#access_token=...
   static String anilistAuthUrl(String clientId) {
     return Uri(
       scheme: 'https',
@@ -37,18 +44,85 @@ class OAuthService {
       queryParameters: <String, String>{
         'client_id': clientId,
         'response_type': 'token',
-        'redirect_uri': anilistRedirect,
       },
     ).toString();
   }
 
-  /// Pull the access token out of an AniList redirect URI fragment.
-  /// Pure — unit-tested.
+  /// True for AniList's default PIN page — the answer to an authorize
+  /// request sent without a redirect_uri. The login webview intercepts
+  /// this URL and returns it to the caller instead of loading it.
+  static bool isAnilistPinUrl(Uri uri) {
+    return uri.scheme == 'https' &&
+        uri.host == 'anilist.co' &&
+        uri.path == '/api/v2/oauth/pin';
+  }
+
+  /// Pull the access token out of an AniList answer URL. Two shapes:
+  /// - PIN page (0.2.5): https://anilist.co/api/v2/oauth/pin#access_token=...
+  /// - Custom-scheme fallback: anibee://anilist-auth#access_token=...
+  /// (kept for an older client whose registered redirect still matches).
+  /// Some webviews convert the fragment `#` to `?` — the query params
+  /// are checked as a fallback (Zeus pattern). Pure — unit-tested.
   static String? parseAnilistRedirect(Uri uri) {
-    if (uri.scheme != 'anibee' || uri.host != 'anilist-auth') return null;
-    final Map<String, String> params = Uri.splitQueryString(uri.fragment);
-    final String? token = params['access_token'];
-    return token?.isEmpty == true ? null : token;
+    if (isAnilistPinUrl(uri)) {
+      return _tokenFromFragmentOrQuery(uri);
+    }
+    final Uri redirect = Uri.parse(anilistRedirect);
+    if (uri.scheme != redirect.scheme || uri.host != redirect.host) {
+      return null;
+    }
+    return _tokenFromFragmentOrQuery(uri);
+  }
+
+  static String? _tokenFromFragmentOrQuery(Uri uri) {
+    if (uri.fragment.isNotEmpty) {
+      final Map<String, String> params = Uri.splitQueryString(uri.fragment);
+      final String? token = params['access_token'];
+      if (token != null && token.isNotEmpty) return token;
+    }
+    final String? queryToken = uri.queryParameters['access_token'];
+    return queryToken?.isEmpty == true ? null : queryToken;
+  }
+
+  /// Human-readable login error for an OAuth error code, in the user's
+  /// own words (Roman Hinglish). AniList answers a bad authorize
+  /// request with a raw JSON error body — `unsupported_grant_type`
+  /// when the redirect URI registered on the client does not exactly
+  /// match the one the app sends (`anibee://anilist-auth`). The login
+  /// sheet shows this text, never the raw JSON. Pure — unit-tested.
+  static String readableOAuthError({
+    required String provider,
+    required String error,
+    String? message,
+  }) {
+    final String redirect = provider == 'MyAnimeList'
+        ? malRedirect
+        : anilistRedirect;
+    switch (error) {
+      case 'unsupported_grant_type':
+        // 0.2.5: AniList no longer gets a redirect_uri at all (PIN
+        // flow) — telling the user to set one would be wrong. MAL
+        // still uses its custom-scheme redirect, so it keeps the
+        // redirect hint.
+        if (provider == 'MyAnimeList') {
+          return '$provider ne login reject kiya — apne $provider client ki '
+              'Redirect URL bilkul $redirect honi chahiye. '
+              '$provider → Settings → Developer mein apne client ki '
+              'Redirect Url check karo.';
+        }
+        return 'AniList ne login reject kiya — dobara try karo. AniBee '
+            'PIN se login karta hai, redirect URL ki zaroorat nahi hai.';
+      case 'invalid_client':
+        return '$provider ne client ko pehchana nahi — client ID galat '
+            'hai ya client delete ho gaya.';
+      case 'access_denied':
+        return 'Login cancel kar diya gaya.';
+      default:
+        final String detail = (message ?? '').trim();
+        return detail.isEmpty
+            ? '$provider login fail ho gaya ($error).'
+            : '$provider login fail ho gaya: $detail';
+    }
   }
 
   // --------------------------------------------------------------- MAL
@@ -120,9 +194,7 @@ class OAuthService {
     if (resp.statusCode != 200) {
       throw OAuthException('MAL token exchange failed (${resp.statusCode})');
     }
-    return MalTokens.fromJson(
-      jsonDecode(resp.body) as Map<String, dynamic>,
-    );
+    return MalTokens.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
   /// Refresh a MAL access token (access 1h, refresh 1 month).
@@ -147,9 +219,7 @@ class OAuthService {
     if (resp.statusCode != 200) {
       throw OAuthException('MAL token refresh failed (${resp.statusCode})');
     }
-    return MalTokens.fromJson(
-      jsonDecode(resp.body) as Map<String, dynamic>,
-    );
+    return MalTokens.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
   /// MAL GET /v2/users/@me — display name. Throws on 401.

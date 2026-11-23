@@ -20,8 +20,12 @@ import 'reicon_icon.dart';
 ///   ongoing ("Episode 9 in 6d 20h · Nov 29 at 22:05").
 ///
 /// The toggle switches grid <-> cards on any anime; the rule above is
-/// only the default. Per-episode download (M1 simulated, real in M2)
-/// lives on the cards; the grid stays a pure number picker.
+/// only the default. Per-episode download (real in 0.2.5: HLS/file
+/// download with resume via DownloadService) lives on the cards AND,
+/// via a long-press options menu, on the grid cells. Watch progress
+/// (0.2.5): cards show a thin accent progress bar + completed check;
+/// grid cells show a small watched tick in the corner + a small
+/// download state — the episode number always stays visible.
 class EpisodeSection extends StatefulWidget {
   const EpisodeSection({
     super.key,
@@ -409,6 +413,99 @@ class _EpisodeSectionState extends State<EpisodeSection> {
     );
   }
 
+  /// Long-press a grid cell: episode options (Play + Download /
+  /// Remove download / Cancel download). Download is the same flow
+  /// as the cards' button (0.2.5: the user asked for an OPTION, not
+  /// a hidden gesture that downloads directly).
+  Future<void> _showEpisodeOptions(Episode ep) async {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color accent = Theme.of(context).colorScheme.primary;
+    final Color primaryText = isDark
+        ? AppTheme.textPrimaryDark
+        : AppTheme.textPrimaryLight;
+    final Color sheetBg = isDark ? AppTheme.cardDark : AppTheme.cardLight;
+    final String key = '${widget.anime.id}:${ep.number}';
+    final String? status = widget.store.downloadStatus[key];
+    final String? choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: sheetBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const SizedBox(height: 8),
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3A3A48),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  'Episode ${ep.number} · ${ep.title}',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: Icon(Icons.play_arrow_rounded, color: accent),
+                title: Text('Play', style: TextStyle(color: primaryText)),
+                onTap: () => Navigator.of(context).pop('play'),
+              ),
+              if (status == 'downloaded')
+                ListTile(
+                  leading: Icon(
+                    Icons.delete_outline_rounded,
+                    color: primaryText,
+                  ),
+                  title: Text(
+                    'Remove download',
+                    style: TextStyle(color: primaryText),
+                  ),
+                  onTap: () => Navigator.of(context).pop('download'),
+                )
+              else if (status == 'downloading')
+                ListTile(
+                  leading: Icon(Icons.close_rounded, color: primaryText),
+                  title: Text(
+                    'Cancel download',
+                    style: TextStyle(color: primaryText),
+                  ),
+                  onTap: () => Navigator.of(context).pop('download'),
+                )
+              else
+                ListTile(
+                  leading: Icon(Icons.download_rounded, color: accent),
+                  title: Text('Download', style: TextStyle(color: primaryText)),
+                  onTap: () => Navigator.of(context).pop('download'),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (choice == null || !mounted) return;
+    if (choice == 'play') {
+      widget.onPlay(ep);
+    } else if (choice == 'download') {
+      widget.onToggleDownload(ep);
+    }
+  }
+
   Widget _buildGrid(
     bool isDark,
     Color card,
@@ -432,27 +529,76 @@ class _EpisodeSectionState extends State<EpisodeSection> {
         final Episode ep = eps[i];
         final bool highlighted = _highlighted == ep.number;
         final bool watched = _isWatched(ep);
+        // 0.2.5: real completed state (small tick) + download state,
+        // both tiny corner marks — the number stays fully visible.
+        final bool completed = widget.store.isEpisodeCompleted(
+          widget.anime,
+          ep,
+        );
+        final String dlKey = '${widget.anime.id}:${ep.number}';
+        final String? dlStatus = widget.store.downloadStatus[dlKey];
+        final double dlProgress = widget.store.downloadProgress[dlKey] ?? 0;
         return InkWell(
           onTap: () {
             setState(() => _highlighted = ep.number);
             widget.onPlay(ep);
           },
+          onLongPress: () => _showEpisodeOptions(ep),
           borderRadius: BorderRadius.circular(8),
           child: Container(
             decoration: BoxDecoration(
               color: highlighted ? accent : card,
               borderRadius: BorderRadius.circular(8),
             ),
-            alignment: Alignment.center,
-            child: Text(
-              '${ep.number}',
-              style: TextStyle(
-                color: highlighted
-                    ? Colors.white
-                    : (watched ? secondaryText : primaryText),
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+            child: Stack(
+              children: <Widget>[
+                Center(
+                  child: Text(
+                    '${ep.number}',
+                    style: TextStyle(
+                      color: highlighted
+                          ? Colors.white
+                          : (watched ? secondaryText : primaryText),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (completed)
+                  Positioned(
+                    top: 3,
+                    right: 4,
+                    child: Icon(
+                      Icons.check_rounded,
+                      size: 12,
+                      color: highlighted ? Colors.white : accent,
+                    ),
+                  ),
+                if (dlStatus == 'downloading')
+                  Positioned(
+                    right: 4,
+                    bottom: 4,
+                    child: SizedBox(
+                      width: 11,
+                      height: 11,
+                      child: CircularProgressIndicator(
+                        value: dlProgress,
+                        strokeWidth: 2,
+                        color: highlighted ? Colors.white : accent,
+                      ),
+                    ),
+                  )
+                else if (dlStatus == 'downloaded')
+                  Positioned(
+                    right: 4,
+                    bottom: 4,
+                    child: Icon(
+                      Icons.download_done_rounded,
+                      size: 12,
+                      color: highlighted ? Colors.white : accent,
+                    ),
+                  ),
+              ],
             ),
           ),
         );
@@ -473,6 +619,15 @@ class _EpisodeSectionState extends State<EpisodeSection> {
         final String key = '${widget.anime.id}:${ep.number}';
         final String? status = widget.store.downloadStatus[key];
         final double progress = widget.store.downloadProgress[key] ?? 0;
+        // 0.2.5: real watch progress (accent bar) + completed state.
+        final double watchProgress = widget.store.episodeProgressFor(
+          widget.anime,
+          ep,
+        );
+        final bool completed = widget.store.isEpisodeCompleted(
+          widget.anime,
+          ep,
+        );
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
           child: InkWell(
@@ -483,107 +638,145 @@ class _EpisodeSectionState extends State<EpisodeSection> {
                 color: card,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  SizedBox(
-                    width: 104,
-                    height: 82,
-                    child: Stack(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: SizedBox(
-                            width: 104,
-                            height: 82,
-                            child: PosterArt(
-                              anime: widget.anime,
-                              showTitle: false,
-                            ),
+                        SizedBox(
+                          width: 104,
+                          height: 82,
+                          child: Stack(
+                            children: <Widget>[
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: SizedBox(
+                                  width: 104,
+                                  height: 82,
+                                  child: PosterArt(
+                                    anime: widget.anime,
+                                    showTitle: false,
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                left: 6,
+                                bottom: 6,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.65),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    'EP ${ep.number}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (completed)
+                                Positioned(
+                                  top: 6,
+                                  right: 6,
+                                  child: Container(
+                                    width: 20,
+                                    height: 20,
+                                    decoration: BoxDecoration(
+                                      color: accent,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.check_rounded,
+                                      size: 13,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
-                        Positioned(
-                          left: 6,
-                          bottom: 6,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.65),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              'EP ${ep.number}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                              ),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Text(
+                                  ep.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: primaryText,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  ep.synopsis,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: secondaryText,
+                                    fontSize: 12,
+                                    height: 1.35,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: <Widget>[
+                                    Icon(
+                                      Icons.closed_caption_rounded,
+                                      size: 18,
+                                      color: secondaryText,
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      ep.airDate,
+                                      style: TextStyle(
+                                        color: secondaryText,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 2),
+                                    _DownloadButton(
+                                      status: status,
+                                      progress: progress,
+                                      accent: accent,
+                                      onTap: () => widget.onToggleDownload(ep),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(
-                            ep.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: primaryText,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            ep.synopsis,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: secondaryText,
-                              fontSize: 12,
-                              height: 1.35,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: <Widget>[
-                              Icon(
-                                Icons.closed_caption_rounded,
-                                size: 18,
-                                color: secondaryText,
-                              ),
-                              const Spacer(),
-                              Text(
-                                ep.airDate,
-                                style: TextStyle(
-                                  color: secondaryText,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(width: 2),
-                              _DownloadButton(
-                                status: status,
-                                progress: progress,
-                                accent: accent,
-                                onTap: () => widget.onToggleDownload(ep),
-                              ),
-                            ],
-                          ),
-                        ],
+                    // 0.2.5: thin accent progress bar along the card's
+                    // bottom edge (full when completed). Unwatched = none.
+                    if (watchProgress > 0)
+                      SizedBox(
+                        height: 3,
+                        child: LinearProgressIndicator(
+                          value: watchProgress,
+                          backgroundColor: Colors.transparent,
+                          color: accent,
+                        ),
                       ),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -676,10 +869,7 @@ class _RangeBox extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Text(
-              label,
-              style: TextStyle(color: primaryText, fontSize: 13),
-            ),
+            Text(label, style: TextStyle(color: primaryText, fontSize: 13)),
             if (hasMultiple) ...<Widget>[
               const SizedBox(width: 2),
               Icon(

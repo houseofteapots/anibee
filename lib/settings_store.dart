@@ -41,7 +41,8 @@ class WatchEntry {
       episodeCount: (json['episodeCount'] as num?)?.toInt() ?? 0,
       year: (json['year'] as num?)?.toInt() ?? 0,
       rating: (json['rating'] as num?)?.toDouble() ?? 0,
-      genres: (json['genres'] as List<dynamic>?)
+      genres:
+          (json['genres'] as List<dynamic>?)
               ?.map((dynamic e) => e as String)
               .toList() ??
           const <String>[],
@@ -183,9 +184,7 @@ class SettingsStore extends ChangeNotifier {
     malAccessToken = await _secure.read(SecureStore.malAccessToken);
     malRefreshToken = await _secure.read(SecureStore.malRefreshToken);
     final String? expiry = await _secure.read(SecureStore.malTokenExpiry);
-    malTokenExpiry = expiry == null
-        ? null
-        : DateTime.tryParse(expiry);
+    malTokenExpiry = expiry == null ? null : DateTime.tryParse(expiry);
   }
 
   // --- Appearance ---
@@ -238,6 +237,32 @@ class SettingsStore extends ChangeNotifier {
   /// `'id:<catalogue id>:ep<n>'`.
   Map<String, double> resumeSeconds = <String, double>{};
 
+  /// Per-episode watched DURATION (seconds) for the resume key, so
+  /// the episode list can show real progress fractions (0.2.5).
+  /// Written alongside the resume position by the player; cleared
+  /// with it when the episode finishes.
+  Map<String, double> resumeDurations = <String, double>{};
+
+  /// Episodes watched to the end, by resume key. The player marks an
+  /// episode when playback passes the finished threshold; the episode
+  /// list shows it as completed (checkmark / watched tick).
+  Set<String> completedEpisodes = <String>{};
+
+  /// Completed = watched to the end: position >= 90% of duration.
+  /// Same threshold the player uses to clear the resume (pos within
+  /// the last 20 s of a ~24 min episode is ~98% — the 0.9 bar also
+  /// covers shorter episodes and a seek-to-end).
+  static const double kCompletedFraction = 0.9;
+
+  /// Offline download records (0.2.5): key -> JSON record (anime id
+  /// + title + episode, local playlist/file path, stream URL +
+  /// headers for resume, segment state). The file itself lives under
+  /// the app documents dir; this map is the index. A 'downloaded'
+  /// status with NO record here is a pre-0.2.5 simulated download
+  /// (no file exists) — the download service prunes those at start.
+  Map<String, Map<String, dynamic>> downloadRecords =
+      <String, Map<String, dynamic>>{};
+
   /// Real Continue Watching history (most recent first). The Home
   /// row is driven ONLY by this — never by the mock catalogue.
   List<WatchEntry> watchHistory = <WatchEntry>[];
@@ -252,8 +277,9 @@ class SettingsStore extends ChangeNotifier {
   bool wifiOnly = true;
 
   /// Per-episode download state. Key: "$animeId:$episodeNumber".
-  /// Values: 'queued' | 'downloading' | 'downloaded'.
-  /// M1: UI state only — no real file download yet (wires in M2).
+  /// Values: 'queued' | 'downloading' | 'downloaded' | 'failed'.
+  /// 0.2.5: real files — see DownloadService + [downloadRecords].
+  /// 'downloaded' with no record = pre-0.2.5 simulation, pruned.
   Map<String, String> downloadStatus = <String, String>{};
   Map<String, double> downloadProgress = <String, double>{};
 
@@ -278,8 +304,7 @@ class SettingsStore extends ChangeNotifier {
   String? malUsername;
 
   bool get anilistConnected => anilistToken != null && anilistToken!.isNotEmpty;
-  bool get malConnected =>
-      malAccessToken != null && malAccessToken!.isNotEmpty;
+  bool get malConnected => malAccessToken != null && malAccessToken!.isNotEmpty;
 
   // --- App lock ---
   bool appLockEnabled = false;
@@ -342,16 +367,39 @@ class SettingsStore extends ChangeNotifier {
         resumeSeconds = <String, double>{};
       }
     }
+    final String? durationsJson = _prefs.getString('resume_durations');
+    if (durationsJson != null) {
+      try {
+        final Map<String, dynamic> decoded =
+            jsonDecode(durationsJson) as Map<String, dynamic>;
+        resumeDurations = decoded.map(
+          (String k, dynamic v) => MapEntry(k, (v as num).toDouble()),
+        );
+      } catch (_) {
+        resumeDurations = <String, double>{};
+      }
+    }
+    completedEpisodes =
+        _prefs.getStringList('completed_eps')?.toSet() ?? <String>{};
+    final String? recordsJson = _prefs.getString('download_records');
+    if (recordsJson != null) {
+      try {
+        final Map<String, dynamic> decoded =
+            jsonDecode(recordsJson) as Map<String, dynamic>;
+        downloadRecords = decoded.map(
+          (String k, dynamic v) =>
+              MapEntry(k, Map<String, dynamic>.from(v as Map<String, dynamic>)),
+        );
+      } catch (_) {
+        downloadRecords = <String, Map<String, dynamic>>{};
+      }
+    }
     final String? historyJson = _prefs.getString('watch_history');
     if (historyJson != null) {
       try {
-        final List<dynamic> decoded =
-            jsonDecode(historyJson) as List<dynamic>;
+        final List<dynamic> decoded = jsonDecode(historyJson) as List<dynamic>;
         watchHistory = decoded
-            .map(
-              (dynamic e) =>
-                  WatchEntry.fromJson(e as Map<String, dynamic>),
-            )
+            .map((dynamic e) => WatchEntry.fromJson(e as Map<String, dynamic>))
             .where((WatchEntry e) => e.key.isNotEmpty)
             .toList();
       } catch (_) {
@@ -702,6 +750,129 @@ class SettingsStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setResumeDuration(String key, double seconds) async {
+    resumeDurations[key] = seconds;
+    await _prefs.setString('resume_durations', jsonEncode(resumeDurations));
+    notifyListeners();
+  }
+
+  Future<void> clearResumeDuration(String key) async {
+    resumeDurations.remove(key);
+    await _prefs.setString('resume_durations', jsonEncode(resumeDurations));
+    notifyListeners();
+  }
+
+  Future<void> markEpisodeCompleted(String key) async {
+    if (completedEpisodes.add(key)) {
+      await _prefs.setStringList('completed_eps', completedEpisodes.toList());
+      notifyListeners();
+    }
+  }
+
+  Future<void> clearEpisodeCompleted(String key) async {
+    if (completedEpisodes.remove(key)) {
+      await _prefs.setStringList('completed_eps', completedEpisodes.toList());
+      notifyListeners();
+    }
+  }
+
+  /// Parse an Episode.duration string ('23:12' / '1:02:30') to
+  /// seconds. Null when unparseable.
+  static double? parseDurationString(String raw) {
+    final List<String> parts = raw.split(':');
+    if (parts.isEmpty || parts.length > 3) return null;
+    double total = 0;
+    for (final String p in parts) {
+      final int? v = int.tryParse(p);
+      if (v == null) return null;
+      total = total * 60 + v;
+    }
+    return total > 0 ? total : null;
+  }
+
+  /// Known duration (seconds) for an episode, best available: the
+  /// duration the player saved with the resume, else the Continue
+  /// Watching entry's duration when this is the latest episode, else
+  /// the episode's own 'mm:ss' duration string. Null when unknown.
+  double? episodeDurationFor(Anime anime, Episode episode) {
+    final String key = resumeKeyFor(anime, episode.number);
+    final double? saved =
+        resumeDurations[key] ??
+        resumeDurations['${anime.id}:${episode.number}'];
+    if (saved != null && saved > 0) return saved;
+    final String canonical = keyFor(anime);
+    for (final WatchEntry e in watchHistory) {
+      if (e.key == canonical && e.episode == episode.number) {
+        if (e.durationSeconds > 0) return e.durationSeconds;
+        break;
+      }
+    }
+    return parseDurationString(episode.duration);
+  }
+
+  /// Real watch fraction 0..1 for an episode (0 = unwatched). 1.0
+  /// when completed. Partial progress comes from the saved resume
+  /// position over the known duration — never invented.
+  double episodeProgressFor(Anime anime, Episode episode) {
+    if (isEpisodeCompleted(anime, episode)) return 1.0;
+    final double? pos = resumePositionFor(anime, episode.number);
+    final double? dur = episodeDurationFor(anime, episode);
+    if (pos == null || dur == null || dur <= 0) return 0;
+    return (pos / dur).clamp(0.0, 1.0);
+  }
+
+  /// True when the episode was watched to the end (0.2.5):
+  /// - an explicit completed marker from the player, OR
+  /// - the saved resume fraction is >= [kCompletedFraction], OR
+  /// - legacy inference for episodes finished before 0.2.5 kept no
+  ///   marker/duration: the user has since started a LATER episode
+  ///   of the same title (the app's existing "watched" rule).
+  bool isEpisodeCompleted(Anime anime, Episode episode) {
+    final String key = resumeKeyFor(anime, episode.number);
+    if (completedEpisodes.contains(key) ||
+        completedEpisodes.contains('${anime.id}:${episode.number}')) {
+      return true;
+    }
+    final double? pos = resumePositionFor(anime, episode.number);
+    final double? dur = episodeDurationFor(anime, episode);
+    if (pos != null &&
+        dur != null &&
+        dur > 0 &&
+        pos / dur >= kCompletedFraction) {
+      return true;
+    }
+    final String canonical = keyFor(anime);
+    int? latest;
+    for (final WatchEntry e in watchHistory) {
+      if (e.key == canonical) {
+        latest = e.episode;
+        break;
+      }
+    }
+    latest ??= progressEpisodes[canonical] ?? progressEpisodes[anime.id];
+    return latest != null && episode.number < latest;
+  }
+
+  /// Offline download record for a download key, or null when this
+  /// episode was never really downloaded (pre-0.2.5 simulation).
+  Map<String, dynamic>? downloadRecordFor(String key) => downloadRecords[key];
+
+  Future<void> setDownloadRecord(
+    String key,
+    Map<String, dynamic> record,
+  ) async {
+    downloadRecords[key] = record;
+    await _prefs.setString('download_records', jsonEncode(downloadRecords));
+    notifyListeners();
+  }
+
+  Future<void> removeDownloadRecord(String key) async {
+    if (downloadRecords.remove(key) != null) {
+      await _prefs.setString('download_records', jsonEncode(downloadRecords));
+      notifyListeners();
+    }
+  }
+
   Future<void> setPreferredServer(String name) async {
     preferredServer = name;
     sources = sources
@@ -868,10 +1039,7 @@ class SettingsStore extends ChangeNotifier {
     if (expiry == null) {
       await _secure.delete(SecureStore.malTokenExpiry);
     } else {
-      await _secure.write(
-        SecureStore.malTokenExpiry,
-        expiry.toIso8601String(),
-      );
+      await _secure.write(SecureStore.malTokenExpiry, expiry.toIso8601String());
     }
     if (username == null) {
       await _prefs.remove('mal_username');

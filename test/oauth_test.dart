@@ -12,18 +12,86 @@ import 'package:http/testing.dart';
 /// exactly like the Settings screen does before the user pastes his own.
 void main() {
   group('AniList OAuth', () {
-    test('auth URL is the implicit grant with the anibee redirect', () {
+    test('auth URL is the implicit grant with NO redirect_uri (PIN flow)', () {
+      // 0.2.5: Zeus-proven PIN flow — sending redirect_uri made
+      // AniList reject the authorize request with
+      // unsupported_grant_type even when the registered redirect
+      // matched. The token comes back on the PIN page instead.
       final Uri url = Uri.parse(OAuthService.anilistAuthUrl('client-123'));
       expect(url.scheme, 'https');
       expect(url.host, 'anilist.co');
       expect(url.path, '/api/v2/oauth/authorize');
       expect(url.queryParameters['client_id'], 'client-123');
       expect(url.queryParameters['response_type'], 'token');
+      expect(url.queryParameters.containsKey('redirect_uri'), isFalse);
+    });
+
+    test('auth URL for client 57814 is exactly the documented URL', () {
+      // 0.2.5: PIN flow — client_id + response_type only, no
+      // redirect_uri. The URL must be byte-exact (no extra params).
       expect(
-        url.queryParameters['redirect_uri'],
-        'anibee://anilist-auth',
+        OAuthService.anilistAuthUrl('57814'),
+        'https://anilist.co/api/v2/oauth/authorize'
+        '?client_id=57814&response_type=token',
       );
     });
+
+    test('readableOAuthError explains unsupported_grant_type', () {
+      final String msg = OAuthService.readableOAuthError(
+        provider: 'AniList',
+        error: 'unsupported_grant_type',
+        message: 'The authorization grant type is not supported by the authorization server.',
+      );
+      // 0.2.5 PIN flow: the app sends no redirect_uri, so the message
+      // must NOT tell the user to set one.
+      expect(msg, isNot(contains('anibee://anilist-auth')));
+      expect(msg, contains('PIN'));
+      expect(msg, isNot(contains('unsupported_grant_type')));
+      expect(msg, isNot(contains('{')));
+      // MAL still uses its custom-scheme redirect — it keeps the hint.
+      expect(
+        OAuthService.readableOAuthError(
+          provider: 'MyAnimeList',
+          error: 'unsupported_grant_type',
+        ),
+        contains('anibee://mal-auth'),
+      );
+    });
+
+    test(
+      'readableOAuthError covers invalid_client / access_denied / other',
+      () {
+        expect(
+          OAuthService.readableOAuthError(
+            provider: 'AniList',
+            error: 'invalid_client',
+          ),
+          contains('client ID'),
+        );
+        expect(
+          OAuthService.readableOAuthError(
+            provider: 'AniList',
+            error: 'access_denied',
+          ),
+          contains('cancel'),
+        );
+        expect(
+          OAuthService.readableOAuthError(
+            provider: 'MyAnimeList',
+            error: 'invalid_request',
+            message: 'Missing code_challenge',
+          ),
+          contains('Missing code_challenge'),
+        );
+        expect(
+          OAuthService.readableOAuthError(
+            provider: 'MyAnimeList',
+            error: 'invalid_request',
+          ),
+          contains('invalid_request'),
+        );
+      },
+    );
 
     test('parseAnilistRedirect pulls the token from the fragment', () {
       expect(
@@ -36,14 +104,48 @@ void main() {
       );
     });
 
-    test('parseAnilistRedirect rejects wrong scheme / host / empty token',
-        () {
+    test('parseAnilistRedirect accepts the PIN page token', () {
+      // 0.2.5 PIN flow: the token comes back on AniList's default PIN
+      // page — fragment first, with the #-to-? fallback (some webview
+      // implementations rewrite # to ?).
       expect(
         OAuthService.parseAnilistRedirect(
-          Uri.parse('https://anilist.co/api/v2/oauth/pin#access_token=x'),
+          Uri.parse(
+            'https://anilist.co/api/v2/oauth/pin#access_token=pin-tok&token_type=Bearer&expires_in=31536000',
+          ),
+        ),
+        'pin-tok',
+      );
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse(
+            'https://anilist.co/api/v2/oauth/pin?access_token=pin-tok2',
+          ),
+        ),
+        'pin-tok2',
+      );
+      // PIN page without a token, and a wrong host/path, are rejected.
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse('https://anilist.co/api/v2/oauth/pin'),
         ),
         isNull,
       );
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse('https://anilist.co/api/v2/oauth/other#access_token=x'),
+        ),
+        isNull,
+      );
+      expect(
+        OAuthService.parseAnilistRedirect(
+          Uri.parse('https://evil.example/api/v2/oauth/pin#access_token=x'),
+        ),
+        isNull,
+      );
+    });
+
+    test('parseAnilistRedirect rejects wrong scheme / host / empty token', () {
       expect(
         OAuthService.parseAnilistRedirect(
           Uri.parse('anibee://other#access_token=x'),
@@ -57,16 +159,46 @@ void main() {
         isNull,
       );
     });
+
+    test('isAnilistPinUrl matches only the real PIN page', () {
+      expect(
+        OAuthService.isAnilistPinUrl(
+          Uri.parse('https://anilist.co/api/v2/oauth/pin'),
+        ),
+        isTrue,
+      );
+      expect(
+        OAuthService.isAnilistPinUrl(
+          Uri.parse('https://anilist.co/api/v2/oauth/pin#access_token=x'),
+        ),
+        isTrue,
+      );
+      expect(
+        OAuthService.isAnilistPinUrl(
+          Uri.parse('https://anilist.co/api/v2/oauth/authorize'),
+        ),
+        isFalse,
+      );
+      expect(
+        OAuthService.isAnilistPinUrl(
+          Uri.parse('http://anilist.co/api/v2/oauth/pin'),
+        ),
+        isFalse,
+      );
+      expect(
+        OAuthService.isAnilistPinUrl(
+          Uri.parse('https://evil.example/api/v2/oauth/pin'),
+        ),
+        isFalse,
+      );
+    });
   });
 
   group('MAL OAuth (PKCE plain)', () {
     test('generateVerifier is 64 URL-safe chars', () {
       final String v = OAuthService.generateVerifier();
       expect(v.length, 64);
-      expect(
-        RegExp(r'^[A-Za-z0-9\-._~]{64}$').hasMatch(v),
-        isTrue,
-      );
+      expect(RegExp(r'^[A-Za-z0-9\-._~]{64}$').hasMatch(v), isTrue);
       // Seeded Random is deterministic (used by tests only).
       expect(
         OAuthService.generateVerifier(math.Random(42)),
@@ -155,11 +287,7 @@ void main() {
         client: MockClient((_) async => http.Response('bad', 400)),
       );
       expect(
-        () => svc.exchangeMalCode(
-          clientId: 'x',
-          code: 'bad',
-          verifier: 'v',
-        ),
+        () => svc.exchangeMalCode(clientId: 'x', code: 'bad', verifier: 'v'),
         throwsA(isA<OAuthException>()),
       );
     });
@@ -167,7 +295,10 @@ void main() {
     test('malMe returns the display name', () async {
       final OAuthService svc = OAuthService(
         client: MockClient((http.Request req) async {
-          expect(req.url.toString(), 'https://api.myanimelist.net/v2/users/@me');
+          expect(
+            req.url.toString(),
+            'https://api.myanimelist.net/v2/users/@me',
+          );
           expect(req.headers['Authorization'], 'Bearer at-1');
           return http.Response(
             jsonEncode(<String, dynamic>{'name': 'SureshKC'}),

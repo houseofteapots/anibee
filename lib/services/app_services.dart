@@ -2,6 +2,7 @@ import '../models.dart';
 import '../settings_store.dart';
 import 'anilist_service.dart';
 import 'debrid_service.dart';
+import 'download_service.dart';
 import 'miruro_resolver.dart';
 import 'oauth_service.dart';
 import 'provider_config.dart';
@@ -14,6 +15,7 @@ class AppServices {
     required this.miruro,
     required this.debrid,
     required this.oauth,
+    required this.downloads,
     this.configService,
   });
 
@@ -24,6 +26,7 @@ class AppServices {
       miruro: MiruroResolver(anilist: anilist),
       debrid: DebridService(),
       oauth: OAuthService(),
+      downloads: DownloadService(),
       configService: configService,
     );
   }
@@ -32,6 +35,10 @@ class AppServices {
   final MiruroResolver miruro;
   final DebridService debrid;
   final OAuthService oauth;
+
+  /// Real offline downloads (0.2.5): app-lifetime service, never
+  /// tied to a screen — leaving Detail can't stall a download.
+  final DownloadService downloads;
 
   /// Remote config (OAuth client IDs live here in 0.2.3).
   final ProviderConfigService? configService;
@@ -69,11 +76,7 @@ class AppServices {
         isCancelled: isCancelled,
       );
     }
-    return miruro.resolve(
-      anime: anime,
-      episodeNumber: episode,
-      subDub: subDub,
-    );
+    return miruro.resolve(anime: anime, episodeNumber: episode, subDub: subDub);
   }
 
   /// Push a Collection status to AniList + MAL (best-effort, never
@@ -134,8 +137,7 @@ class AppServices {
       final String? refresh = store.malRefreshToken;
       // 0.2.3: the MAL client ID comes from the remote config now
       // (never typed in by the user).
-      final String clientId =
-          configService?.config.malClientId ?? '';
+      final String clientId = configService?.config.malClientId ?? '';
       if (refresh == null || clientId.isEmpty) return false;
       try {
         final MalTokens tokens = await oauth.refreshMalToken(
