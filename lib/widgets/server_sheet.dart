@@ -14,8 +14,12 @@ import '../widgets/reicon_icon.dart';
 /// All / Sub / Dub filter pills + "Checking servers for languages..."
 /// status + language pills + server cards in a grid (lightning icon,
 /// name, download icon, checkmark when selected, SUB/DUB pill at the
-/// bottom; selected card = accent-filled) + bottom row ("Retry {server}
-/// servers" + "Close").
+/// bottom; selected card = accent-filled).
+///
+/// 0.2.6: the bottom row ("Retry {server} servers" + "Close") was
+/// removed at the user's order — the sheet closes by picking a
+/// server, swipe-down (bottom sheet) or the panel X (slide-over).
+/// Nothing else changed.
 ///
 /// M1.1: the server list comes from the store's sources; the SUB/DUB
 /// and language filters work over mock per-server language data. Real
@@ -414,37 +418,6 @@ class _ServerSheetBodyState extends State<ServerSheetBody> {
                             );
                           },
                         ),
-            ),
-            // Bottom row: Retry + Close.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: <Widget>[
-                  TextButton(
-                    onPressed: _runCheck,
-                    child: Text(
-                      'Retry ${widget.currentServer} servers',
-                      style: TextStyle(
-                        color: accent,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: widget.onClose,
-                    child: const Text(
-                      'Close',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ),
           ],
         );

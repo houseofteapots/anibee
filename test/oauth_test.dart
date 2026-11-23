@@ -160,6 +160,41 @@ void main() {
       );
     });
 
+    test('extractTokenFromPinPageText pulls the printed token', () {
+      // 0.2.6: the PIN page prints the token on screen — the
+      // fallback when the redirect fragment is lost. A realistic
+      // JWT-style token (3 dot-separated base64url segments).
+      const String token =
+          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.'
+          'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.'
+          'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+      expect(token.length, greaterThan(100));
+      expect(
+        OAuthService.extractTokenFromPinPageText(
+          'Your authorization PIN is:\n$token\nCopy it into the app.',
+        ),
+        token,
+      );
+      // Bare token alone, and JSON-quoted (runJavaScriptReturningResult
+      // wraps strings in quotes).
+      expect(OAuthService.extractTokenFromPinPageText(token), token);
+      expect(
+        OAuthService.extractTokenFromPinPageText('"$token"'),
+        token,
+      );
+      // Short strings, empty text, and a page with no token give null.
+      expect(
+        OAuthService.extractTokenFromPinPageText('Authorize this app?'),
+        isNull,
+      );
+      expect(OAuthService.extractTokenFromPinPageText(''), isNull);
+      expect(OAuthService.extractTokenFromPinPageText(null), isNull);
+      expect(
+        OAuthService.extractTokenFromPinPageText('{"error":"access_denied"}'),
+        isNull,
+      );
+    });
+
     test('isAnilistPinUrl matches only the real PIN page', () {
       expect(
         OAuthService.isAnilistPinUrl(

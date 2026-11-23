@@ -397,8 +397,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   /// Best-effort mpv property set (Zeus pattern): the public Player has
   /// no setProperty — the native platform player does. Never throws, so
-  /// a styling/brightness set can never break playback.
-  static Future<void> _setMpvProperty(
+  /// a styling/brightness set can never break playback. Returns false
+  /// when the set did not go through (not a NativePlayer, or the
+  /// platform call threw) so the caller can retry.
+  static Future<bool> _setMpvProperty(
     Player player,
     String key,
     String value,
@@ -407,13 +409,19 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     if (platform is NativePlayer) {
       try {
         await platform.setProperty(key, value);
+        return true;
       } catch (_) {
         // Best-effort only.
+        return false;
       }
     }
+    return false;
   }
 
-  void _applySubtitleStyle() {
+  /// Builds the mpv subtitle property map from the current store
+  /// values (extracted so the apply and its retry read the same
+  /// fresh values).
+  Map<String, String> _subtitleMpvProps() {
     final Color color =
         kSubtitleColors[_store.subColorIndex.clamp(
           0,
@@ -423,7 +431,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     // it is unit-tested — it sets sub-ass-override=force, without
     // which mpv ignores every style option for ASS subtitles (the
     // "nothing works" bug), plus sub-pos from _subtitlePosValue().
-    final Map<String, String> props = buildSubtitleMpvProperties(
+    return buildSubtitleMpvProperties(
       subSize: _store.subSize,
       subFont: _store.subFont,
       subColor: color,
@@ -435,9 +443,42 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       subDelayMs: _store.subDelayMs,
       subPos: _subtitlePosValue(),
     );
-    for (final MapEntry<String, String> entry in props.entries) {
-      unawaited(_setMpvProperty(_player, entry.key, entry.value));
+  }
+
+  /// 0.2.6: the subtitle style apply is self-healing. Every layer
+  /// of the chain was proven on the VM (real mpv frames, real
+  /// media_kit round-trip, full panel→mpv widget test), yet the
+  /// 0.2.5 phone test still reported "customization kaam nahi kar
+  /// rha" — so the one unproven link is the on-device delivery:
+  /// the old apply was fire-and-forget with a silent catch, and if
+  /// the apply was lost for any transient reason on the phone,
+  /// nothing recovered it. Now, if any of the 12 sets fails to go
+  /// through, the whole map is re-applied once after 300 ms with
+  /// freshly computed values. Best-effort; never throws, never
+  /// touches the UI. No read-back: getProperty with
+  /// waitForInitialization: false passes a null mpv handle to native
+  /// code and segfaults when the player is still initializing, and
+  /// the default waits stall widget tests — the set results already
+  /// report a failed apply.
+  Future<void> _applySubtitleStyleOnce({required bool retryOnError}) async {
+    try {
+      final Map<String, String> props = _subtitleMpvProps();
+      final List<bool> results = await Future.wait(<Future<bool>>[
+        for (final MapEntry<String, String> entry in props.entries)
+          _setMpvProperty(_player, entry.key, entry.value),
+      ]);
+      if (results.any((bool ok) => !ok) && retryOnError) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        if (!mounted) return;
+        await _applySubtitleStyleOnce(retryOnError: false);
+      }
+    } catch (_) {
+      // Best-effort only.
     }
+  }
+
+  void _applySubtitleStyle() {
+    unawaited(_applySubtitleStyleOnce(retryOnError: true));
   }
 
   /// Re-select the current subtitle track so a new sub-codepage takes
@@ -676,6 +717,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       return;
     }
     await widget.trailer.addExternalSubtitle(english);
+    // 0.2.6: selecting a new subtitle track can reset the
+    // rendering state on device — re-apply the style so the user's
+    // size/colour/position choices survive the track swap.
+    _applySubtitleStyle();
     if (mounted) setState(() {});
   }
 

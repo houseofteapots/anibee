@@ -505,6 +505,14 @@ class SettingsScreen extends StatelessWidget {
             error: error,
           ),
         );
+      } else if (OAuthService.isAnilistPinUrl(redirect)) {
+        // 0.2.6: Authorize was tapped and AniList reached the PIN
+        // page but no token arrived — name the step so the user
+        // knows it got that far instead of a generic failure.
+        _snack(
+          context,
+          'AniList login complete hua lekin token nahi mila — dobara try karo.',
+        );
       } else {
         _snack(context, 'AniList login failed — no token returned.');
       }

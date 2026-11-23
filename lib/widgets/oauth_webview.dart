@@ -20,7 +20,11 @@ import '../services/oauth_service.dart';
 /// as the Uri; the caller parses the token out of its fragment. MAL
 /// still redirects to the custom `anibee://` scheme, intercepted the
 /// same way. The user never leaves the app and no external browser
-/// round-trip is needed.
+/// round-trip is needed. 0.2.6: the token is captured three ways —
+/// onNavigationRequest, onUrlChange (fires for fragment changes the
+/// navigation request misses), and the PIN page's printed token
+/// (onPageFinished body read) — after the 0.2.5 phone failure where
+/// Authorize was tapped and still no token came back.
 Future<Uri?> showOAuthLogin({
   required BuildContext context,
   required String title,
@@ -72,6 +76,20 @@ class _OAuthLoginSheetState extends State<_OAuthLoginSheet> {
   late final WebViewController _controller;
   bool _loading = true;
 
+  /// 0.2.6: the sheet must pop exactly once — the token can now
+  /// arrive via three paths (onNavigationRequest, onUrlChange,
+  /// pin-page body extraction), and a second pop would dismiss the
+  /// underlying Settings screen.
+  bool _returned = false;
+
+  /// Pop the sheet once with [uri]. Every return path goes through
+  /// here.
+  void _return(Uri uri) {
+    if (_returned || !mounted) return;
+    _returned = true;
+    Navigator.of(context).pop(uri);
+  }
+
   /// Readable OAuth error detected in the loaded page (0.2.5): the
   /// provider answers a bad authorize request with a raw JSON error
   /// body instead of its login page. When set, the sheet shows this
@@ -93,10 +111,29 @@ class _OAuthLoginSheetState extends State<_OAuthLoginSheet> {
             // The custom-scheme redirect stays as a fallback.
             if (uri.scheme == widget.redirectScheme ||
                 OAuthService.isAnilistPinUrl(uri)) {
-              Navigator.of(context).pop(uri);
+              _return(uri);
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
+          },
+          // 0.2.6: onNavigationRequest does not always fire for the
+          // post-authorize redirect (and may strip the fragment) —
+          // that is the 0.2.5 phone failure (Authorize tapped, still
+          // "no token returned"). onUrlChange fires on every URL
+          // change including fragment changes, so capture the token
+          // here too. Only act when the URL actually carries a
+          // token, so the MAL code flow is untouched (its redirect
+          // carries `code`, not `access_token`).
+          onUrlChange: (UrlChange change) {
+            final String? url = change.url;
+            if (url == null || url.isEmpty) return;
+            final Uri uri = Uri.parse(url);
+            if (OAuthService.isAnilistPinUrl(uri) ||
+                uri.scheme == widget.redirectScheme) {
+              if (OAuthService.parseAnilistRedirect(uri) != null) {
+                _return(uri);
+              }
+            }
           },
           onPageFinished: (String url) async {
             // The provider may have answered with an OAuth error JSON
@@ -107,7 +144,25 @@ class _OAuthLoginSheetState extends State<_OAuthLoginSheet> {
             try {
               final Object result = await _controller
                   .runJavaScriptReturningResult('document.body.innerText');
-              error = _errorFromPageText(result is String ? result : null);
+              final String? text = result is String ? result : null;
+              // 0.2.6: the PIN page prints the token on screen — if
+              // the redirect was not intercepted (or its fragment
+              // was lost), take the token from the page body instead
+              // of leaving the user on a dead page.
+              if (OAuthService.isAnilistPinUrl(Uri.parse(url))) {
+                final String? token =
+                    OAuthService.extractTokenFromPinPageText(text);
+                if (token != null && token.isNotEmpty) {
+                  _return(
+                    Uri.parse(
+                      'https://anilist.co/api/v2/oauth/pin'
+                      '#access_token=$token',
+                    ),
+                  );
+                  return;
+                }
+              }
+              error = _errorFromPageText(text);
             } catch (_) {
               error = null;
             }

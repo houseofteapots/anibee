@@ -84,6 +84,36 @@ class OAuthService {
     return queryToken?.isEmpty == true ? null : queryToken;
   }
 
+  /// Pull the access token out of the AniList PIN page's visible
+  /// text (0.2.6). The pin page prints the token on screen (the user
+  /// is meant to copy it); when the webview fails to capture the
+  /// token from the redirect URL fragment — the 0.2.5 phone failure,
+  /// where Authorize was tapped and still no token came back — the
+  /// body text is the fallback. Returns the longest run of token
+  /// characters (>= 100 chars; an AniList access token is a long
+  /// JWT-style string) or null. Pure — unit-tested.
+  static String? extractTokenFromPinPageText(String? text) {
+    if (text == null) return null;
+    String raw = text.trim();
+    // runJavaScriptReturningResult may return the string JSON-encoded
+    // (wrapped in quotes) — unwrap one layer, same as the webview.
+    if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+      try {
+        final Object? decoded = jsonDecode(raw);
+        if (decoded is String) raw = decoded.trim();
+      } catch (_) {}
+    }
+    final RegExp tokenPattern = RegExp(r'[A-Za-z0-9._\-]{100,}');
+    String? longest;
+    for (final RegExpMatch m in tokenPattern.allMatches(raw)) {
+      final String candidate = m.group(0)!;
+      if (longest == null || candidate.length > longest.length) {
+        longest = candidate;
+      }
+    }
+    return longest;
+  }
+
   /// Human-readable login error for an OAuth error code, in the user's
   /// own words (Roman Hinglish). AniList answers a bad authorize
   /// request with a raw JSON error body — `unsupported_grant_type`
