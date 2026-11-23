@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:anibee_mpv_pip/anibee_mpv_pip.dart';
@@ -18,6 +19,7 @@ import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/poster.dart';
 import '../widgets/server_sheet.dart';
+import '../widgets/subtitle_overlay.dart';
 
 /// Right-side slide-over panel kind (0.2.4, Zeus style).
 enum _PanelKind { sources, audio, subtitles, quality }
@@ -257,7 +259,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     // Hand the shared player to the full screen, apply Settings.
     unawaited(widget.trailer.expandToFull());
     unawaited(widget.trailer.applyHwdec(_store.hwDecoding));
-    _applySubtitleStyle();
+    _applySubtitlePipeline();
     // M2: load the resolved real stream (unmuted) once the surface
     // is ours; the trailer path loads nothing extra.
     if (widget.stream != null) {
@@ -418,67 +420,39 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     return false;
   }
 
-  /// Builds the mpv subtitle property map from the current store
-  /// values (extracted so the apply and its retry read the same
-  /// fresh values).
-  Map<String, String> _subtitleMpvProps() {
-    final Color color =
-        kSubtitleColors[_store.subColorIndex.clamp(
-          0,
-          kSubtitleColors.length - 1,
-        )];
-    // 0.2.5: the property map is built pure (subtitle_style.dart) so
-    // it is unit-tested — it sets sub-ass-override=force, without
-    // which mpv ignores every style option for ASS subtitles (the
-    // "nothing works" bug), plus sub-pos from _subtitlePosValue().
-    return buildSubtitleMpvProperties(
-      subSize: _store.subSize,
-      subFont: _store.subFont,
-      subColor: color,
-      subOpacity: _store.subOpacity,
-      subBold: _store.subBold,
-      subOutline: _store.subOutline,
-      subBackgroundMode: _store.subBackgroundMode,
-      subEncoding: _store.subEncoding,
+  /// Builds the mpv subtitle pipeline map from the current store
+  /// values: only `sub-delay` and `sub-codepage` are ever written
+  /// to mpv now (0.2.7 — see the header of
+  /// `lib/player/subtitle_style.dart` for why the other `sub-*`
+  /// options can never affect the picture).
+  Map<String, String> _subtitlePipelineProps() {
+    return buildSubtitlePipelineProperties(
       subDelayMs: _store.subDelayMs,
-      subPos: _subtitlePosValue(),
+      subEncoding: _store.subEncoding,
     );
   }
 
-  /// 0.2.6: the subtitle style apply is self-healing. Every layer
-  /// of the chain was proven on the VM (real mpv frames, real
-  /// media_kit round-trip, full panel→mpv widget test), yet the
-  /// 0.2.5 phone test still reported "customization kaam nahi kar
-  /// rha" — so the one unproven link is the on-device delivery:
-  /// the old apply was fire-and-forget with a silent catch, and if
-  /// the apply was lost for any transient reason on the phone,
-  /// nothing recovered it. Now, if any of the 12 sets fails to go
-  /// through, the whole map is re-applied once after 300 ms with
-  /// freshly computed values. Best-effort; never throws, never
-  /// touches the UI. No read-back: getProperty with
-  /// waitForInitialization: false passes a null mpv handle to native
-  /// code and segfaults when the player is still initializing, and
-  /// the default waits stall widget tests — the set results already
-  /// report a failed apply.
-  Future<void> _applySubtitleStyleOnce({required bool retryOnError}) async {
+  /// 0.2.7: the subtitle style lives in the Flutter overlay
+  /// (`SubtitleOverlay`, driven by the store — no mpv write can
+  /// change it), so the only mpv writes left are the pipeline ones:
+  /// `sub-delay` (proven on the VM with real mpv: it shifts the
+  /// `sub-text` emission the overlay reads) and `sub-codepage`
+  /// (read when the subtitle file is (re)loaded). Best-effort;
+  /// never throws, never touches the UI.
+  void _applySubtitlePipeline() {
+    unawaited(_applySubtitlePipelineOnce());
+  }
+
+  Future<void> _applySubtitlePipelineOnce() async {
     try {
-      final Map<String, String> props = _subtitleMpvProps();
-      final List<bool> results = await Future.wait(<Future<bool>>[
+      final Map<String, String> props = _subtitlePipelineProps();
+      await Future.wait(<Future<bool>>[
         for (final MapEntry<String, String> entry in props.entries)
           _setMpvProperty(_player, entry.key, entry.value),
       ]);
-      if (results.any((bool ok) => !ok) && retryOnError) {
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-        if (!mounted) return;
-        await _applySubtitleStyleOnce(retryOnError: false);
-      }
     } catch (_) {
       // Best-effort only.
     }
-  }
-
-  void _applySubtitleStyle() {
-    unawaited(_applySubtitleStyleOnce(retryOnError: true));
   }
 
   /// Re-select the current subtitle track so a new sub-codepage takes
@@ -492,35 +466,154 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     try {
       await _player.setSubtitleTrack(SubtitleTrack.no());
       await _player.setSubtitleTrack(current);
-      _applySubtitleStyle();
+      _applySubtitlePipeline();
     } catch (_) {
       // Best-effort only.
     }
   }
 
-  /// Subtitle vertical position (mpv sub-pos, 0 = top, 100 = bottom):
-  /// Top / Middle are fixed; Bottom follows the controls — while the
-  /// controls are visible the subtitle sits ABOVE the bottom button
-  /// row (0.2.4: the row overlapped the subtitle text), and drops
-  /// back to the very bottom when they hide. Manual position (auto-
-  /// adjust off) overrides everything.
-  double _subtitlePosValue() {
-    if (_store.subPosition == 'Top') return 5;
-    if (_store.subPosition == 'Middle') return 50;
-    if (!_store.subAutoAdjust) {
-      return (100 - _store.subManualPercent).clamp(0, 100);
-    }
-    return _controlsVisible ? 80 : 100;
+  /// The overlay's style + position, from the current store values
+  /// (same values the panel preview shows, so the panel and the
+  /// picture can never drift apart).
+  TextStyle _subtitleOverlayStyle() {
+    final Color color =
+        kSubtitleColors[_store.subColorIndex.clamp(
+          0,
+          kSubtitleColors.length - 1,
+        )];
+    return buildSubtitleOverlayStyle(
+      subSize: _store.subSize,
+      subFont: _store.subFont,
+      subColor: color,
+      subOpacity: _store.subOpacity,
+      subBold: _store.subBold,
+      subOutline: _store.subOutline,
+      subBackgroundMode: _store.subBackgroundMode,
+    );
   }
 
-  void _applySubtitleOffset() {
-    unawaited(
-      _setMpvProperty(
-        _player,
-        'sub-pos',
-        _subtitlePosValue().toStringAsFixed(0),
+  Alignment _subtitleOverlayAlignment() {
+    return subtitleOverlayAlignment(
+      subPosition: _store.subPosition,
+      subAutoAdjust: _store.subAutoAdjust,
+      subManualPercent: _store.subManualPercent,
+      controlsVisible: _controlsVisible,
+    );
+  }
+
+  /// The on-screen subtitle overlay (0.2.7): the app renders
+  /// `player.stream.subtitle` itself, styled from the store.
+  /// Rebuilds live when the store changes (ListenableBuilder) and
+  /// when the controls show/hide (parent setState re-runs the
+  /// builder). Never blocks input.
+  Widget _buildSubtitleOverlay() {
+    return IgnorePointer(
+      child: ListenableBuilder(
+        listenable: _store,
+        builder: (BuildContext context, Widget? _) {
+          return StreamBuilder<List<String>>(
+            stream: _player.stream.subtitle,
+            initialData: _player.state.subtitle,
+            builder:
+                (BuildContext context, AsyncSnapshot<List<String>> snap) {
+              if (_player.state.track.subtitle.id == 'no') {
+                return const SizedBox.shrink();
+              }
+              return SubtitleOverlay(
+                lines: snap.data ?? _player.state.subtitle,
+                style: _subtitleOverlayStyle(),
+                alignment: _subtitleOverlayAlignment(),
+              );
+            },
+          );
+        },
       ),
     );
+  }
+
+  // -------------------------------------------- subtitle diagnostics (0.2.7)
+
+  /// Diagnostic readout shown in the Subtitles panel (0.2.7): the
+  /// active track, its codec as mpv reports it, and the mpv
+  /// rendering state — the only way the next phone test can tell
+  /// whether the subtitle pipeline is what the panel claims.
+  /// The mpv readback runs only once the player is actually running
+  /// (duration known): `getProperty` before init passes a null
+  /// handle to native code and segfaults (0.2.6), and it is
+  /// time-boxed so it can never stall the UI. '—' = not available.
+  String _diagTrack = '—';
+  String _diagCodec = '—';
+  String _diagSubVisibility = '—';
+  String _diagSubAss = '—';
+
+  Future<void> _loadSubtitleDiagnostics() async {
+    final SubtitleTrack current = _player.state.track.subtitle;
+    final String trackLine =
+        current.id == 'no'
+            ? 'Off'
+            : '${current.title ?? 'Subtitle'}'
+                ' (${current.language ?? '?'}) · ${_shortId(current.id)}';
+    if (mounted) setState(() => _diagTrack = trackLine);
+    if (_player.state.duration <= Duration.zero) return;
+    final PlatformPlayer? platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    try {
+      final String vis = await platform
+          .getProperty('sub-visibility')
+          .timeout(const Duration(seconds: 2));
+      final String ass = await platform
+          .getProperty('sub-ass')
+          .timeout(const Duration(seconds: 2));
+      String codec = '—';
+      try {
+        final String trackList = await platform
+            .getProperty('track-list')
+            .timeout(const Duration(seconds: 2));
+        codec = _codecFromTrackList(trackList, current);
+      } catch (_) {
+        // Codec stays '—'.
+      }
+      if (!mounted) return;
+      setState(() {
+        _diagSubVisibility = vis;
+        _diagSubAss = ass;
+        _diagCodec = codec;
+      });
+    } catch (_) {
+      // Readback unavailable — the track line above still shows.
+    }
+  }
+
+  static String _shortId(String id) {
+    if (id.length <= 40) return id;
+    return '…${id.substring(id.length - 40)}';
+  }
+
+  /// Codec of the active subtitle track from mpv's `track-list`
+  /// JSON: prefer the entry whose title matches the current track,
+  /// else the first subtitle entry, else '—'. mpv track ids are
+  /// ints; media_kit external-track ids are URLs, so the match is
+  /// by title, not id.
+  static String _codecFromTrackList(String json, SubtitleTrack current) {
+    try {
+      final dynamic decoded = jsonDecode(json);
+      if (decoded is! List) return '—';
+      final List<Map<String, dynamic>> subs = <Map<String, dynamic>>[
+        for (final dynamic e in decoded)
+          if (e is Map<String, dynamic> && e['type'] == 'sub') e,
+      ];
+      if (subs.isEmpty) return '—';
+      final String title = (current.title ?? '').trim().toLowerCase();
+      for (final Map<String, dynamic> e in subs) {
+        final String t = (e['title'] as String? ?? '').trim().toLowerCase();
+        if (title.isNotEmpty && t == title) {
+          return (e['codec'] as String? ?? '—').toString();
+        }
+      }
+      return (subs.first['codec'] as String? ?? '—').toString();
+    } catch (_) {
+      return '—';
+    }
   }
 
   // ---------------------------------------------------------- AniSkip (0.2.4)
@@ -563,8 +656,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _hideTimer = Timer(const Duration(milliseconds: 3000), () {
       if (mounted && _player.state.playing) {
         setState(() => _controlsVisible = false);
-        // Controls hid: the subtitle drops back to the very bottom.
-        _applySubtitleOffset();
       }
     });
   }
@@ -579,7 +670,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     if (_controlsVisible) {
       _hideTimer?.cancel();
       setState(() => _controlsVisible = false);
-      _applySubtitleOffset();
     } else {
       _pokeControls();
     }
@@ -588,14 +678,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// Show the controls overlay (single tap, button taps, episode
   /// switches). Double-tap handlers pass `showControls: false`:
   /// a double-tap must ONLY seek / play-pause and leave the overlay
-  /// exactly as it was (0.2.4 — the old code called this from
+  /// exactly as was (0.2.4 — the old code called this from
   /// _seekBy/_togglePlay, so every double-tap flashed the overlay).
-  /// The subtitle offset follows the overlay either way.
   void _pokeControls({bool showControls = true}) {
     if (showControls && !_controlsVisible) {
       setState(() => _controlsVisible = true);
     }
-    _applySubtitleOffset();
     _scheduleHide();
   }
 
@@ -674,7 +762,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       stream,
       subtitleLanguage: _store.subtitleLanguage,
     );
-    _applySubtitleStyle();
     _englishFetchTried = false;
     unawaited(_maybeFetchEnglishSubtitles(stream));
   }
@@ -717,10 +804,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       return;
     }
     await widget.trailer.addExternalSubtitle(english);
-    // 0.2.6: selecting a new subtitle track can reset the
-    // rendering state on device — re-apply the style so the user's
-    // size/colour/position choices survive the track swap.
-    _applySubtitleStyle();
     if (mounted) setState(() {});
   }
 
@@ -939,6 +1022,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       _controlsVisible = true;
     });
     _hideTimer?.cancel();
+    if (kind == _PanelKind.subtitles) {
+      unawaited(_loadSubtitleDiagnostics());
+    }
   }
 
   void _closePanel() {
@@ -1138,8 +1224,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// fetched track) + "Load subtitle file" + the full style editor
   /// (size, colour, font, bold, background, outline, position,
   /// opacity, encoding, auto-adjust, manual position, delay) with a
-  /// live preview. Every option drives the real mpv properties via
-  /// _applySubtitleStyle().
+  /// live preview. Every style option drives the app's own subtitle
+  /// overlay directly (0.2.7 — mpv never renders subtitles with
+  /// libass: false, so the old sub-* writes could never change the
+  /// picture); only Delay (sub-delay shifts the sub-text timing)
+  /// and Encoding (sub-codepage) still write to mpv.
   Widget _buildSubtitlesPanelContent(Color accent) {
     return ListenableBuilder(
       listenable: _store,
@@ -1176,8 +1265,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   accent: accent,
                   onTap: () async {
                     await _player.setSubtitleTrack(t);
-                    _applySubtitleStyle();
                     if (mounted) setState(() {});
+                    unawaited(_loadSubtitleDiagnostics());
                   },
                 ),
               ListTile(
@@ -1204,13 +1293,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   unawaited(
                     _store.setSubSize((_store.subSize - 1).clamp(12, 28)),
                   );
-                  _applySubtitleStyle();
                 },
                 onPlus: () {
                   unawaited(
                     _store.setSubSize((_store.subSize + 1).clamp(12, 28)),
                   );
-                  _applySubtitleStyle();
                 },
               ),
               _dropdownRow<int>(
@@ -1243,7 +1330,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 onChanged: (int? i) {
                   if (i == null) return;
                   unawaited(_store.setSubColorIndex(i));
-                  _applySubtitleStyle();
                 },
               ),
               _dropdownRow<String>(
@@ -1261,7 +1347,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 onChanged: (String? f) {
                   if (f == null) return;
                   unawaited(_store.setSubFont(f));
-                  _applySubtitleStyle();
                 },
               ),
               _toggleRow(
@@ -1270,7 +1355,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 accent: accent,
                 onChanged: (bool v) {
                   unawaited(_store.setSubBold(v));
-                  _applySubtitleStyle();
                 },
               ),
               _dropdownRow<String>(
@@ -1287,7 +1371,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 onChanged: (String? m) {
                   if (m == null) return;
                   unawaited(_store.setSubBackgroundMode(m));
-                  _applySubtitleStyle();
                 },
               ),
               _dropdownRow<String>(
@@ -1308,7 +1391,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 onChanged: (String? o) {
                   if (o == null) return;
                   unawaited(_store.setSubOutline(o));
-                  _applySubtitleStyle();
                 },
               ),
               _dropdownRow<String>(
@@ -1328,7 +1410,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 onChanged: (String? p) {
                   if (p == null) return;
                   unawaited(_store.setSubPosition(p));
-                  _applySubtitleStyle();
                 },
               ),
               _stepperRow(
@@ -1336,11 +1417,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 value: '${_store.subOpacity}%',
                 onMinus: () {
                   unawaited(_store.setSubOpacity(_store.subOpacity - 5));
-                  _applySubtitleStyle();
                 },
                 onPlus: () {
                   unawaited(_store.setSubOpacity(_store.subOpacity + 5));
-                  _applySubtitleStyle();
                 },
               ),
               _dropdownRow<String>(
@@ -1372,7 +1451,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 onChanged: (String? e) {
                   if (e == null) return;
                   unawaited(_store.setSubEncoding(e));
-                  _applySubtitleStyle();
+                  _applySubtitlePipeline();
                   // sub-codepage only takes effect when the subtitle
                   // file is (re)loaded — re-select the track so the
                   // new encoding applies live.
@@ -1385,7 +1464,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 accent: accent,
                 onChanged: (bool v) {
                   unawaited(_store.setSubAutoAdjust(v));
-                  _applySubtitleStyle();
                 },
               ),
               Padding(
@@ -1410,8 +1488,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     TextButton(
                       onPressed: () {
                         unawaited(_store.setSubManualPercent(0));
-                        _applySubtitleStyle();
-                      },
+                            },
                       child: Text(
                         'Reset',
                         style: TextStyle(color: accent, fontSize: 13),
@@ -1435,7 +1512,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     unawaited(_store.setSubAutoAdjust(false));
                   }
                   unawaited(_store.setSubManualPercent(v));
-                  _applySubtitleStyle();
                 },
               ),
               Padding(
@@ -1453,8 +1529,30 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 activeColor: accent,
                 onChanged: (double v) {
                   unawaited(_store.setSubDelayMs(v.round()));
-                  _applySubtitleStyle();
+                  // sub-delay shifts the sub-text timing the overlay
+                  // reads (proven with real mpv) — the one panel
+                  // option that still writes to mpv.
+                  _applySubtitlePipeline();
                 },
+              ),
+              const Divider(color: Color(0xFF2A2A35)),
+              _panelSectionHeader('DIAGNOSTICS'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    _diagLine('Track', _diagTrack),
+                    _diagLine('Codec', _diagCodec),
+                    _diagLine('mpv sub-visibility', _diagSubVisibility),
+                    _diagLine('mpv sub-ass', _diagSubAss),
+                    _diagLine(
+                      'Renderer',
+                      'Flutter overlay — mpv rendering is off, so '
+                      'this panel drives the text above the video',
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 12),
             ],
@@ -1621,6 +1719,18 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           fontWeight: FontWeight.w700,
           letterSpacing: 0.5,
         ),
+      ),
+    );
+  }
+
+  /// One diagnostics row in the Subtitles panel (0.2.7): small grey
+  /// label + value, unobtrusive.
+  Widget _diagLine(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Text(
+        '$label: $value',
+        style: const TextStyle(color: Colors.white54, fontSize: 12),
       ),
     );
   }
@@ -1920,6 +2030,18 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                       child: Video(
                         controller: widget.trailer.controller,
                         fit: _videoFit,
+                        // 0.2.7: the built-in subtitle overlay is OFF.
+                        // With the default PlayerConfiguration
+                        // (libass: false) mpv never renders subtitles
+                        // and media_kit_video shows its SubtitleView
+                        // overlay with a FIXED default style — no
+                        // sub-* property could ever change it (the
+                        // 0.2.5 + 0.2.6 "nothing works" bug). The app
+                        // renders its own overlay below
+                        // (_buildSubtitleOverlay), styled from the
+                        // settings store.
+                        subtitleViewConfiguration:
+                            const SubtitleViewConfiguration(visible: false),
                         // No built-in controls: the vendored media_kit_video
                         // defaults to AdaptiveVideoControls, whose bottom
                         // bar (duplicate time + fullscreen button) renders
@@ -1967,6 +2089,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                     return const SizedBox.shrink();
                   },
                 ),
+              // 0.2.7: the app's own subtitle overlay (styled from
+              // the settings store). Above the video + brightness
+              // dim, below the controls/HUD — and IgnorePointer, so
+              // it never eats a tap or a swipe.
+              if (!hasError) _buildSubtitleOverlay(),
               if (hasError)
                 _ErrorState(
                   accent: accent,
