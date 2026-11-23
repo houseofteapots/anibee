@@ -200,9 +200,20 @@ class SettingsStore extends ChangeNotifier {
   String subFont = 'Inter Semibold';
   double subSize = 18;
   int subColorIndex = 0;
-  bool subBackground = true;
+  // 0.2.4: background migrated from a bool to a mode ('off' | 'dark' |
+  // 'solid'); the bool getter below keeps player_settings_screen.dart
+  // working unchanged. Outline/opacity/encoding/auto-adjust/manual
+  // position drive the Zeus-style subtitle editor in the player.
+  String subBackgroundMode = 'dark';
+  bool get subBackground => subBackgroundMode != 'off';
   String subPosition = 'Bottom';
   int subDelayMs = 200;
+  bool subBold = false;
+  String subOutline = 'medium';
+  int subOpacity = 100;
+  String subEncoding = 'auto';
+  bool subAutoAdjust = true;
+  double subManualPercent = 0;
 
   /// Preferred subtitle language (Settings → Player): 'auto' |
   /// 'en' | 'hi' | 'ar' | 'off'. 'auto' means English by default.
@@ -300,9 +311,18 @@ class SettingsStore extends ChangeNotifier {
     subFont = _prefs.getString('sub_font') ?? 'Inter Semibold';
     subSize = _prefs.getDouble('sub_size') ?? 18;
     subColorIndex = _prefs.getInt('sub_color') ?? 0;
-    subBackground = _prefs.getBool('sub_background') ?? true;
+    // Migrate the old bool ('sub_background'): dark when it was on.
+    subBackgroundMode =
+        _prefs.getString('sub_background_mode') ??
+        ((_prefs.getBool('sub_background') ?? true) ? 'dark' : 'off');
     subPosition = _prefs.getString('sub_position') ?? 'Bottom';
     subDelayMs = _prefs.getInt('sub_delay_ms') ?? 200;
+    subBold = _prefs.getBool('sub_bold') ?? false;
+    subOutline = _prefs.getString('sub_outline') ?? 'medium';
+    subOpacity = _prefs.getInt('sub_opacity') ?? 100;
+    subEncoding = _prefs.getString('sub_encoding') ?? 'auto';
+    subAutoAdjust = _prefs.getBool('sub_auto_adjust') ?? true;
+    subManualPercent = _prefs.getDouble('sub_manual_percent') ?? 0;
     subtitleLanguage = _prefs.getString('sub_language') ?? 'auto';
     doubleTapSeek = _prefs.getInt('double_tap_seek') ?? 10;
     playbackSpeed = _prefs.getDouble('playback_speed') ?? 1.0;
@@ -468,8 +488,52 @@ class SettingsStore extends ChangeNotifier {
   }
 
   Future<void> setSubBackground(bool value) async {
-    subBackground = value;
+    subBackgroundMode = value ? 'dark' : 'off';
     await _save('sub_background', value);
+    await _save('sub_background_mode', subBackgroundMode);
+    notifyListeners();
+  }
+
+  Future<void> setSubBackgroundMode(String mode) async {
+    subBackgroundMode = mode;
+    await _save('sub_background_mode', mode);
+    await _save('sub_background', mode != 'off');
+    notifyListeners();
+  }
+
+  Future<void> setSubBold(bool value) async {
+    subBold = value;
+    await _save('sub_bold', value);
+    notifyListeners();
+  }
+
+  Future<void> setSubOutline(String outline) async {
+    subOutline = outline;
+    await _save('sub_outline', outline);
+    notifyListeners();
+  }
+
+  Future<void> setSubOpacity(int value) async {
+    subOpacity = value.clamp(0, 100);
+    await _save('sub_opacity', subOpacity);
+    notifyListeners();
+  }
+
+  Future<void> setSubEncoding(String encoding) async {
+    subEncoding = encoding;
+    await _save('sub_encoding', encoding);
+    notifyListeners();
+  }
+
+  Future<void> setSubAutoAdjust(bool value) async {
+    subAutoAdjust = value;
+    await _save('sub_auto_adjust', value);
+    notifyListeners();
+  }
+
+  Future<void> setSubManualPercent(double value) async {
+    subManualPercent = value.clamp(0, 100);
+    await _save('sub_manual_percent', subManualPercent);
     notifyListeners();
   }
 

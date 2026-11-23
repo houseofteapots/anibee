@@ -1,20 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// M1.1 sample trailer — verified working (HTTP 206, video/mp4).
-/// The old Google sample bucket 403s; this test-videos.co.uk file plays.
-/// Every catalogue title points at it so the inline trailer player +
-/// expand-to-full-player flow is testable end to end. Milestone 2
-/// replaces this with the real per-anime trailer resolver (AniList
-/// trailer field / YouTube).
-const String kSampleTrailerUrl =
-    'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/'
-    'Big_Buck_Bunny_720_10s_1MB.mp4';
-
-/// Fallback sample if the primary ever fails (Apple HLS, HTTP 200).
-const String kSampleTrailerFallbackUrl =
-    'https://devstreaming-cdn.apple.com/videos/streaming/examples/'
-    'bipbop_16x9/bipbop_16x9_variant.m3u8';
-
 class Anime {
   const Anime({
     required this.id,
@@ -173,7 +158,6 @@ List<Anime> mockCatalogue() {
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151807-it355ZgzquUd.png',
       anilistId: 151807,
       gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
-      trailerUrl: kSampleTrailerUrl,
       currentEpisode: 7,
       minutesLeft: 9,
     ),
@@ -188,7 +172,6 @@ List<Anime> mockCatalogue() {
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx113415-LHBAeoZDIsnF.jpg',
       anilistId: 113415,
       gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
-      trailerUrl: kSampleTrailerUrl,
       currentEpisode: 5,
       minutesLeft: 12,
     ),
@@ -203,7 +186,6 @@ List<Anime> mockCatalogue() {
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101922-WBsBl0ClmgYL.jpg',
       anilistId: 101922,
       gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
-      trailerUrl: kSampleTrailerUrl,
       currentEpisode: 5,
       minutesLeft: 12,
     ),
@@ -218,7 +200,6 @@ List<Anime> mockCatalogue() {
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx127230-DdP4vAdssLoz.png',
       anilistId: 127230,
       gradient: <Color>[Color(0xFF0B4D5C), Color(0xFF0A0A13)],
-      trailerUrl: kSampleTrailerUrl,
       currentEpisode: 2,
       minutesLeft: 18,
     ),
@@ -233,7 +214,6 @@ List<Anime> mockCatalogue() {
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21-ELSYx3yMPcKM.jpg',
       anilistId: 21,
       gradient: <Color>[Color(0xFF3A6EA5), Color(0xFF12233D)],
-      trailerUrl: kSampleTrailerUrl,
       currentEpisode: 10,
       minutesLeft: 4,
     ),
@@ -248,7 +228,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/vR7hwaGQ0ySRoq1WobiNRaPs4WO.jpg',
       gradient: <Color>[Color(0xFF4D4D5C), Color(0xFF14141C)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'frieren',
@@ -261,7 +240,6 @@ List<Anime> mockCatalogue() {
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx154587-qQTzQnEJJ3oB.jpg',
       anilistId: 154587,
       gradient: <Color>[Color(0xFF7A5A8C), Color(0xFF241A2E)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'attack-on-titan',
@@ -274,7 +252,6 @@ List<Anime> mockCatalogue() {
       posterUrl: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-buvcRTBx4NSm.jpg',
       anilistId: 16498,
       gradient: <Color>[Color(0xFF2E1A4D), Color(0xFF0E0A18)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'vinland-saga',
@@ -287,7 +264,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/vUHlpA5c1NXkds59reY3HMb4Abs.jpg',
       gradient: <Color>[Color(0xFF5C3A1A), Color(0xFF1C120A)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'dark-summoner',
@@ -300,7 +276,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/xD8bCXGlwC98mFq8mDyB15grUts.jpg',
       gradient: <Color>[Color(0xFF1F4D3A), Color(0xFF0A1A12)],
-      trailerUrl: kSampleTrailerUrl,
       nextEpisode: 9,
       nextEpisodeIn: '6d 20h',
       nextEpisodeAt: 'Nov 29 at 22:05',
@@ -316,7 +291,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/xppeysfvDKVx775MFuH8Z9BlpMk.jpg',
       gradient: <Color>[Color(0xFF6B1F2A), Color(0xFF1F0A0E)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'bleach',
@@ -329,7 +303,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/2EewmxXe72ogD0EaWM8gqa0ccIw.jpg',
       gradient: <Color>[Color(0xFF1A3A6B), Color(0xFF0A1220)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'dragon-ball-z',
@@ -342,7 +315,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/oQ5CnVj3TRifXl2bIOri6H6rfNe.jpg',
       gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'death-note',
@@ -355,7 +327,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/tCZFfYTIwrR7n94J6G14Y4hAFU6.jpg',
       gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'fullmetal-alchemist-brotherhood',
@@ -368,7 +339,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/5ZFUEOULaVml7pQuXxhpR2SmVUw.jpg',
       gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'my-hero-academia',
@@ -381,7 +351,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/phuYuzqWW9ru8EA3HVjE9W2Rr3M.jpg',
       gradient: <Color>[Color(0xFF0B4D5C), Color(0xFF0A0A13)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'hunter-x-hunter',
@@ -394,7 +363,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/i2EEr2uBvRlAwJ8d8zTG2Y19mIa.jpg',
       gradient: <Color>[Color(0xFF3A6EA5), Color(0xFF12233D)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'tokyo-ghoul',
@@ -407,7 +375,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/1m4RlC9BTCbyY549TOdVQ5NRPcR.jpg',
       gradient: <Color>[Color(0xFF4D4D5C), Color(0xFF14141C)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'sword-art-online',
@@ -420,7 +387,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/9m8bFIXPg26taNrFSXGwEORVACD.jpg',
       gradient: <Color>[Color(0xFF7A5A8C), Color(0xFF241A2E)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 're-zero',
@@ -433,7 +399,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/oHqYrPAsIiTD5m4DuxumV4er8BU.jpg',
       gradient: <Color>[Color(0xFF2E1A4D), Color(0xFF0E0A18)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'cowboy-bebop',
@@ -446,7 +411,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/xDiXDfZwC6XYC6fxHI1jl3A3Ill.jpg',
       gradient: <Color>[Color(0xFF5C3A1A), Color(0xFF1C120A)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'neon-genesis-evangelion',
@@ -459,7 +423,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/y2ah9t0navXyIvoHg1uIbIHO3tt.jpg',
       gradient: <Color>[Color(0xFF1F4D3A), Color(0xFF0A1A12)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'code-geass',
@@ -472,7 +435,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/1cFqtyKUbdo1IurdpkK4tDthUJO.jpg',
       gradient: <Color>[Color(0xFF6B1F2A), Color(0xFF1F0A0E)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'steins-gate',
@@ -485,7 +447,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/96R4bV7dB8ramaWceNKsxvJgCUd.jpg',
       gradient: <Color>[Color(0xFF1A3A6B), Color(0xFF0A1220)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'one-punch-man',
@@ -498,7 +459,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/dT10AxJIXVvRwFAew4tt2RhzJrD.jpg',
       gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'haikyu',
@@ -511,7 +471,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/8WEr48swcqe89Zsy5sdrGCASlIg.jpg',
       gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'black-clover',
@@ -524,7 +483,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/uZUtoVChBGhNj9OfrM2LYpwBm8E.jpg',
       gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'fairy-tail',
@@ -537,7 +495,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/AsfCVSHnFnUnbepLucvIB1N30Il.jpg',
       gradient: <Color>[Color(0xFF0B4D5C), Color(0xFF0A0A13)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'gintama',
@@ -550,7 +507,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/f7vK8pzZIqhyA8sYmBpWmp9Ae7.jpg',
       gradient: <Color>[Color(0xFF3A6EA5), Color(0xFF12233D)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'jojos-bizarre-adventure',
@@ -563,7 +519,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/ogAWwbh3frWtiTyyXrZaVFtqCgp.jpg',
       gradient: <Color>[Color(0xFF4D4D5C), Color(0xFF14141C)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'spy-x-family',
@@ -576,7 +531,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/7NAvPYPAu7MeHwP8E9sn81PqsRh.jpg',
       gradient: <Color>[Color(0xFF7A5A8C), Color(0xFF241A2E)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'blue-lock',
@@ -589,7 +543,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/fcKH1NQzoTXiYO1OrhaFFwTKhBp.jpg',
       gradient: <Color>[Color(0xFF2E1A4D), Color(0xFF0E0A18)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'dr-stone',
@@ -602,7 +555,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/xbZQ3fDl0y5mt0ARwfeyrgQ4JTw.jpg',
       gradient: <Color>[Color(0xFF5C3A1A), Color(0xFF1C120A)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'fire-force',
@@ -615,7 +567,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/96jrp8XIEPKC7xHhbkpWLD15oYW.jpg',
       gradient: <Color>[Color(0xFF1F4D3A), Color(0xFF0A1A12)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'reincarnated-as-a-slime',
@@ -628,7 +579,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/pzujcdPAoH361NObVrtbA7zACE7.jpg',
       gradient: <Color>[Color(0xFF6B1F2A), Color(0xFF1F0A0E)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'overlord',
@@ -641,7 +591,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/K8ZUjxaj9F0t3AwJDz8ypzBynM.jpg',
       gradient: <Color>[Color(0xFF1A3A6B), Color(0xFF0A1220)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'mushoku-tensei',
@@ -654,7 +603,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/lDS7WuWrq6i1XC1AaKlf9qvJBVi.jpg',
       gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'made-in-abyss',
@@ -667,7 +615,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/n30CBH4BoN5Z34tCpOWIPGJYOaS.jpg',
       gradient: <Color>[Color(0xFF0F3A4D), Color(0xFF0A1420)],
-      trailerUrl: kSampleTrailerUrl,
     ),
     const Anime(
       id: 'violet-evergarden',
@@ -680,7 +627,6 @@ List<Anime> mockCatalogue() {
       posterUrl:
           'https://image.tmdb.org/t/p/w500/61EwFPqc0r1uJo6la49J55F8bQ8.jpg',
       gradient: <Color>[Color(0xFF2A2A3A), Color(0xFF101018)],
-      trailerUrl: kSampleTrailerUrl,
     ),
   ];
 }

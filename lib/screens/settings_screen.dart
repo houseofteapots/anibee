@@ -67,39 +67,48 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
             ),
-            SettingsSection(
-              title: 'ACCOUNTS',
-              children: <Widget>[
-                _AccountTile(
-                  name: 'AniList',
-                  color: const Color(0xFF2F7CF6),
-                  icon: Reicon.outline.userCircle,
-                  status: store.anilistConnected
-                      ? 'Connected as ${store.anilistUsername ?? 'AniList user'}'
-                      : configService.config.anilistClientId.isEmpty
-                          ? 'Login setup in progress'
-                          : 'Not connected • Tap to log in',
-                  buttonLabel: store.anilistConnected ? 'Logout' : 'Login',
-                  onButton: () => store.anilistConnected
-                      ? _logoutAccount(context, 'AniList')
-                      : _loginAnilist(context),
-                ),
-                const SettingsDivider(),
-                _AccountTile(
-                  name: 'MyAnimeList',
-                  color: const Color(0xFFEC5A9E),
-                  icon: Reicon.outline.star,
-                  status: store.malConnected
-                      ? 'Connected as ${store.malUsername ?? 'MAL user'}'
-                      : configService.config.malClientId.isEmpty
-                          ? 'Login setup in progress'
-                          : 'Not connected • Tap to log in',
-                  buttonLabel: store.malConnected ? 'Logout' : 'Login',
-                  onButton: () => store.malConnected
-                      ? _logoutAccount(context, 'MyAnimeList')
-                      : _loginMal(context),
-                ),
-              ],
+            // 0.2.4: rebuilds when the provider config refreshes, so
+            // the "Login setup in progress" status flips to
+            // "Not connected • Tap to log in" the moment the OAuth
+            // client IDs land in anibee-config — no restart needed.
+            ListenableBuilder(
+              listenable: configService,
+              builder: (BuildContext context, Widget? _) {
+                return SettingsSection(
+                  title: 'ACCOUNTS',
+                  children: <Widget>[
+                    _AccountTile(
+                      name: 'AniList',
+                      color: const Color(0xFF2F7CF6),
+                      icon: Reicon.outline.userCircle,
+                      status: store.anilistConnected
+                          ? 'Connected as ${store.anilistUsername ?? 'AniList user'}'
+                          : configService.config.anilistClientId.isEmpty
+                              ? 'Login setup in progress'
+                              : 'Not connected • Tap to log in',
+                      buttonLabel: store.anilistConnected ? 'Logout' : 'Login',
+                      onButton: () => store.anilistConnected
+                          ? _logoutAccount(context, 'AniList')
+                          : _loginAnilist(context),
+                    ),
+                    const SettingsDivider(),
+                    _AccountTile(
+                      name: 'MyAnimeList',
+                      color: const Color(0xFFEC5A9E),
+                      icon: Reicon.outline.star,
+                      status: store.malConnected
+                          ? 'Connected as ${store.malUsername ?? 'MAL user'}'
+                          : configService.config.malClientId.isEmpty
+                              ? 'Login setup in progress'
+                              : 'Not connected • Tap to log in',
+                      buttonLabel: store.malConnected ? 'Logout' : 'Login',
+                      onButton: () => store.malConnected
+                          ? _logoutAccount(context, 'MyAnimeList')
+                          : _loginMal(context),
+                    ),
+                  ],
+                );
+              },
             ),
             SettingsSection(
               title: 'APPEARANCE',
@@ -450,6 +459,13 @@ class SettingsScreen extends StatelessWidget {
   /// "setup in progress" state instead of asking the user for it.
   /// Implicit grant — the token comes back in the redirect fragment.
   Future<void> _loginAnilist(BuildContext context) async {
+    // 0.2.4: pick up client IDs the moment they land in the remote
+    // config — no rebuild, no restart. A failed refresh keeps the
+    // last-good config, so login still works with what we have.
+    try {
+      await configService.refresh();
+    } catch (_) {}
+    if (!context.mounted) return;
     final String clientId = configService.config.anilistClientId;
     if (clientId.isEmpty) {
       _snack(context, 'AniList login is being set up — please try again soon.');
@@ -489,6 +505,11 @@ class SettingsScreen extends StatelessWidget {
   /// config; "setup in progress" until it is configured. Authorization
   /// Code + PKCE plain.
   Future<void> _loginMal(BuildContext context) async {
+    // 0.2.4: same remote-config refresh as AniList (see above).
+    try {
+      await configService.refresh();
+    } catch (_) {}
+    if (!context.mounted) return;
     final String clientId = configService.config.malClientId;
     if (clientId.isEmpty) {
       _snack(

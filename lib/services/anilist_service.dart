@@ -26,7 +26,7 @@ class AniListService {
         r'query($p:Int,$n:Int,$q:String){Page(page:$p,perPage:$n)'
         r'{pageInfo{hasNextPage}media(search:$q,type:ANIME,isAdult:false)'
         r'{id idMal title{romaji english}coverImage{large extraLarge}'
-        r' format episodes seasonYear averageScore genres description}}}';
+        r' trailer{id site} format episodes seasonYear averageScore genres description}}}';
     final Map<String, dynamic>? data = await _postSafe(q, <String, Object?>{
       'p': page,
       'n': 20,
@@ -47,12 +47,35 @@ class AniListService {
     final String q =
         '{Media(id:$anilistId,type:ANIME){id idMal title{romaji english native}'
         ' coverImage{large extraLarge} bannerImage description status episodes'
-        ' nextAiringEpisode{episode} genres seasonYear format averageScore}}';
+        ' trailer{id site} nextAiringEpisode{episode} genres seasonYear format averageScore}}';
     final Map<String, dynamic>? data = await _post(q, <String, Object?>{});
     final Map<String, dynamic>? media =
         data?['Media'] as Map<String, dynamic>?;
     if (media == null) return null;
     return animeFromMedia(media);
+  }
+
+  /// Real trailer for one AniList id (0.2.4): AniList's trailer field
+  /// ({id, site} — usually YouTube). Returns null when the title has
+  /// no trailer or the lookup fails; the detail banner then shows the
+  /// poster image only — never the old sample video.
+  Future<({String site, String videoId})?> fetchTrailer(
+    int anilistId,
+  ) async {
+    final Map<String, dynamic>? data = await _postSafe(
+      '{Media(id:$anilistId,type:ANIME){trailer{id site}}}',
+      <String, Object?>{},
+    );
+    final Map<String, dynamic>? media =
+        data?['Media'] as Map<String, dynamic>?;
+    final Map<String, dynamic>? trailer =
+        media?['trailer'] as Map<String, dynamic>?;
+    final String? site = trailer?['site'] as String?;
+    final String? id = trailer?['id'] as String?;
+    if (site == null || site.isEmpty || id == null || id.isEmpty) {
+      return null;
+    }
+    return (site: site, videoId: id);
   }
 
   /// Resolve an AniList id for a catalogue title (titles without a
@@ -201,7 +224,9 @@ class AniListService {
       synopsis: cleanDescription(m['description'] as String?),
       posterUrl: poster,
       gradient: const <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
-      trailerUrl: kSampleTrailerUrl,
+      // 0.2.4: the REAL trailer (YouTube watch URL) when AniList has
+      // one; null otherwise — the sample video is gone everywhere.
+      trailerUrl: trailerWatchUrl(m['trailer'] as Map<String, dynamic>?),
     );
   }
 
@@ -233,6 +258,53 @@ String normalizeTitle(String raw) {
       .replaceAll(RegExp('[^a-z0-9]+'), ' ')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
+}
+
+/// YouTube watch URL for an AniList trailer object ({id, site}).
+/// Only YouTube is playable in-app; any other site (or a missing
+/// trailer) returns null — the caller shows the banner image only.
+String? trailerWatchUrl(Map<String, dynamic>? trailer) {
+  final String? site = trailer?['site'] as String?;
+  final String? id = trailer?['id'] as String?;
+  if (site != 'youtube' || id == null || id.isEmpty) return null;
+  return 'https://www.youtube.com/watch?v=$id';
+}
+
+/// Video id from a YouTube watch / youtu.be / embed URL. Null when
+/// the URL is not a YouTube link.
+String? youtubeVideoIdFromUrl(String? url) {
+  if (url == null || url.isEmpty) return null;
+  final Uri uri = Uri.tryParse(url) ?? Uri();
+  if (uri.host.endsWith('youtube.com')) {
+    final String? v = uri.queryParameters['v'];
+    if (v != null && v.isNotEmpty) return v;
+    // /embed/<id>
+    final List<String> segments = uri.pathSegments;
+    final int embedIndex = segments.indexOf('embed');
+    if (embedIndex >= 0 && embedIndex + 1 < segments.length) {
+      return segments[embedIndex + 1];
+    }
+    return null;
+  }
+  if (uri.host.endsWith('youtu.be') && uri.pathSegments.isNotEmpty) {
+    return uri.pathSegments.first;
+  }
+  return null;
+}
+
+/// YouTube embed URL for the in-app trailer player. Muted + looping
+/// with no YT chrome for the inline banner; sound + controls for the
+/// fullscreen trailer route.
+String youtubeEmbedUrl(
+  String videoId, {
+  bool muted = true,
+  bool controls = false,
+}) {
+  final String mute = muted ? '1' : '0';
+  final String showControls = controls ? '1' : '0';
+  return 'https://www.youtube.com/embed/$videoId'
+      '?autoplay=1&mute=$mute&loop=1&playlist=$videoId'
+      '&controls=$showControls&rel=0&playsinline=1';
 }
 
 class AniListException implements Exception {

@@ -41,11 +41,14 @@ Future<({String server, String subDub, String? debrid})?> showServerSheet({
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
     builder: (BuildContext context) {
-      return _ServerSheet(
+      return ServerSheetBody(
         store: store,
         currentServer: currentServer,
         subDub: subDub,
         currentDebrid: currentDebrid,
+        onPick: (({String server, String subDub, String? debrid}) result) =>
+            Navigator.of(context).pop(result),
+        onClose: () => Navigator.of(context).pop(),
       );
     },
   );
@@ -75,24 +78,38 @@ const List<String> kSheetLanguages = <String>[
   'Spanish',
 ];
 
-class _ServerSheet extends StatefulWidget {
-  const _ServerSheet({
+/// The server-picker body, usable in two places (0.2.4):
+/// - the Anilili-style bottom sheet ([showServerSheet], unchanged);
+/// - the right-side slide-over Sources panel in the full player
+///   (`compact: true` — single-column list, no drag handle, no
+///   fixed 78% height; the panel supplies the frame).
+/// Picking a server calls [onPick]; Close calls [onClose].
+class ServerSheetBody extends StatefulWidget {
+  const ServerSheetBody({
+    super.key,
     required this.store,
     required this.currentServer,
     required this.subDub,
+    required this.onPick,
+    required this.onClose,
     this.currentDebrid,
+    this.compact = false,
   });
 
   final SettingsStore store;
   final String currentServer;
   final String subDub;
   final String? currentDebrid;
+  final void Function(({String server, String subDub, String? debrid}))
+  onPick;
+  final VoidCallback onClose;
+  final bool compact;
 
   @override
-  State<_ServerSheet> createState() => _ServerSheetState();
+  State<ServerSheetBody> createState() => _ServerSheetBodyState();
 }
 
-class _ServerSheetState extends State<_ServerSheet> {
+class _ServerSheetBodyState extends State<ServerSheetBody> {
   late String _filter; // All / Sub / Dub
   String _language = 'Any';
   late String _selectedServer;
@@ -139,29 +156,35 @@ class _ServerSheetState extends State<_ServerSheet> {
     return out;
   }
 
+  bool _isSelected(({String server, String variant}) card) {
+    return card.server == _selectedServer &&
+        ((_filter == 'All' && card.variant == widget.subDub) ||
+            _filter == card.variant);
+  }
+
   @override
   Widget build(BuildContext context) {
     final Color accent = Theme.of(context).colorScheme.primary;
     final List<({String server, String variant})> cards = _cards;
 
-    return SafeArea(
-      child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.78,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            const SizedBox(height: 8),
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF3A3A48),
-                  borderRadius: BorderRadius.circular(2),
-                ),
+    final Widget content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        if (!widget.compact) ...<Widget>[
+          const SizedBox(height: 8),
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFF3A3A48),
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
-            const SizedBox(height: 16),
+          ),
+          const SizedBox(height: 16),
+        ],
+        if (widget.compact) const SizedBox(height: 8),
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 20),
               child: Text(
@@ -233,7 +256,7 @@ class _ServerSheetState extends State<_ServerSheet> {
                           name: 'TorBox',
                           selected: widget.currentDebrid == 'torbox',
                           accent: accent,
-                          onTap: () => Navigator.of(context).pop((
+                          onTap: () => widget.onPick((
                             server: 'TorBox',
                             subDub: _filter == 'All'
                                 ? widget.subDub
@@ -251,7 +274,7 @@ class _ServerSheetState extends State<_ServerSheet> {
                           name: 'Real-Debrid',
                           selected: widget.currentDebrid == 'realdebrid',
                           accent: accent,
-                          onTap: () => Navigator.of(context).pop((
+                          onTap: () => widget.onPick((
                             server: 'Real-Debrid',
                             subDub: _filter == 'All'
                                 ? widget.subDub
@@ -330,7 +353,8 @@ class _ServerSheetState extends State<_ServerSheet> {
               ),
             ),
             const SizedBox(height: 16),
-            // Server cards grid.
+            // Server cards: 2-column grid in the sheet, single-column
+            // list in the side panel.
             Expanded(
               child: cards.isEmpty
                   ? const Center(
@@ -339,37 +363,57 @@ class _ServerSheetState extends State<_ServerSheet> {
                         style: TextStyle(color: Colors.white70, fontSize: 13),
                       ),
                     )
-                  : GridView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 10,
-                            crossAxisSpacing: 10,
-                            childAspectRatio: 2.1,
-                          ),
-                      itemCount: cards.length,
-                      itemBuilder: (BuildContext context, int index) {
-                        final ({String server, String variant}) card =
-                            cards[index];
-                        final bool isSelected =
-                            card.server == _selectedServer &&
-                            ((_filter == 'All' &&
-                                    card.variant == widget.subDub) ||
-                                _filter == card.variant);
-                        return _ServerCard(
-                          server: card.server,
-                          variant: card.variant,
-                          selected: isSelected,
-                          accent: accent,
-                          onTap: () => Navigator.of(context).pop((
-                            server: card.server,
-                            subDub: card.variant,
-                            debrid: null,
-                          )),
-                        );
-                      },
-                    ),
+                  : widget.compact
+                      ? ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          itemCount: cards.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 10),
+                          itemBuilder: (BuildContext context, int index) {
+                            final ({String server, String variant}) card =
+                                cards[index];
+                            return SizedBox(
+                              height: 64,
+                              child: _ServerCard(
+                                server: card.server,
+                                variant: card.variant,
+                                selected: _isSelected(card),
+                                accent: accent,
+                                onTap: () => widget.onPick((
+                                  server: card.server,
+                                  subDub: card.variant,
+                                  debrid: null,
+                                )),
+                              ),
+                            );
+                          },
+                        )
+                      : GridView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                mainAxisSpacing: 10,
+                                crossAxisSpacing: 10,
+                                childAspectRatio: 2.1,
+                              ),
+                          itemCount: cards.length,
+                          itemBuilder: (BuildContext context, int index) {
+                            final ({String server, String variant}) card =
+                                cards[index];
+                            return _ServerCard(
+                              server: card.server,
+                              variant: card.variant,
+                              selected: _isSelected(card),
+                              accent: accent,
+                              onTap: () => widget.onPick((
+                                server: card.server,
+                                subDub: card.variant,
+                                debrid: null,
+                              )),
+                            );
+                          },
+                        ),
             ),
             // Bottom row: Retry + Close.
             Padding(
@@ -389,7 +433,7 @@ class _ServerSheetState extends State<_ServerSheet> {
                     ),
                   ),
                   TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: widget.onClose,
                     child: const Text(
                       'Close',
                       style: TextStyle(
@@ -403,7 +447,13 @@ class _ServerSheetState extends State<_ServerSheet> {
               ),
             ),
           ],
-        ),
+        );
+
+    if (widget.compact) return content;
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.78,
+        child: content,
       ),
     );
   }

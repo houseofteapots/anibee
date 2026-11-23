@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-import '../models.dart';
 import '../services/miruro_resolver.dart';
 
 /// Pick the subtitle track for the user's preferred language
@@ -70,10 +69,9 @@ SubtitleTrack pickDefaultSubtitleTrack(List<SubtitleTrack> tracks) {
 /// - Tapping the inline player also expands to the full player.
 /// - Leaving the full player returns the player to the inline banner.
 ///
-/// M1.1: the sample trailer URL is verified working (the old Google
-/// bucket 403s). If it ever fails to load, the Apple HLS sample is tried
-/// once; [loadError] surfaces so the UI shows a real state, never a
-/// black void.
+/// 0.2.4: there is no sample video any more. A failed load surfaces
+/// [loadError] so the UI shows a real state, never a black void and
+/// never a placeholder video.
 class TrailerPlayer extends ChangeNotifier {
   TrailerPlayer() {
     _player = Player();
@@ -95,12 +93,10 @@ class TrailerPlayer extends ChangeNotifier {
   String? _url;
   bool _inlineActive = true;
   bool _loaded = false;
-  bool _fallbackTried = false;
   String? _loadError;
 
-  /// True when the loaded media is a real episode stream (M2) rather
-  /// than the sample trailer — retry re-opens the stream, never the
-  /// sample fallback.
+  /// True when the loaded media is a real episode stream (M2).
+  /// Retry re-opens the same stream.
   bool _isStream = false;
   Map<String, String> _streamHeaders = const <String, String>{};
   List<SubtitleTrack> _streamSubtitles = const <SubtitleTrack>[];
@@ -148,7 +144,6 @@ class TrailerPlayer extends ChangeNotifier {
     _isStream = false;
     _streamHeaders = const <String, String>{};
     _streamSubtitles = const <SubtitleTrack>[];
-    _fallbackTried = false;
     _loadError = null;
     _loaded = false;
     notifyListeners();
@@ -175,7 +170,6 @@ class TrailerPlayer extends ChangeNotifier {
           (SubtitleInfo s) => SubtitleTrack.uri(s.url, title: s.label),
         )
         .toList();
-    _fallbackTried = true; // never fall back to the sample for streams
     _loadError = null;
     _loaded = false;
     notifyListeners();
@@ -242,13 +236,10 @@ class TrailerPlayer extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 0.2.4: a failed load is an error, never a sample video — the
+  /// old fallback played Big Buck Bunny in the full player whenever
+  /// a stream URL failed, which is exactly what the user reported.
   Future<void> _onLoadFailed(String failedUrl, Object e) async {
-    if (!_fallbackTried && failedUrl != kSampleTrailerFallbackUrl) {
-      _fallbackTried = true;
-      _url = kSampleTrailerFallbackUrl;
-      await _openUrl(kSampleTrailerFallbackUrl);
-      return;
-    }
     _loadError = e.toString();
     _loaded = false;
   }

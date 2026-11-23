@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:anibee_mpv_pip/anibee_mpv_pip.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -8,18 +10,23 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../models.dart';
 import '../player/trailer_player.dart';
+import '../services/anilist_service.dart';
+import '../services/aniskip_service.dart';
 import '../services/miruro_resolver.dart';
 import '../settings_store.dart';
 import '../theme.dart';
 import '../widgets/poster.dart';
 import '../widgets/server_sheet.dart';
 
+/// Right-side slide-over panel kind (0.2.4, Zeus style).
+enum _PanelKind { sources, audio, subtitles, quality }
+
 /// Full-screen player (Zeus feature set, AniBee accent).
 ///
 /// - Opens in LANDSCAPE, returns to portrait on close.
 /// - Never blank: the anime poster sits behind the video; a loading
-///   spinner while the trailer buffers; a real error state (poster +
-///   message + Retry) when the sample fails to load.
+///   spinner while the stream buffers; a real error state (poster +
+///   message + Retry) when the stream fails to load.
 /// - Play/pause, seek bar with times, double-tap seek, swipe gestures
 ///   (seek / brightness / volume), playback speed, audio track picker,
 ///   subtitle track picker + in-player subtitle edit + delay, episode
@@ -32,15 +39,12 @@ import '../widgets/server_sheet.dart';
 ///   Settings → Appearance (`Theme.colorScheme.primary`) — never a
 ///   hardcoded gold/amber/white.
 ///
-/// M1.1 plays the sample trailer for every episode; full episode streams
-/// arrive with milestone 2 (real Miruro resolve). The menus are fully
-/// wired to libmpv and work against whatever tracks the stream has.
-///
 /// M2: [stream] is the resolved real stream for [initialEpisode]
 /// (Miruro/Anikoto or a Debrid direct link). When the user switches
 /// episode inside the player, [onResolveEpisode] resolves the new
-/// episode's stream (null = keep playing the current episode). When
-/// both are null the player falls back to the sample trailer.
+/// episode's stream (null = keep playing the current episode).
+/// There is no sample fallback any more (0.2.4) — a stream that
+/// cannot be resolved shows the error dialog, never a placeholder.
 class FullPlayerScreen extends StatefulWidget {
   const FullPlayerScreen({
     super.key,
@@ -56,6 +60,8 @@ class FullPlayerScreen extends StatefulWidget {
     this.onServerChanged,
     this.subDub = 'Sub',
     this.currentDebrid,
+    this.anilist,
+    this.aniSkip,
   });
 
   final TrailerPlayer trailer;
@@ -63,6 +69,15 @@ class FullPlayerScreen extends StatefulWidget {
   final Anime anime;
   final List<Episode> episodes;
   final Episode initialEpisode;
+
+  /// AniList service (0.2.4): resolves malId for AniSkip when the
+  /// anime has an anilistId but no malId (the local catalogue). Null
+  /// in tests — AniSkip is then skipped.
+  final AniListService? anilist;
+
+  /// AniSkip service (0.2.4): real Skip Intro/Outro data. Injected
+  /// for tests; a real one is created when not passed in.
+  final AniSkipService? aniSkip;
 
   /// Fired when the user jumps to another episode inside the player
   /// (Detail marks progress + list status).
@@ -103,7 +118,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   bool _controlsVisible = true;
   Timer? _hideTimer;
 
-  /// The stream currently playing (M2, null = sample trailer).
+  /// The stream currently playing (M2, null = no stream loaded yet).
   ResolvedStream? _currentStream;
 
   /// True while a new episode's stream is resolving.
@@ -177,6 +192,35 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// English-subtitle fetch (0.2.3): one attempt per loaded stream.
   bool _englishFetchTried = false;
 
+  /// Real AniSkip data for the current episode (0.2.4): null = no
+  /// data (not fetched yet, or AniSkip has none for this episode) —
+  /// the player then shows NO Skip button at all, never the old
+  /// hardcoded 85s jump.
+  SkipTimes? _skipTimes;
+  int? _skipTimesEpisode;
+  int? _resolvedMalId;
+
+  /// Right-side slide-over panel (0.2.4, Zeus style): null = closed.
+  _PanelKind? _panelKind;
+
+  AniSkipService get _aniSkip => widget.aniSkip ?? _fallbackAniSkip;
+  late final AniSkipService _fallbackAniSkip;
+
+  /// Test seam: hide the controls overlay without a tap, so a test
+  /// can prove a double-tap leaves them hidden.
+  @visibleForTesting
+  void hideControlsForTest() {
+    if (mounted) setState(() => _controlsVisible = false);
+  }
+
+  /// Test seam: whether the controls overlay is currently visible.
+  @visibleForTesting
+  bool get controlsVisibleForTest => _controlsVisible;
+
+  /// Test seam: whether the double-tap seek flash is currently shown.
+  @visibleForTesting
+  bool get seekFlashVisibleForTest => _seekFlashVisible;
+
   /// Last periodic progress save (Continue Watching + resume).
   DateTime _lastProgressSave = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -200,6 +244,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _currentEpisode = widget.initialEpisode;
     _rate = _player.state.rate;
     _fallbackResolver = MiruroResolver();
+    _fallbackAniSkip = AniSkipService();
 
     // Landscape + immersive, like a real video player.
     SystemChrome.setPreferredOrientations(<DeviceOrientation>[
@@ -221,6 +266,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
     _positionSub = _player.stream.position.listen(_onPosition);
     _scheduleHide();
+    // 0.2.4: real AniSkip data for the first episode (best-effort,
+    // silent — no data simply means no Skip button).
+    unawaited(_loadSkipTimes(_currentEpisode));
   }
 
   @override
@@ -339,8 +387,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           0,
           kSubtitleColors.length - 1,
         )];
+    // mpv sub-color is #AARRGGBB — the alpha carries the text opacity.
+    final int alpha = ((_store.subOpacity.clamp(0, 100) / 100) * 255).round();
     final String hex =
-        '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
+        '#${alpha.toRadixString(16).padLeft(2, '0')}'
+        '${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
     unawaited(
       _setMpvProperty(
         _player,
@@ -348,19 +399,45 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         (_store.subSize * 2).toString(),
       ),
     );
+    unawaited(
+      _setMpvProperty(_player, 'sub-font', _mpvFontName(_store.subFont)),
+    );
     unawaited(_setMpvProperty(_player, 'sub-color', hex));
     unawaited(
       _setMpvProperty(
         _player,
-        'sub-back-color',
-        _store.subBackground ? '#CC000000' : '#00000000',
+        'sub-bold',
+        _store.subBold ? 'yes' : 'no',
       ),
     );
     unawaited(
       _setMpvProperty(
         _player,
-        'sub-pos',
-        _store.subPosition == 'Top' ? '5' : '100',
+        'sub-border-size',
+        switch (_store.subOutline) {
+          'none' => '0',
+          'thin' => '1',
+          'thick' => '3',
+          _ => '2',
+        },
+      ),
+    );
+    unawaited(
+      _setMpvProperty(
+        _player,
+        'sub-back-color',
+        switch (_store.subBackgroundMode) {
+          'solid' => '#FF000000',
+          'dark' => '#CC000000',
+          _ => '#00000000',
+        },
+      ),
+    );
+    unawaited(
+      _setMpvProperty(
+        _player,
+        'sub-codepage',
+        _store.subEncoding == 'auto' ? 'auto' : _store.subEncoding,
       ),
     );
     unawaited(
@@ -370,6 +447,75 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         (_store.subDelayMs / 1000).toStringAsFixed(2),
       ),
     );
+    _applySubtitleOffset();
+  }
+
+  /// mpv fontconfig family for the Settings font names.
+  String _mpvFontName(String font) {
+    return switch (font) {
+      'System' => 'sans-serif',
+      'Rounded' => 'Arial Rounded MT Bold',
+      'Mono' => 'monospace',
+      _ => 'Inter Semi Bold',
+    };
+  }
+
+  /// Subtitle vertical position (mpv sub-pos, 0 = top, 100 = bottom):
+  /// Top / Middle are fixed; Bottom follows the controls — while the
+  /// controls are visible the subtitle sits ABOVE the bottom button
+  /// row (0.2.4: the row overlapped the subtitle text), and drops
+  /// back to the very bottom when they hide. Manual position (auto-
+  /// adjust off) overrides everything.
+  double _subtitlePosValue() {
+    if (_store.subPosition == 'Top') return 5;
+    if (_store.subPosition == 'Middle') return 50;
+    if (!_store.subAutoAdjust) {
+      return (100 - _store.subManualPercent).clamp(0, 100);
+    }
+    return _controlsVisible ? 80 : 100;
+  }
+
+  void _applySubtitleOffset() {
+    unawaited(
+      _setMpvProperty(
+        _player,
+        'sub-pos',
+        _subtitlePosValue().toStringAsFixed(0),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------- AniSkip (0.2.4)
+
+  /// Fetch real Skip Intro / Skip Outro segments for an episode.
+  /// AniSkip needs a MAL id: the anime's own, else resolved from its
+  /// AniList id (one GraphQL call, cached for the title). No id, no
+  /// service, or no AniSkip data -> null, and the player shows no
+  /// Skip button. Never throws.
+  Future<void> _loadSkipTimes(Episode episode) async {
+    if (_skipTimesEpisode == episode.number && _skipTimes != null) return;
+    _skipTimesEpisode = episode.number;
+    int? malId = widget.anime.malId ?? _resolvedMalId;
+    if (malId == null && widget.anime.anilistId != null) {
+      try {
+        final Anime? full = await widget.anilist?.mediaById(
+          widget.anime.anilistId!,
+        );
+        malId = full?.malId;
+        if (malId != null) _resolvedMalId = malId;
+      } catch (_) {
+        malId = null;
+      }
+    }
+    if (malId == null) return;
+    final int duration = _player.state.duration.inSeconds;
+    final SkipTimes? times = await _aniSkip.fetchSkipTimes(
+      malId: malId,
+      episode: episode.number,
+      episodeLength: duration > 0 ? duration : null,
+    );
+    if (!mounted || _skipTimesEpisode != episode.number) return;
+    setState(() => _skipTimes = times);
   }
 
   // ------------------------------------------------------------- controls
@@ -379,17 +525,28 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _hideTimer = Timer(const Duration(milliseconds: 3500), () {
       if (mounted && _player.state.playing) {
         setState(() => _controlsVisible = false);
+        // Controls hid: the subtitle drops back to the very bottom.
+        _applySubtitleOffset();
       }
     });
   }
 
-  void _pokeControls() {
-    if (!_controlsVisible) setState(() => _controlsVisible = true);
+  /// Show the controls overlay (single tap, button taps, episode
+  /// switches). Double-tap handlers pass `showControls: false`:
+  /// a double-tap must ONLY seek / play-pause and leave the overlay
+  /// exactly as it was (0.2.4 — the old code called this from
+  /// _seekBy/_togglePlay, so every double-tap flashed the overlay).
+  /// The subtitle offset follows the overlay either way.
+  void _pokeControls({bool showControls = true}) {
+    if (showControls && !_controlsVisible) {
+      setState(() => _controlsVisible = true);
+    }
+    _applySubtitleOffset();
     _scheduleHide();
   }
 
-  Future<void> _togglePlay() async {
-    _pokeControls();
+  Future<void> _togglePlay({bool showControls = true}) async {
+    _pokeControls(showControls: showControls);
     if (_player.state.playing) {
       await _player.pause();
       // Pausing saves progress right away (Continue Watching + resume).
@@ -399,15 +556,27 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     }
   }
 
-  Future<void> _seekBy(int seconds, {bool showFlash = false}) async {
+  Future<void> _seekBy(
+    int seconds, {
+    bool showFlash = false,
+    bool showControls = true,
+  }) async {
     final Duration pos = _player.state.position;
     final Duration dur = _player.state.duration;
     Duration target = pos + Duration(seconds: seconds);
     if (target < Duration.zero) target = Duration.zero;
     if (target > dur) target = dur;
-    await _player.seek(target);
+    // Feedback FIRST, seek second: the flash is the user's proof the
+    // tap worked, and it must not wait on the seek round-trip (a
+    // slow network stream would otherwise leave the tap feeling
+    // dead). The seek itself stays best-effort below.
     if (showFlash) _flashSeek(seconds < 0, seconds.abs());
-    _pokeControls();
+    _pokeControls(showControls: showControls);
+    // Best-effort: a rejected seek (no media yet, live edge) must
+    // never break the gesture — the flash is the feedback either way.
+    try {
+      await _player.seek(target);
+    } catch (_) {}
   }
 
   /// Double-tap seek flash: a brief "-10s" / "+10s" badge on the
@@ -508,6 +677,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       _resumeApplied = true; // resume handled inline below
     });
     widget.onEpisodeChanged?.call(episode);
+    // 0.2.4: real AniSkip data for the new episode.
+    unawaited(_loadSkipTimes(episode));
     // M2: a real stream per episode — resolve the new one. Failure
     // keeps the current episode playing (never a blank screen).
     if (widget.onResolveEpisode != null) {
@@ -689,147 +860,145 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   // ---------------------------------------------------------------- sheets
 
-  Future<void> _showAudioSheet() async {
-    final Tracks tracks = _player.state.tracks;
-    final String currentId = _player.state.track.audio.id;
-    final List<AudioTrack> list = tracks.audio
-        .where((AudioTrack t) => t.id != 'auto' && t.id != 'no')
-        .toList();
-    await _showTrackSheet<AudioTrack>(
-      title: 'Audio',
-      currentId: currentId,
-      entries: <({String id, String label, AudioTrack? track})>[
-        (id: 'auto', label: 'Auto', track: AudioTrack.auto()),
-        ...list.map(
-          (AudioTrack t) => (
-            id: t.id,
-            label: _trackLabel(t.title, t.language, 'Track'),
-            track: t,
-          ),
-        ),
-        (id: 'no', label: 'Off', track: AudioTrack.no()),
-      ],
-      onPick: (AudioTrack track) => _player.setAudioTrack(track),
-    );
+  // ---------------------------------------------------------------- panels
+  // 0.2.4: Sources / Audio / Subtitles / Quality open as RIGHT-SIDE
+  // slide-over panels (Zeus style, ~42% width, dark glossy), not
+  // bottom sheets. Volume + Episode stay bottom sheets. Opening a
+  // panel keeps the controls visible — no auto-hide while it is open.
+
+  void _openPanel(_PanelKind kind) {
+    setState(() {
+      _panelKind = kind;
+      _controlsVisible = true;
+    });
+    _hideTimer?.cancel();
   }
 
-  Future<void> _showSubtitleSheet() async {
-    final Tracks tracks = _player.state.tracks;
-    final String currentId = _player.state.track.subtitle.id;
-    // mpv's own tracks (incl. HLS rendition subtitles) + the tracks the
-    // resolver fetched for this episode (e.g. English when the stream
-    // only carried Arabic) — deduped by id so nothing shows twice.
-    final List<SubtitleTrack> list = tracks.subtitle
-        .where((SubtitleTrack t) => t.id != 'auto' && t.id != 'no')
-        .toList();
-    for (final SubtitleTrack t in widget.trailer.streamSubtitles) {
-      if (!list.any((SubtitleTrack m) => m.id == t.id)) list.add(t);
-    }
-    final Color accent = Theme.of(context).colorScheme.primary;
-    bool openStyle = false;
-    final SubtitleTrack? picked = await showModalBottomSheet<SubtitleTrack>(
-      context: context,
-      backgroundColor: const Color(0xFF17171F),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Text(
-                  'Subtitles',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
+  void _closePanel() {
+    setState(() => _panelKind = null);
+    _scheduleHide();
+  }
+
+  void _showAudioPanel() => _openPanel(_PanelKind.audio);
+
+  void _showSubtitlesPanel() => _openPanel(_PanelKind.subtitles);
+
+  void _showSourcesPanel() => _openPanel(_PanelKind.sources);
+
+  void _showQualityPanel() => _openPanel(_PanelKind.quality);
+
+  /// The right-side slide-over panel: a dim scrim on the left (tap
+  /// to close) and the dark glossy panel on the right. Rendered above
+  /// the controls in the build stack, independent of the controls'
+  /// auto-hide.
+  Widget _buildSidePanel(Color accent) {
+    final _PanelKind kind = _panelKind!;
+    final String title = switch (kind) {
+      _PanelKind.sources => 'Sources',
+      _PanelKind.audio => 'Audio',
+      _PanelKind.subtitles => 'Subtitles',
+      _PanelKind.quality => 'Quality',
+    };
+    final Widget content = switch (kind) {
+      _PanelKind.sources => _buildSourcesPanelContent(),
+      _PanelKind.audio => _buildAudioPanelContent(accent),
+      _PanelKind.subtitles => _buildSubtitlesPanelContent(accent),
+      _PanelKind.quality => _buildQualityPanelContent(accent),
+    };
+    return Positioned.fill(
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _closePanel,
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.35),
+              ),
+            ),
+          ),
+          Container(
+            width: MediaQuery.of(context).size.width * 0.42,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: <Color>[Color(0xFF23232F), Color(0xFF121218)],
+              ),
+              border: Border(
+                left: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.14),
+                ),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.close_rounded,
+                          color: Colors.white70,
+                        ),
+                        onPressed: _closePanel,
+                        tooltip: 'Close',
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: <Widget>[
-                    ListTile(
-                      title: const Text(
-                        'Off',
-                        style: TextStyle(color: Colors.white),
-                      ),
-                      trailing: currentId == 'no'
-                          ? Icon(Icons.check_rounded, color: accent)
-                          : null,
-                      onTap: () =>
-                          Navigator.of(context).pop(SubtitleTrack.no()),
-                    ),
-                    for (final SubtitleTrack t in list)
-                      ListTile(
-                        title: Text(
-                          _trackLabel(t.title, t.language, 'Subtitle'),
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                        trailing: t.id == currentId
-                            ? Icon(Icons.check_rounded, color: accent)
-                            : null,
-                        onTap: () => Navigator.of(context).pop(t),
-                      ),
-                    const Divider(color: Color(0xFF2A2A35)),
-                    ListTile(
-                      leading: Icon(
-                        Icons.tune_rounded,
-                        color: accent,
-                      ),
-                      title: const Text(
-                        'Subtitle style',
-                        style: TextStyle(color: Colors.white),
-                      ),
-                      subtitle: const Text(
-                        'Font, size, color, position, delay',
-                        style: TextStyle(color: Colors.white54, fontSize: 12),
-                      ),
-                      onTap: () {
-                        openStyle = true;
-                        Navigator.of(context).pop();
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
+                const Divider(color: Color(0xFF2A2A35), height: 1),
+                Expanded(child: content),
+              ],
+            ),
           ),
-        );
-      },
+        ],
+      ),
     );
-    if (openStyle) {
-      await _showSubtitleEditSheet();
-      _pokeControls();
-      return;
-    }
-    if (picked != null) {
-      await _player.setSubtitleTrack(picked);
-      _pokeControls();
-    }
   }
 
-  /// In-player server switch (server/playlist icon in the bottom row):
-  /// pick another server (or debrid) for THIS episode, then re-resolve
-  /// the current episode through Detail's resolver and reload it at
-  /// the same position.
-  Future<void> _showServerSheetInPlayer() async {
+  /// Sources panel: the same server picker as the detail screen's
+  /// bottom sheet, as a single-column list (ServerSheetBody compact).
+  Widget _buildSourcesPanelContent() {
+    final String? currentDebrid = _currentStream?.source == 'TorBox'
+        ? 'torbox'
+        : _currentStream?.source == 'Real-Debrid'
+        ? 'realdebrid'
+        : widget.currentDebrid;
+    return ServerSheetBody(
+      store: _store,
+      currentServer: _store.preferredServer,
+      subDub: widget.subDub,
+      currentDebrid: currentDebrid,
+      compact: true,
+      onPick: (({String server, String subDub, String? debrid}) result) {
+        _closePanel();
+        unawaited(_applyServerPick(result));
+      },
+      onClose: _closePanel,
+    );
+  }
+
+  /// In-player server switch (server icon in the bottom row): pick
+  /// another server (or debrid) for THIS episode, then re-resolve the
+  /// current episode through Detail's resolver and reload it at the
+  /// same position.
+  Future<void> _applyServerPick(
+    ({String server, String subDub, String? debrid}) picked,
+  ) async {
     final String currentServer = _store.preferredServer;
-    final ({String server, String subDub, String? debrid})? picked =
-        await showServerSheet(
-          context: context,
-          store: _store,
-          currentServer: currentServer,
-          subDub: widget.subDub,
-          currentDebrid: widget.currentDebrid,
-        );
-    if (picked == null) return;
     final String? currentDebrid = _currentStream?.source == 'TorBox'
         ? 'torbox'
         : _currentStream?.source == 'Real-Debrid'
@@ -839,7 +1008,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       return;
     }
     final Duration pos = _player.state.position;
-    await widget.onServerChanged?.call(picked.server, picked.subDub, picked.debrid);
+    await widget.onServerChanged?.call(
+      picked.server,
+      picked.subDub,
+      picked.debrid,
+    );
     if (!mounted || widget.onResolveEpisode == null) return;
     setState(() => _resolving = true);
     final ResolvedStream? stream = await widget.onResolveEpisode!(
@@ -857,6 +1030,652 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     unawaited(_player.seek(pos));
     unawaited(_player.play());
     _pokeControls();
+  }
+
+  /// Audio panel: Auto + the stream's audio tracks + Off, with an
+  /// accent radio for the selected one. Picking a track applies it
+  /// immediately and keeps the panel open.
+  Widget _buildAudioPanelContent(Color accent) {
+    final Tracks tracks = _player.state.tracks;
+    final String currentId = _player.state.track.audio.id;
+    final List<AudioTrack> list = tracks.audio
+        .where((AudioTrack t) => t.id != 'auto' && t.id != 'no')
+        .toList();
+    final List<({String id, String label, AudioTrack track})> entries =
+        <({String id, String label, AudioTrack track})>[
+          (id: 'auto', label: 'Auto', track: AudioTrack.auto()),
+          ...list.map(
+            (AudioTrack t) => (
+              id: t.id,
+              label: _trackLabel(t.title, t.language, 'Track'),
+              track: t,
+            ),
+          ),
+          (id: 'no', label: 'Off', track: AudioTrack.no()),
+        ];
+    return ListView(
+      children: <Widget>[
+        _panelSectionHeader('TRACKS'),
+        for (final entry in entries)
+          _panelTrackRow(
+            label: entry.label,
+            selected: entry.id == currentId,
+            accent: accent,
+            onTap: () async {
+              await _player.setAudioTrack(entry.track);
+              if (mounted) setState(() {});
+              _pokeControls();
+            },
+          ),
+      ],
+    );
+  }
+
+  /// Subtitles panel (Zeus style): track list (Off + every mpv /
+  /// fetched track) + "Load subtitle file" + the full style editor
+  /// (size, colour, font, bold, background, outline, position,
+  /// opacity, encoding, auto-adjust, manual position, delay) with a
+  /// live preview. Every option drives the real mpv properties via
+  /// _applySubtitleStyle().
+  Widget _buildSubtitlesPanelContent(Color accent) {
+    return ListenableBuilder(
+      listenable: _store,
+      builder: (BuildContext context, Widget? _) {
+        final Tracks tracks = _player.state.tracks;
+        final String currentId = _player.state.track.subtitle.id;
+        // mpv's own tracks (incl. HLS rendition subtitles) + the
+        // tracks the resolver fetched for this episode (e.g. English
+        // when the stream only carried Arabic) — deduped by id.
+        final List<SubtitleTrack> list = tracks.subtitle
+            .where((SubtitleTrack t) => t.id != 'auto' && t.id != 'no')
+            .toList();
+        for (final SubtitleTrack t in widget.trailer.streamSubtitles) {
+          if (!list.any((SubtitleTrack m) => m.id == t.id)) list.add(t);
+        }
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              _panelSectionHeader('TRACKS'),
+              _panelTrackRow(
+                label: 'Off',
+                selected: currentId == 'no',
+                accent: accent,
+                onTap: () async {
+                  await _player.setSubtitleTrack(SubtitleTrack.no());
+                  if (mounted) setState(() {});
+                },
+              ),
+              for (final SubtitleTrack t in list)
+                _panelTrackRow(
+                  label: _trackLabel(t.title, t.language, 'Subtitle'),
+                  selected: t.id == currentId,
+                  accent: accent,
+                  onTap: () async {
+                    await _player.setSubtitleTrack(t);
+                    if (mounted) setState(() {});
+                  },
+                ),
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                leading: Icon(Icons.upload_file_rounded, color: accent),
+                title: const Text(
+                  'Load subtitle file',
+                  style: TextStyle(color: Colors.white, fontSize: 14),
+                ),
+                subtitle: const Text(
+                  '.srt / .ass / .vtt from Files',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+                onTap: () => unawaited(_loadSubtitleFile()),
+              ),
+              const Divider(color: Color(0xFF2A2A35)),
+              _panelSectionHeader('SUBTITLE STYLE'),
+              _buildSubtitlePreview(),
+              const SizedBox(height: 6),
+              _stepperRow(
+                label: 'Text size',
+                value: _store.subSize.round().toString(),
+                onMinus: () {
+                  unawaited(
+                    _store.setSubSize((_store.subSize - 1).clamp(12, 28)),
+                  );
+                  _applySubtitleStyle();
+                },
+                onPlus: () {
+                  unawaited(
+                    _store.setSubSize((_store.subSize + 1).clamp(12, 28)),
+                  );
+                  _applySubtitleStyle();
+                },
+              ),
+              _dropdownRow<int>(
+                label: 'Text colour',
+                value: _store.subColorIndex,
+                items: <DropdownMenuItem<int>>[
+                  for (int i = 0; i < kSubtitleColors.length; i++)
+                    DropdownMenuItem<int>(
+                      value: i,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: kSubtitleColors[i],
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.4),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(kSubtitleColorNames[i]),
+                        ],
+                      ),
+                    ),
+                ],
+                onChanged: (int? i) {
+                  if (i == null) return;
+                  unawaited(_store.setSubColorIndex(i));
+                  _applySubtitleStyle();
+                },
+              ),
+              _dropdownRow<String>(
+                label: 'Font',
+                value: _store.subFont,
+                items: <DropdownMenuItem<String>>[
+                  for (final String f in <String>[
+                    'Inter Semibold',
+                    'System',
+                    'Rounded',
+                    'Mono',
+                  ])
+                    DropdownMenuItem<String>(value: f, child: Text(f)),
+                ],
+                onChanged: (String? f) {
+                  if (f == null) return;
+                  unawaited(_store.setSubFont(f));
+                  _applySubtitleStyle();
+                },
+              ),
+              _toggleRow(
+                label: 'Bold',
+                value: _store.subBold,
+                accent: accent,
+                onChanged: (bool v) {
+                  unawaited(_store.setSubBold(v));
+                  _applySubtitleStyle();
+                },
+              ),
+              _dropdownRow<String>(
+                label: 'Background',
+                value: _store.subBackgroundMode,
+                items: const <DropdownMenuItem<String>>[
+                  DropdownMenuItem<String>(value: 'off', child: Text('Off')),
+                  DropdownMenuItem<String>(
+                    value: 'dark',
+                    child: Text('Dark'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'solid',
+                    child: Text('Solid'),
+                  ),
+                ],
+                onChanged: (String? m) {
+                  if (m == null) return;
+                  unawaited(_store.setSubBackgroundMode(m));
+                  _applySubtitleStyle();
+                },
+              ),
+              _dropdownRow<String>(
+                label: 'Outline',
+                value: _store.subOutline,
+                items: const <DropdownMenuItem<String>>[
+                  DropdownMenuItem<String>(
+                    value: 'none',
+                    child: Text('None'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'thin',
+                    child: Text('Thin'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'medium',
+                    child: Text('Medium'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'thick',
+                    child: Text('Thick'),
+                  ),
+                ],
+                onChanged: (String? o) {
+                  if (o == null) return;
+                  unawaited(_store.setSubOutline(o));
+                  _applySubtitleStyle();
+                },
+              ),
+              _dropdownRow<String>(
+                label: 'Position',
+                value: _store.subPosition,
+                items: const <DropdownMenuItem<String>>[
+                  DropdownMenuItem<String>(
+                    value: 'Bottom',
+                    child: Text('Bottom'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'Middle',
+                    child: Text('Middle'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'Top',
+                    child: Text('Top'),
+                  ),
+                ],
+                onChanged: (String? p) {
+                  if (p == null) return;
+                  unawaited(_store.setSubPosition(p));
+                  _applySubtitleStyle();
+                },
+              ),
+              _stepperRow(
+                label: 'Text opacity',
+                value: '${_store.subOpacity}%',
+                onMinus: () {
+                  unawaited(
+                    _store.setSubOpacity(_store.subOpacity - 5),
+                  );
+                  _applySubtitleStyle();
+                },
+                onPlus: () {
+                  unawaited(
+                    _store.setSubOpacity(_store.subOpacity + 5),
+                  );
+                  _applySubtitleStyle();
+                },
+              ),
+              _dropdownRow<String>(
+                label: 'Encoding',
+                value: _store.subEncoding,
+                items: const <DropdownMenuItem<String>>[
+                  DropdownMenuItem<String>(
+                    value: 'auto',
+                    child: Text('Auto'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'utf-8',
+                    child: Text('UTF-8'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'windows-1252',
+                    child: Text('Windows-1252'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'windows-1251',
+                    child: Text('Windows-1251'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'iso-8859-1',
+                    child: Text('ISO-8859-1'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'shift_jis',
+                    child: Text('Shift_JIS'),
+                  ),
+                ],
+                onChanged: (String? e) {
+                  if (e == null) return;
+                  unawaited(_store.setSubEncoding(e));
+                  _applySubtitleStyle();
+                },
+              ),
+              _toggleRow(
+                label: 'Auto-Adjust',
+                value: _store.subAutoAdjust,
+                accent: accent,
+                onChanged: (bool v) {
+                  unawaited(_store.setSubAutoAdjust(v));
+                  _applySubtitleStyle();
+                },
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: Row(
+                  children: <Widget>[
+                    const Expanded(
+                      child: Text(
+                        'Manual position',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                    ),
+                    Text(
+                      '${_store.subManualPercent.round()}%',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () {
+                        unawaited(_store.setSubManualPercent(0));
+                        _applySubtitleStyle();
+                      },
+                      child: Text(
+                        'Reset',
+                        style: TextStyle(color: accent, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Slider(
+                value: _store.subManualPercent,
+                min: 0,
+                max: 100,
+                activeColor: accent,
+                // Manual position only applies when auto-adjust is off.
+                onChanged: _store.subAutoAdjust
+                    ? null
+                    : (double v) {
+                        unawaited(_store.setSubManualPercent(v));
+                        _applySubtitleStyle();
+                      },
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  'Delay: ${(_store.subDelayMs / 1000).toStringAsFixed(1)}s',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Slider(
+                value: _store.subDelayMs.toDouble(),
+                min: -5000,
+                max: 5000,
+                divisions: 100,
+                activeColor: accent,
+                onChanged: (double v) {
+                  unawaited(_store.setSubDelayMs(v.round()));
+                  _applySubtitleStyle();
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Live preview of the current subtitle style (sample text, styled
+  /// like the mpv output: size, colour + opacity, bold, background).
+  Widget _buildSubtitlePreview() {
+    final Color color =
+        kSubtitleColors[_store.subColorIndex.clamp(
+          0,
+          kSubtitleColors.length - 1,
+        )];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.12),
+          ),
+        ),
+        child: Text(
+          'This is a subtitle preview',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: _store.subSize,
+            fontWeight:
+                _store.subBold ? FontWeight.w700 : FontWeight.w500,
+            color: color.withValues(
+              alpha: _store.subOpacity.clamp(0, 100) / 100,
+            ),
+            backgroundColor: switch (_store.subBackgroundMode) {
+              'solid' => Colors.black,
+              'dark' => Colors.black54,
+              _ => Colors.transparent,
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Pick a .srt / .ass / .vtt file from Files and load it as an
+  /// external subtitle track on the playing stream (via the shared
+  /// TrailerPlayer — the track then appears in the list above).
+  Future<void> _loadSubtitleFile() async {
+    // file_picker 13: static pickFiles, returns the files directly
+    // (empty list = cancelled) — no FilePickerResult wrapper.
+    final List<PlatformFile> files = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: <String>['srt', 'ass', 'vtt'],
+    );
+    if (files.isEmpty) return;
+    final PlatformFile file = files.first;
+    String? path = file.path;
+    if (path == null) {
+      final File tmp = File(
+        '${Directory.systemTemp.path}/anibee-sub-${file.name}',
+      );
+      await tmp.writeAsBytes(await file.readAsBytes());
+      path = tmp.path;
+    }
+    await widget.trailer.addExternalSubtitle(
+      SubtitleInfo(label: file.name, url: path),
+    );
+    if (!mounted) return;
+    setState(() {});
+    _snack('Loaded subtitle: ${file.name}');
+  }
+
+  /// Quality panel: stream variants first (1080p / 720p …), then the
+  /// mpv video tracks. Picking a variant reloads the same stream at
+  /// that rendition, keeping the position.
+  Widget _buildQualityPanelContent(Color accent) {
+    final ResolvedStream? stream = _currentStream;
+    final List<Widget> children = <Widget>[];
+    if (stream != null && stream.variants.isNotEmpty) {
+      children.add(_panelSectionHeader('QUALITY'));
+      for (final StreamVariant v in stream.variants) {
+        children.add(
+          _panelTrackRow(
+            label: v.qualityLabel,
+            selected: v.url == stream.url,
+            accent: accent,
+            onTap: () => unawaited(_applyQualityVariant(v)),
+          ),
+        );
+      }
+      children.add(const SizedBox(height: 8));
+    }
+    final Tracks tracks = _player.state.tracks;
+    final String currentId = _player.state.track.video.id;
+    final List<VideoTrack> list = tracks.video
+        .where((VideoTrack t) => t.id != 'auto' && t.id != 'no')
+        .toList();
+    children.add(_panelSectionHeader('VIDEO TRACKS'));
+    children.add(
+      _panelTrackRow(
+        label: list.isEmpty ? 'Auto (single quality)' : 'Auto',
+        selected: currentId == 'auto',
+        accent: accent,
+        onTap: () async {
+          await _player.setVideoTrack(VideoTrack.auto());
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+    for (final VideoTrack t in list) {
+      children.add(
+        _panelTrackRow(
+          label: _trackLabel(t.title, null, 'Quality'),
+          selected: t.id == currentId,
+          accent: accent,
+          onTap: () async {
+            await _player.setVideoTrack(t);
+            if (mounted) setState(() {});
+          },
+        ),
+      );
+    }
+    return ListView(children: children);
+  }
+
+  Future<void> _applyQualityVariant(StreamVariant variant) async {
+    final ResolvedStream? stream = _currentStream;
+    if (stream == null || variant.url == stream.url) return;
+    final Duration pos = _player.state.position;
+    _currentStream = ResolvedStream(
+      url: variant.url,
+      label: '${stream.source} ${variant.qualityLabel}',
+      source: stream.source,
+      headers: stream.headers,
+      variants: stream.variants,
+      subtitles: stream.subtitles,
+    );
+    await _loadStream(_currentStream!);
+    if (!mounted) return;
+    unawaited(_player.seek(pos));
+    unawaited(_player.play());
+    setState(() {});
+  }
+
+  String _trackLabel(String? title, String? language, String fallback) {
+    if (title != null && title.isNotEmpty) return title;
+    if (language != null && language.isNotEmpty) return language;
+    return fallback;
+  }
+
+  // ---------------------------------------------------------- panel pieces
+
+  Widget _panelSectionHeader(String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white70,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  /// One selectable row in a panel: label + an accent radio when
+  /// selected (never a hardcoded gold).
+  Widget _panelTrackRow({
+    required String label,
+    required bool selected,
+    required Color accent,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      title: Text(
+        label,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+      ),
+      trailing: _PanelRadio(selected: selected, accent: accent),
+      onTap: onTap,
+    );
+  }
+
+  Widget _stepperRow({
+    required String label,
+    required String value,
+    required VoidCallback onMinus,
+    required VoidCallback onPlus,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+            ),
+          ),
+          _StepperButton(icon: Icons.remove_rounded, onTap: onMinus),
+          SizedBox(
+            width: 56,
+            child: Text(
+              value,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          _StepperButton(icon: Icons.add_rounded, onTap: onPlus),
+        ],
+      ),
+    );
+  }
+
+  Widget _dropdownRow<T>({
+    required String label,
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+            ),
+          ),
+          DropdownButton<T>(
+            value: value,
+            dropdownColor: const Color(0xFF23232F),
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            underline: const SizedBox.shrink(),
+            items: items,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toggleRow({
+    required String label,
+    required bool value,
+    required Color accent,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return SwitchListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      title: Text(
+        label,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+      ),
+      value: value,
+      activeThumbColor: accent,
+      onChanged: onChanged,
+    );
   }
 
   /// Volume sheet: slider + mute toggle, opened from the volume icon.
@@ -954,319 +1773,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       : _videoFit == BoxFit.cover
       ? 'Fill'
       : 'Stretch';
-
-  Future<void> _showQualitySheet() async {
-    // M2: real streams carry quality variants — picking one reloads
-    // the same stream at that rendition, keeping the position.
-    final ResolvedStream? stream = _currentStream;
-    if (stream != null && stream.variants.isNotEmpty) {
-      final Color accent = Theme.of(context).colorScheme.primary;
-      final Duration pos = _player.state.position;
-      final String? picked = await showModalBottomSheet<String>(
-        context: context,
-        backgroundColor: const Color(0xFF17171F),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        builder: (BuildContext context) {
-          return SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
-                  child: Text(
-                    'Quality',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                Flexible(
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: <Widget>[
-                      for (final StreamVariant v in stream.variants)
-                        ListTile(
-                          title: Text(
-                            v.qualityLabel,
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          trailing: v.url == stream.url
-                              ? Icon(Icons.check_rounded, color: accent)
-                              : null,
-                          onTap: () => Navigator.of(context).pop(v.url),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-              ],
-            ),
-          );
-        },
-      );
-      if (picked != null && picked != stream.url) {
-        final StreamVariant variant = stream.variants.firstWhere(
-          (StreamVariant v) => v.url == picked,
-          orElse: () => stream.variants.first,
-        );
-        _currentStream = ResolvedStream(
-          url: variant.url,
-          label: '${stream.source} ${variant.qualityLabel}',
-          source: stream.source,
-          headers: stream.headers,
-          variants: stream.variants,
-          subtitles: stream.subtitles,
-        );
-        await _loadStream(_currentStream!);
-        unawaited(_player.seek(pos));
-        unawaited(_player.play());
-        _pokeControls();
-      }
-      return;
-    }
-    final Tracks tracks = _player.state.tracks;
-    final String currentId = _player.state.track.video.id;
-    final List<VideoTrack> list = tracks.video
-        .where((VideoTrack t) => t.id != 'auto' && t.id != 'no')
-        .toList();
-    await _showTrackSheet<VideoTrack>(
-      title: 'Quality',
-      currentId: currentId,
-      entries: <({String id, String label, VideoTrack? track})>[
-        (
-          id: 'auto',
-          label: list.isEmpty ? 'Auto (single quality in this sample)' : 'Auto',
-          track: VideoTrack.auto(),
-        ),
-        ...list.map(
-          (VideoTrack t) => (
-            id: t.id,
-            label: _trackLabel(t.title, null, 'Quality'),
-            track: t,
-          ),
-        ),
-      ],
-      onPick: (VideoTrack track) => _player.setVideoTrack(track),
-    );
-  }
-
-  String _trackLabel(String? title, String? language, String fallback) {
-    if (title != null && title.isNotEmpty) return title;
-    if (language != null && language.isNotEmpty) return language;
-    return fallback;
-  }
-
-  Future<void> _showTrackSheet<T>({
-    required String title,
-    required String currentId,
-    required List<({String id, String label, T? track})> entries,
-    required Future<void> Function(T) onPick,
-  }) async {
-    final Color accent = Theme.of(context).colorScheme.primary;
-    final T? picked = await showModalBottomSheet<T>(
-      context: context,
-      backgroundColor: const Color(0xFF17171F),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: <Widget>[
-                    for (final entry in entries)
-                      ListTile(
-                        title: Text(
-                          entry.label,
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                        trailing: entry.id == currentId
-                            ? Icon(Icons.check_rounded, color: accent)
-                            : null,
-                        onTap: () => Navigator.of(context).pop(entry.track),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-    if (picked != null) {
-      await onPick(picked);
-      _pokeControls();
-    }
-  }
-
-  Future<void> _showSubtitleEditSheet() async {
-    final Color accent = Theme.of(context).colorScheme.primary;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF17171F),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setSheet) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    const Text(
-                      'Subtitle style',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Size',
-                      style: TextStyle(color: Colors.white70, fontSize: 14),
-                    ),
-                    Slider(
-                      value: _store.subSize,
-                      min: 12,
-                      max: 28,
-                      divisions: 16,
-                      activeColor: accent,
-                      onChanged: (double v) {
-                        setSheet(() {});
-                        unawaited(_store.setSubSize(v));
-                        _applySubtitleStyle();
-                      },
-                    ),
-                    const Text(
-                      'Color',
-                      style: TextStyle(color: Colors.white70, fontSize: 14),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 10,
-                      children: <Widget>[
-                        for (int i = 0; i < kSubtitleColors.length; i++)
-                          InkWell(
-                            onTap: () {
-                              setSheet(() {});
-                              unawaited(_store.setSubColorIndex(i));
-                              _applySubtitleStyle();
-                            },
-                            borderRadius: BorderRadius.circular(14),
-                            child: Container(
-                              width: 28,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                color: kSubtitleColors[i],
-                                shape: BoxShape.circle,
-                                border: i == _store.subColorIndex
-                                    ? Border.all(color: accent, width: 2)
-                                    : null,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Background',
-                        style: TextStyle(color: Colors.white),
-                      ),
-                      value: _store.subBackground,
-                      activeThumbColor: accent,
-                      onChanged: (bool v) {
-                        setSheet(() {});
-                        unawaited(_store.setSubBackground(v));
-                        _applySubtitleStyle();
-                      },
-                    ),
-                    Row(
-                      children: <Widget>[
-                        const Text(
-                          'Position',
-                          style: TextStyle(color: Colors.white70, fontSize: 14),
-                        ),
-                        const SizedBox(width: 12),
-                        for (final String pos in <String>['Bottom', 'Top'])
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(pos),
-                              selected: _store.subPosition == pos,
-                              selectedColor: accent,
-                              labelStyle: TextStyle(
-                                color: _store.subPosition == pos
-                                    ? Colors.white
-                                    : Colors.white70,
-                              ),
-                              onSelected: (_) {
-                                setSheet(() {});
-                                unawaited(_store.setSubPosition(pos));
-                                _applySubtitleStyle();
-                              },
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Delay: ${(_store.subDelayMs / 1000).toStringAsFixed(1)}s',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Slider(
-                      value: _store.subDelayMs.toDouble(),
-                      min: -5000,
-                      max: 5000,
-                      divisions: 100,
-                      activeColor: accent,
-                      onChanged: (double v) {
-                        setSheet(() {});
-                        unawaited(_store.setSubDelayMs(v.round()));
-                        _applySubtitleStyle();
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
 
   Future<void> _showEpisodeSheet() async {
     final Color accent = Theme.of(context).colorScheme.primary;
@@ -1443,6 +1949,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 ),
               if (!hasError) _buildPinchListener(child: _buildGestures()),
               if (!hasError && _controlsVisible) _buildControls(accent),
+              // 0.2.4: right-side slide-over panel (Sources / Audio /
+              // Subtitles / Quality) — above the controls, independent
+              // of their auto-hide.
+              if (_panelKind != null) _buildSidePanel(accent),
               if (_seekFlashVisible) _buildSeekFlash(),
               ValueListenableBuilder<_HudState?>(
                 valueListenable: _hud,
@@ -1546,13 +2056,28 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       onDoubleTap: () {
         final double w = MediaQuery.of(context).size.width;
         final double x = _lastDoubleTapX;
+        // 0.2.4: showControls: false — a double-tap must NEVER show
+        // the player details/controls overlay. It only seeks (with
+        // the flash) or play/pauses; the overlay stays as it was.
         if (x < w / 3) {
-          unawaited(_seekBy(-_store.doubleTapSeek, showFlash: true));
+          unawaited(
+            _seekBy(
+              -_store.doubleTapSeek,
+              showFlash: true,
+              showControls: false,
+            ),
+          );
         } else if (x > w * 2 / 3) {
-          unawaited(_seekBy(_store.doubleTapSeek, showFlash: true));
+          unawaited(
+            _seekBy(
+              _store.doubleTapSeek,
+              showFlash: true,
+              showControls: false,
+            ),
+          );
         } else {
           _flashPlayPause();
-          unawaited(_togglePlay());
+          unawaited(_togglePlay(showControls: false));
         }
       },
       onHorizontalDragStart: (DragStartDetails details) {
@@ -1634,6 +2159,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// Zeus/Steps layout (0.2.3): NO top bar, NO bottom bar — every
   /// control floats directly over the video. Dark translucent circles
   /// (never milky liquid glass), accent color from Settings.
+  ///
+  /// 0.2.4: a Stack, not a Column — the center cluster sits at the
+  /// EXACT vertical center of the screen (the old Column centered it
+  /// in the space between the bars, which lands above center because
+  /// the bottom bar is taller than the top bar). Top bar pinned to
+  /// the top, Skip + bottom bar pinned to the bottom.
   Widget _buildControls(Color accent) {
     if (_controlsLocked) {
       return Center(
@@ -1654,45 +2185,99 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     return AnimatedOpacity(
       opacity: _controlsVisible ? 1 : 0,
       duration: const Duration(milliseconds: 250),
-      child: Column(
+      child: Stack(
         children: <Widget>[
-          _buildTopBar(accent),
-          Expanded(child: _buildCenterControls(accent)),
-          StreamBuilder<Duration>(
-            stream: _player.stream.position,
-            initialData: _player.state.position,
-            builder: (BuildContext context, AsyncSnapshot<Duration> snap) {
-              final Duration pos = snap.data ?? Duration.zero;
-              final Duration dur = _player.state.duration;
-              final bool showSkip =
-                  _store.skipIntro && dur.inSeconds > 120 && pos.inSeconds < 95;
-              if (!showSkip) return const SizedBox.shrink();
-              return Align(
-                alignment: Alignment.centerRight,
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 16, bottom: 12),
-                  child: ElevatedButton(
-                    onPressed: () {
-                      unawaited(_player.seek(const Duration(seconds: 85)));
-                      _pokeControls();
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text(
-                      'Skip Intro',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              );
-            },
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _buildTopBar(accent),
           ),
-          _buildBottomBar(accent),
+          // Exact vertical center of the screen.
+          Center(child: _buildCenterControls(accent)),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                StreamBuilder<Duration>(
+                  stream: _player.stream.position,
+                  initialData: _player.state.position,
+                  builder:
+                      (BuildContext context, AsyncSnapshot<Duration> snap) {
+                        final Duration pos = snap.data ?? Duration.zero;
+                        final double posSeconds =
+                            pos.inMilliseconds / 1000.0;
+                        // 0.2.4: REAL AniSkip segments — "Skip Intro"
+                        // only while the position is inside the OP
+                        // segment, "Skip Outro" only inside the ED
+                        // segment. No AniSkip data -> no button at
+                        // all, never the old hardcoded 85s jump.
+                        final SkipInterval? op = _skipTimes?.op;
+                        final SkipInterval? ed = _skipTimes?.ed;
+                        final bool showIntro =
+                            _store.skipIntro &&
+                            op != null &&
+                            op.contains(posSeconds);
+                        final bool showOutro =
+                            _store.skipIntro &&
+                            ed != null &&
+                            ed.contains(posSeconds);
+                        // (label, seek target). Flow analysis: a true
+                        // showIntro/showOutro implies its interval is
+                        // non-null, so the accesses below are safe.
+                        final (String, double)? skip = showIntro
+                            ? ('Skip Intro', op.endTime)
+                            : showOutro
+                            ? ('Skip Outro', ed.endTime)
+                            : null;
+                        if (skip == null) {
+                          return const SizedBox.shrink();
+                        }
+                        final String skipLabel = skip.$1;
+                        final double target = skip.$2;
+                        return Align(
+                          alignment: Alignment.centerRight,
+                          child: Padding(
+                            padding: const EdgeInsets.only(
+                              right: 16,
+                              bottom: 12,
+                            ),
+                            child: ElevatedButton(
+                              onPressed: () {
+                                unawaited(
+                                  _player.seek(
+                                    Duration(
+                                      milliseconds: (target * 1000).round(),
+                                    ),
+                                  ),
+                                );
+                                _pokeControls();
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: accent,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              child: Text(
+                                skipLabel,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                ),
+                _buildBottomBar(accent),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -1900,7 +2485,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        padding: const EdgeInsets.fromLTRB(16, 0, 12, 12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
@@ -1979,83 +2564,83 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               children: <Widget>[
                 _RoundButton(
                   icon: Icons.closed_caption_rounded,
-                  size: 40,
-                  iconSize: 21,
+                  size: 36,
+                  iconSize: 19,
                   accent: accent,
                   active: subtitlesOn,
                   tooltip: 'Subtitles',
-                  onTap: _showSubtitleSheet,
+                  onTap: _showSubtitlesPanel,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _RoundButton(
                   icon: Icons.music_note_rounded,
-                  size: 40,
-                  iconSize: 21,
+                  size: 36,
+                  iconSize: 19,
                   accent: accent,
                   tooltip: 'Audio',
-                  onTap: _showAudioSheet,
+                  onTap: _showAudioPanel,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _RoundButton(
                   icon: Icons.storage_rounded,
-                  size: 40,
-                  iconSize: 21,
+                  size: 36,
+                  iconSize: 19,
                   accent: accent,
                   tooltip: 'Server',
-                  onTap: _showServerSheetInPlayer,
+                  onTap: _showSourcesPanel,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _RoundButton(
                   icon: Icons.tune_rounded,
-                  size: 40,
-                  iconSize: 21,
+                  size: 36,
+                  iconSize: 19,
                   accent: accent,
                   tooltip: 'Quality',
-                  onTap: _showQualitySheet,
+                  onTap: _showQualityPanel,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _RoundButton(
                   icon: Icons.volume_up_rounded,
-                  size: 40,
-                  iconSize: 21,
+                  size: 36,
+                  iconSize: 19,
                   accent: accent,
                   tooltip: 'Volume',
                   onTap: _showVolumeSheet,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _RoundButton(
                   label: rateLabel,
-                  size: 40,
+                  size: 36,
                   accent: accent,
                   tooltip: 'Playback speed',
                   onTap: _cycleSpeed,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _RoundButton(
                   icon: Icons.lock_rounded,
-                  size: 40,
-                  iconSize: 20,
+                  size: 36,
+                  iconSize: 18,
                   accent: accent,
                   tooltip: 'Lock controls',
                   onTap: () {
                     setState(() => _controlsLocked = true);
                   },
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _RoundButton(
                   icon: Icons.aspect_ratio_rounded,
-                  size: 40,
-                  iconSize: 20,
+                  size: 36,
+                  iconSize: 18,
                   accent: accent,
                   active: _videoFit != BoxFit.contain,
                   tooltip: 'Aspect ratio ($_aspectLabel)',
                   onTap: _cycleAspect,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _RoundButton(
                   icon: Icons.skip_next_rounded,
-                  size: 40,
-                  iconSize: 22,
+                  size: 36,
+                  iconSize: 20,
                   accent: accent,
                   tooltip: 'Next episode',
                   enabled: _nextEpisode != null,
@@ -2079,11 +2664,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   }
 }
 
-/// One round player control button — DARK translucent black (the Zeus
-/// reference), never milky liquid glass. The icon/text turns the
-/// Settings accent color when the control is active (e.g. subtitles
-/// on, speed chip, locked) — the player color follows the accent
-/// picker, never a hardcoded color.
+/// One round player control button — GLOSSY dark (0.2.4): a gentle
+/// vertical gradient (soft top highlight fading to dark at the
+/// bottom) + thin light border, never flat matte and never milky
+/// liquid glass. The icon/text turns the Settings accent color when
+/// the control is active (e.g. subtitles on, speed chip, locked) —
+/// the player color follows the accent picker, never a hardcoded
+/// color.
 class _RoundButton extends StatelessWidget {
   const _RoundButton({
     this.icon,
@@ -2116,9 +2703,32 @@ class _RoundButton extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.55),
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+        // Glossy (0.2.4): soft top highlight fading into a dark base.
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: <Color>[
+            (useAccent ? accent : Colors.white).withValues(
+              alpha: useAccent ? 0.38 : 0.18,
+            ),
+            Colors.black.withValues(alpha: 0.62),
+            Colors.black.withValues(alpha: 0.55),
+          ],
+          stops: const <double>[0.0, 0.45, 1.0],
+        ),
+        border: Border.all(
+          color: (useAccent ? accent : Colors.white).withValues(
+            alpha: useAccent ? 0.65 : 0.30,
+          ),
+        ),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       alignment: Alignment.center,
       child: label != null
@@ -2148,6 +2758,71 @@ class _RoundButton extends StatelessWidget {
     return tooltip == null
         ? button
         : Tooltip(message: tooltip!, child: button);
+  }
+}
+
+/// Accent radio used for the selected row in a side panel (0.2.4):
+/// filled accent circle with a white dot when selected, outlined
+/// when not. Never a hardcoded gold.
+class _PanelRadio extends StatelessWidget {
+  const _PanelRadio({required this.selected, required this.accent});
+
+  final bool selected;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 20,
+      height: 20,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: selected ? accent : Colors.transparent,
+        border: Border.all(
+          color: selected ? accent : Colors.white38,
+          width: 2,
+        ),
+      ),
+      alignment: Alignment.center,
+      child: selected
+          ? Container(
+              width: 8,
+              height: 8,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            )
+          : null,
+    );
+  }
+}
+
+/// Small round - / + button for the panel steppers (size, opacity).
+class _StepperButton extends StatelessWidget {
+  const _StepperButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      customBorder: const CircleBorder(),
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.white.withValues(alpha: 0.08),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.20),
+          ),
+        ),
+        child: Icon(icon, color: Colors.white, size: 16),
+      ),
+    );
   }
 }
 
@@ -2312,8 +2987,8 @@ class _ErrorState extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               const Text(
-                'The preview sample could not load. Full episodes '
-                'arrive in milestone 2.',
+                'The video could not load. Check your connection and '
+                'try again.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white70, fontSize: 14),
               ),

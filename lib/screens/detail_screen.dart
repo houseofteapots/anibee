@@ -1,11 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 import 'package:reicon_flutter/reicon_flutter.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models.dart';
 import '../player/trailer_player.dart';
+import '../services/anilist_service.dart';
 import '../services/app_services.dart';
 import '../services/miruro_resolver.dart';
 import '../settings_store.dart';
@@ -20,9 +21,10 @@ import 'full_player_screen.dart';
 /// Detail screen.
 /// Layout: banner -> title -> My List -> synopsis -> server row
 /// (Anilili-style dropdown + SUB/DUB + status) -> episodes. The banner
-/// plays the TRAILER preview inline via libmpv; a button on the SIDE of
-/// the banner (and tapping the banner) opens it in the full player —
-/// same Player instance, same engine.
+/// plays the anime's REAL trailer inline (YouTube embed from AniList's
+/// trailer field); a button on the SIDE of the banner (and tapping the
+/// banner) opens it fullscreen. No trailer -> the banner image only.
+/// The old sample video is gone (0.2.4).
 class DetailScreen extends StatefulWidget {
   const DetailScreen({
     super.key,
@@ -51,6 +53,12 @@ class _DetailScreenState extends State<DetailScreen> {
   bool _connecting = false;
   Timer? _connectTimer;
 
+  /// Real trailer (0.2.4): the YouTube video id for THIS anime, or
+  /// null when it has no trailer — the banner then shows the poster
+  /// image only, never the old sample video.
+  String? _trailerVideoId;
+  WebViewController? _trailerWebController;
+
   /// Debrid source selected in the server sheet ('torbox' |
   /// 'realdebrid'), or null for a normal Miruro/Anikoto server.
   String? _selectedDebrid;
@@ -64,7 +72,7 @@ class _DetailScreenState extends State<DetailScreen> {
     super.initState();
     _trailer = TrailerPlayer();
     _episodes = mockEpisodes(_anime);
-    _trailer.loadInline(_anime.trailerUrl);
+    _loadRealTrailer();
     if (widget.autoPlay) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _openFullPlayer();
@@ -190,7 +198,34 @@ class _DetailScreenState extends State<DetailScreen> {
     return work;
   }
 
-  /// Real-stream error dialog: Retry, Play trailer instead, Close.
+  /// Real trailer for THIS anime (0.2.4): the anime's own trailer
+  /// URL when it has one (AniList search results carry the YouTube
+  /// watch URL), else one AniList lookup by id. No trailer -> the
+  /// banner shows the poster image only. The webview embed plays it
+  /// muted + looping inline; tapping the banner opens it fullscreen.
+  Future<void> _loadRealTrailer() async {
+    String? videoId = youtubeVideoIdFromUrl(_anime.trailerUrl);
+    if (videoId == null && _anime.anilistId != null) {
+      final ({String site, String videoId})? trailer = await _services
+          .anilist
+          .fetchTrailer(_anime.anilistId!);
+      if (!mounted) return;
+      if (trailer != null && trailer.site == 'youtube') {
+        videoId = trailer.videoId;
+      }
+    }
+    if (!mounted || videoId == null) return;
+    setState(() {
+      _trailerVideoId = videoId;
+      _trailerWebController = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(const Color(0xFF000000))
+        ..loadRequest(Uri.parse(youtubeEmbedUrl(videoId!)));
+    });
+  }
+
+  /// Real-stream error dialog: Retry, Play trailer instead (only
+  /// when this anime has a real trailer), Close.
   Future<void> _showResolveError(String message, Episode episode) async {
     final String? choice = await showDialog<String>(
       context: context,
@@ -198,10 +233,11 @@ class _DetailScreenState extends State<DetailScreen> {
         title: const Text('Couldn\'t load episode'),
         content: Text(message),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop('trailer'),
-            child: const Text('Play trailer instead'),
-          ),
+          if (_trailerVideoId != null)
+            TextButton(
+              onPressed: () => Navigator.of(context).pop('trailer'),
+              child: const Text('Play trailer instead'),
+            ),
           TextButton(
             onPressed: () => Navigator.of(context).pop('retry'),
             child: const Text('Retry'),
@@ -214,7 +250,7 @@ class _DetailScreenState extends State<DetailScreen> {
       ),
     );
     if (choice == 'trailer') {
-      await _openTrailerPlayer(episode: episode);
+      _openTrailerFullscreen();
     } else if (choice == 'retry') {
       await _openFullPlayer(episode: episode);
     }
@@ -254,28 +290,17 @@ class _DetailScreenState extends State<DetailScreen> {
     await _openPlayerWithStream(stream: stream, initial: initial);
   }
 
-  /// Opens the full player on the sample trailer (fallback when a
-  /// real stream cannot be resolved and the user picks it).
-  Future<void> _openTrailerPlayer({required Episode episode}) async {
-    await _trailer.expandToFull();
-    if (!mounted) return;
-    await Navigator.of(context).push(
+  /// Opens the anime's real trailer fullscreen (YouTube embed with
+  /// sound + controls). Only called when a real trailer exists.
+  void _openTrailerFullscreen() {
+    final String? videoId = _trailerVideoId;
+    if (videoId == null) return;
+    Navigator.of(context).push(
       SmoothPageRoute<void>(
-        builder: (BuildContext context) => FullPlayerScreen(
-          trailer: _trailer,
-          store: _store,
-          anime: _anime,
-          episodes: _episodes,
-          initialEpisode: episode,
-          onEpisodeChanged: _onPlayerEpisodeChanged,
-          resolver: _services.miruro,
-          subDub: _subDub,
-          currentDebrid: _selectedDebrid,
-          onServerChanged: _onPlayerServerChanged,
-        ),
+        builder: (BuildContext context) =>
+            _TrailerFullscreenScreen(videoId: videoId),
       ),
     );
-    await _trailer.backToInline();
   }
 
   /// The player picked another server: remember the choice (Detail's
@@ -305,6 +330,7 @@ class _DetailScreenState extends State<DetailScreen> {
           stream: stream,
           onEpisodeChanged: _onPlayerEpisodeChanged,
           resolver: _services.miruro,
+          anilist: _services.anilist,
           subDub: _subDub,
           currentDebrid: _selectedDebrid,
           onServerChanged: _onPlayerServerChanged,
@@ -320,8 +346,9 @@ class _DetailScreenState extends State<DetailScreen> {
         ),
       ),
     );
-    // Back from a real stream: restore the trailer in the hero.
-    await _trailer.loadInline(_anime.trailerUrl);
+    // Back from a real stream: stop the player — the banner is a
+    // poster / webview trailer now, nothing keeps playing here.
+    await _trailer.stop();
   }
 
   void _onPlayerEpisodeChanged(Episode episode) {
@@ -454,8 +481,9 @@ class _DetailScreenState extends State<DetailScreen> {
             children: <Widget>[
               _TrailerHero(
                 anime: _anime,
-                trailer: _trailer,
-                onExpand: () => _openFullPlayer(markPlayed: false),
+                trailerVideoId: _trailerVideoId,
+                trailerWebController: _trailerWebController,
+                onExpand: _openTrailerFullscreen,
                 onBack: () => Navigator.of(context).pop(),
                 onToggleSaved: () => _store.toggleSaved(_anime.id),
                 saved: saved,
@@ -799,12 +827,17 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 }
 
-/// The inline trailer hero: libmpv Video in the banner, muted loop.
-/// Side button (right edge) + tapping the banner expands to full player.
+/// The inline trailer hero (0.2.4): the anime's REAL YouTube
+/// trailer as a muted looping webview embed, or the poster image when
+/// the title has no trailer. The embed never swallows input
+/// (IgnorePointer) — the page scrolls over it and tapping the banner
+/// opens the trailer fullscreen. The TRAILER badge + side button only
+/// appear when a real trailer is playing.
 class _TrailerHero extends StatelessWidget {
   const _TrailerHero({
     required this.anime,
-    required this.trailer,
+    required this.trailerVideoId,
+    required this.trailerWebController,
     required this.onExpand,
     required this.onBack,
     required this.onToggleSaved,
@@ -812,7 +845,8 @@ class _TrailerHero extends StatelessWidget {
   });
 
   final Anime anime;
-  final TrailerPlayer trailer;
+  final String? trailerVideoId;
+  final WebViewController? trailerWebController;
   final VoidCallback onExpand;
   final VoidCallback onBack;
   final VoidCallback onToggleSaved;
@@ -820,29 +854,21 @@ class _TrailerHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final WebViewController? controller = trailerWebController;
     return SizedBox(
       height: 300,
       child: Stack(
         fit: StackFit.expand,
         children: <Widget>[
-          ListenableBuilder(
-            listenable: trailer,
-            builder: (BuildContext context, Widget? _) {
-              if (trailer.inlineActive && trailer.loaded) {
-                return GestureDetector(
-                  onTap: onExpand,
-                  // BoxFit.cover: the 16:9 trailer fills the hero
-                  // edge-to-edge — the default contain letterboxed it,
-                  // leaving the black band at the top (M1.1 phone test).
-                  child: Video(
-                    controller: trailer.controller,
-                    fit: BoxFit.cover,
-                  ),
-                );
-              }
-              return PosterArt(anime: anime, borderRadius: 0, showTitle: false);
-            },
-          ),
+          if (controller != null)
+            GestureDetector(
+              onTap: onExpand,
+              child: IgnorePointer(
+                child: WebViewWidget(controller: controller),
+              ),
+            )
+          else
+            PosterArt(anime: anime, borderRadius: 0, showTitle: false),
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -879,61 +905,117 @@ class _TrailerHero extends StatelessWidget {
               onPressed: onToggleSaved,
             ),
           ),
-          // TRAILER badge.
-          Positioned(
-            left: 16,
-            bottom: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Icon(
-                    Icons.play_circle_filled_rounded,
-                    color: Colors.white,
-                    size: 14,
-                  ),
-                  SizedBox(width: 4),
-                  Text(
-                    'TRAILER',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          // Side button: opens the trailer in the full player.
-          Positioned(
-            right: 16,
-            bottom: 16,
-            child: InkWell(
-              onTap: onExpand,
-              borderRadius: BorderRadius.circular(24),
+          if (trailerVideoId != null) ...<Widget>[
+            // TRAILER badge.
+            Positioned(
+              left: 16,
+              bottom: 16,
               child: Container(
-                width: 48,
-                height: 48,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.55),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.4),
-                  ),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(
-                  Icons.fullscreen_rounded,
-                  color: Colors.white,
-                  size: 26,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(
+                      Icons.play_circle_filled_rounded,
+                      color: Colors.white,
+                      size: 14,
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      'TRAILER',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
                 ),
               ),
+            ),
+            // Side button: opens the trailer fullscreen.
+            Positioned(
+              right: 16,
+              bottom: 16,
+              child: InkWell(
+                onTap: onExpand,
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.fullscreen_rounded,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Fullscreen trailer (0.2.4): the anime's real YouTube trailer with
+/// sound + YouTube controls. The embed's own fullscreen button takes
+/// it landscape.
+class _TrailerFullscreenScreen extends StatefulWidget {
+  const _TrailerFullscreenScreen({required this.videoId});
+
+  final String videoId;
+
+  @override
+  State<_TrailerFullscreenScreen> createState() =>
+      _TrailerFullscreenScreenState();
+}
+
+class _TrailerFullscreenScreenState extends State<_TrailerFullscreenScreen> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0xFF000000))
+      ..loadRequest(
+        Uri.parse(
+          youtubeEmbedUrl(widget.videoId, muted: false, controls: true),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: <Widget>[
+          SafeArea(child: WebViewWidget(controller: _controller)),
+          Positioned(
+            top: 12,
+            left: 12,
+            child: IconButton(
+              icon: const Icon(Icons.close_rounded, color: Colors.white),
+              onPressed: () => Navigator.of(context).pop(),
+              tooltip: 'Close',
             ),
           ),
         ],

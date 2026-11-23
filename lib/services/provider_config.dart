@@ -44,6 +44,14 @@ class ProviderConfigService extends ChangeNotifier {
     return service;
   }
 
+  /// Re-fetch the remote config on demand (0.2.4). The login buttons
+  /// call this before reading the OAuth client IDs, so IDs added to
+  /// anibee-config land in a running app with NO rebuild and NO
+  /// restart — the Accounts status text updates via notifyListeners.
+  Future<void> refresh() async {
+    await _load();
+  }
+
   Future<void> _load() async {
     // 1. Remote.
     try {
