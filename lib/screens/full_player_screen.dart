@@ -348,6 +348,28 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   @visibleForTesting
   bool get controlsVisibleForTest => _controlsVisible;
 
+  /// Test seam (0.2.17): lock the controls without tapping the lock
+  /// button, so a test can prove the unlock button survives the
+  /// 3 s auto-hide and still unlocks.
+  @visibleForTesting
+  void lockControlsForTest() {
+    if (mounted) setState(() => _controlsLocked = true);
+  }
+
+  /// Test seam (0.2.17): whether the controls are currently locked.
+  @visibleForTesting
+  bool get controlsLockedForTest => _controlsLocked;
+
+  /// Test seam (0.2.17): the current brightness level (0–100) — the
+  /// overlay dim layer, changed only by a left-half vertical swipe.
+  @visibleForTesting
+  double get brightnessLevelForTest => _brightnessLevel.value;
+
+  /// Test seam (0.2.17): the current player volume (0–100) — changed
+  /// only by a right-half vertical swipe.
+  @visibleForTesting
+  double get volumeForTest => _player.state.volume;
+
   /// Test seam: whether the double-tap seek flash is currently shown.
   @visibleForTesting
   bool get seekFlashVisibleForTest => _seekFlashVisible;
@@ -957,6 +979,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// the right side after the hold threshold.
   void _engageHold2x() {
     _holdTimer = null;
+    if (_controlsLocked) return;
     if (_hold2x || _pinching || _activePointers.length != 1) return;
     final Offset? down = _holdDownPosition;
     if (down == null) return;
@@ -2707,7 +2730,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   ),
                 ),
               if (!hasError) _buildPinchListener(child: _buildGestures()),
-              if (!hasError && _controlsVisible) _buildControls(accent),
+              if (!hasError && _controlsVisible && !_controlsLocked)
+                _buildControls(accent),
+              // 0.2.17: the unlock button lives OUTSIDE the
+              // _controlsVisible gate, in its own top layer above the
+              // gesture layer. It used to live inside _buildControls,
+              // so the 3 s auto-hide removed it from the tree while
+              // playing and a locked player could never be unlocked,
+              // no matter how many taps. Auto-hide can no longer
+              // touch it: while locked it is always present.
+              if (!hasError && _controlsLocked) _buildUnlockButton(accent),
               // 0.2.4: right-side slide-over panel (Sources / Audio /
               // Subtitles / Quality) — above the controls, independent
               // of their auto-hide.
@@ -2805,6 +2837,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       // left it out of the path on some spots.
       behavior: HitTestBehavior.opaque,
       onPointerDown: (PointerDownEvent event) {
+        // 0.2.17: while locked, pinch zoom and hold-to-2x are off —
+        // the pointer is not even tracked, so no pinch or hold can
+        // start from it. Only double-tap ±10 s seek still works.
+        if (_controlsLocked) return;
         _activePointers[event.pointer] = event.position;
         if (_activePointers.length == 2) {
           final List<Offset> points = _activePointers.values.toList();
@@ -2893,10 +2929,17 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     });
   }
 
+  /// 0.2.17: while [_controlsLocked], ONLY double-tap left/right
+  /// ±10 s seek is allowed (the user asked for exactly that).
+  /// Everything else is inert: single-tap does NOT toggle the
+  /// overlay (the unlock button is the only way back), vertical
+  /// swipes do NOT change volume/brightness, horizontal drags do
+  /// NOT seek, center double-tap does NOT play/pause, and the
+  /// center double-tap does NOT reset the zoom.
   Widget _buildGestures() {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onTap: _toggleControls,
+      onTap: _controlsLocked ? null : _toggleControls,
       onDoubleTapDown: (TapDownDetails details) {
         _lastDoubleTapX = details.globalPosition.dx;
         // Zoomed in: center double-tap resets to fit. Side double-taps
@@ -2904,7 +2947,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         // double-tap, which felt broken).
         final double w = MediaQuery.of(context).size.width;
         final double x = details.globalPosition.dx;
-        if (_videoScale.value != 1.0 && x > w / 3 && x < w * 2 / 3) {
+        if (!_controlsLocked &&
+            _videoScale.value != 1.0 &&
+            x > w / 3 &&
+            x < w * 2 / 3) {
           _videoScale.value = 1.0;
         }
       },
@@ -2926,12 +2972,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           unawaited(
             _seekBy(_store.doubleTapSeek, showFlash: true, showControls: false),
           );
-        } else {
+        } else if (!_controlsLocked) {
           _flashPlayPause();
           unawaited(_togglePlay(showControls: false));
         }
       },
       onHorizontalDragStart: (DragStartDetails details) {
+        if (_controlsLocked) return;
         // A drag starting means the finger moved: never a hold.
         _cancelHold();
         _disengageHold2x();
@@ -2940,6 +2987,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         _dragAccumDx = 0;
       },
       onHorizontalDragUpdate: (DragUpdateDetails details) {
+        if (_controlsLocked) return;
         if (!_store.gestures || _dragStartPosition == null || _pinching) {
           return;
         }
@@ -2949,6 +2997,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         _showHud(_HudState.seek(label: '${seconds >= 0 ? '+' : ''}$seconds s'));
       },
       onHorizontalDragEnd: (DragEndDetails details) {
+        if (_controlsLocked) return;
         if (!_store.gestures || _dragStartPosition == null) return;
         final Duration target = _dragHintTarget ?? _dragStartPosition!;
         _dragStartPosition = null;
@@ -2962,6 +3011,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         _pokeControls();
       },
       onVerticalDragStart: (DragStartDetails details) {
+        if (_controlsLocked) return;
         // A drag starting means the finger moved: never a hold.
         _cancelHold();
         _disengageHold2x();
@@ -2973,6 +3023,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         _dragStartBrightnessLevel = _brightnessLevel.value;
       },
       onVerticalDragUpdate: (DragUpdateDetails details) {
+        if (_controlsLocked) return;
         if (!_store.gestures || _pinching) return;
         // ROOT CAUSE (0.2.1): the old code subtracted only the
         // per-frame `details.delta.dy` from the start value, so the
@@ -3007,9 +3058,31 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         }
       },
       onVerticalDragEnd: (DragEndDetails details) {
+        if (_controlsLocked) return;
         _hideHudSoon();
       },
       child: const SizedBox.expand(),
+    );
+  }
+
+  /// The unlock button (0.2.17): rendered by the Stack on its own
+  /// layer while [_controlsLocked], never inside [_buildControls] —
+  /// see the note at the call site. One tap unlocks and brings the
+  /// full controls back (via [_pokeControls]).
+  Widget _buildUnlockButton(Color accent) {
+    return Center(
+      child: _RoundButton(
+        icon: Icons.lock_open_rounded,
+        size: 56,
+        iconSize: 28,
+        accentIcon: true,
+        accent: accent,
+        tooltip: 'Unlock controls',
+        onTap: () {
+          setState(() => _controlsLocked = false);
+          _pokeControls();
+        },
+      ),
     );
   }
 
@@ -3023,22 +3096,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   /// the bottom bar is taller than the top bar). Top bar pinned to
   /// the top, Skip + bottom bar pinned to the bottom.
   Widget _buildControls(Color accent) {
-    if (_controlsLocked) {
-      return Center(
-        child: _RoundButton(
-          icon: Icons.lock_open_rounded,
-          size: 56,
-          iconSize: 28,
-          accentIcon: true,
-          accent: accent,
-          tooltip: 'Unlock controls',
-          onTap: () {
-            setState(() => _controlsLocked = false);
-            _pokeControls();
-          },
-        ),
-      );
-    }
     return AnimatedOpacity(
       opacity: _controlsVisible ? 1 : 0,
       duration: const Duration(milliseconds: 250),
