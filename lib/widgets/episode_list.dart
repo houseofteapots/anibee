@@ -222,6 +222,10 @@ class _EpisodeSectionState extends State<EpisodeSection> {
             ),
           ),
           _buildEmptyState(isDark, card, primaryText, secondaryText),
+          // 0.2.17: keep the empty card clear of the nav pill (the
+          // page ListView's bottom padding is gone with the
+          // restructure). 96pt = pill 63 + gap 20 + margin.
+          const SizedBox(height: 96),
         ],
       );
     }
@@ -286,45 +290,73 @@ class _EpisodeSectionState extends State<EpisodeSection> {
             ],
           ),
         ),
-        if (_gridMode)
-          _buildGrid(isDark, card, primaryText, secondaryText, accent)
-        else
-          _buildCards(),
-        if (widget.anime.nextEpisode != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: card,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  Icon(
-                    Icons.notifications_none_rounded,
-                    size: 18,
-                    color: secondaryText,
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      'Episode ${widget.anime.nextEpisode} in '
-                      '${widget.anime.nextEpisodeIn} · '
-                      '${widget.anime.nextEpisodeAt}',
-                      style: TextStyle(
-                        color: primaryText,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
+        // 0.2.17: ONLY the episode list scrolls — the banner,
+        // title, synopsis, server picker, EPISODES header and
+        // controls above stay fixed (Detail is a Column with this
+        // section Expanded). The airing banner rides at the bottom
+        // of the scrolling list; the 96 bottom padding clears the
+        // nav pill (63pt + 20pt gap = 83pt) and is SHORTER than the
+        // list viewport, so the banner still rests visible at max
+        // scroll instead of scrolling past the top (a 110 padding
+        // hid it — the list viewport is only ~80-170pt tall under
+        // the fixed header).
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.only(bottom: 96),
+            children: <Widget>[
+              if (_gridMode)
+                _buildGrid(isDark, card, primaryText, secondaryText, accent)
+              else
+                ..._buildCards(),
+              if (widget.anime.nextEpisode != null)
+                _buildAiringBanner(card, primaryText, secondaryText),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Next-episode countdown bar ("Episode 9 in 6d 20h · Nov 29 at
+  /// 22:05") — rides at the BOTTOM of the scrolling episode list
+  /// (0.2.17), never pinned under it.
+  Widget _buildAiringBanner(
+    Color card,
+    Color primaryText,
+    Color secondaryText,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: card,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Icon(
+              Icons.notifications_none_rounded,
+              size: 18,
+              color: secondaryText,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Episode ${widget.anime.nextEpisode} in '
+                '${widget.anime.nextEpisodeIn} · '
+                '${widget.anime.nextEpisodeAt}',
+                style: TextStyle(
+                  color: primaryText,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
-          ),
-      ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -352,9 +384,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
       parts.add('in ${widget.anime.nextEpisodeIn}');
     }
     final String detail = next != null
-        ? (parts.isEmpty
-              ? 'Check back after it airs.'
-              : parts.join(' · '))
+        ? (parts.isEmpty ? 'Check back after it airs.' : parts.join(' · '))
         : 'This title hasn\'t released any episodes.';
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
@@ -370,11 +400,7 @@ class _EpisodeSectionState extends State<EpisodeSection> {
           children: <Widget>[
             Row(
               children: <Widget>[
-                Icon(
-                  Icons.schedule_rounded,
-                  size: 18,
-                  color: secondaryText,
-                ),
+                Icon(Icons.schedule_rounded, size: 18, color: secondaryText),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
@@ -690,21 +716,22 @@ class _EpisodeSectionState extends State<EpisodeSection> {
     );
   }
 
-  Widget _buildCards() {
+  /// 0.2.17: the cards as a plain list — the caller puts them
+  /// inside the section's scrolling ListView (a wrapping Column
+  /// would build every card eagerly and defeat the ListView).
+  List<Widget> _buildCards() {
     final List<Episode> eps = _visibleEpisodes;
-    return Column(
-      children: eps
-          .map(
-            (Episode ep) => EpisodeCard(
-              anime: widget.anime,
-              episode: ep,
-              store: widget.store,
-              onTap: () => widget.onPlay(ep),
-              onToggleDownload: () => widget.onToggleDownload(ep),
-            ),
-          )
-          .toList(),
-    );
+    return eps
+        .map(
+          (Episode ep) => EpisodeCard(
+            anime: widget.anime,
+            episode: ep,
+            store: widget.store,
+            onTap: () => widget.onPlay(ep),
+            onToggleDownload: () => widget.onToggleDownload(ep),
+          ),
+        )
+        .toList();
   }
 }
 

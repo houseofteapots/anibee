@@ -108,8 +108,7 @@ class _DetailScreenState extends State<DetailScreen> {
       return;
     }
     final int? anilistId =
-        _anime.anilistId ??
-        await _services.anilist.resolveId(_anime.title);
+        _anime.anilistId ?? await _services.anilist.resolveId(_anime.title);
     if (anilistId == null) return;
     final Anime? full = await _services.anilist.mediaById(anilistId);
     if (!mounted || full == null) return;
@@ -163,10 +162,7 @@ class _DetailScreenState extends State<DetailScreen> {
         _anime.anilistId ?? await _services.anilist.resolveId(_anime.title);
     if (anilistId == null) return;
     final Map<int, String> thumbs = await _services.anilist
-        .fetchEpisodeThumbnails(
-          anilistId,
-          episodeCount: _anime.episodeCount,
-        );
+        .fetchEpisodeThumbnails(anilistId, episodeCount: _anime.episodeCount);
     if (!mounted || thumbs.isEmpty) return;
     if (!identical(_anime, animeAtCall)) return;
     setState(() {
@@ -539,8 +535,12 @@ class _DetailScreenState extends State<DetailScreen> {
         listenable: _store,
         builder: (BuildContext context, Widget? _) {
           final bool saved = _store.savedIds.contains(_anime.id);
-          return ListView(
-            padding: const EdgeInsets.only(bottom: 110),
+          // 0.2.17: pinned header — the page is a Column, NOT a
+          // ListView: banner/title/PLAY/My List/synopsis/server
+          // picker/season selector stay FIXED; only the episode
+          // list inside EpisodeSection scrolls (Expanded ListView).
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               _PosterHero(
                 anime: _anime,
@@ -576,10 +576,17 @@ class _DetailScreenState extends State<DetailScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      '${_anime.rating} • ${_anime.year} • '
-                      '${_anime.episodeCount} eps • TV-13',
-                      style: TextStyle(color: secondaryText, fontSize: 12),
+                    // 0.2.17: the meta text is NOT fixed-width — on a
+                    // narrow screen (and in the wide test font) the
+                    // bare Text overflowed the row. Ellipsize it.
+                    Flexible(
+                      child: Text(
+                        '${_anime.rating} • ${_anime.year} • '
+                        '${_anime.episodeCount} eps • TV-13',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: secondaryText, fontSize: 12),
+                      ),
                     ),
                   ],
                 ),
@@ -854,11 +861,19 @@ class _DetailScreenState extends State<DetailScreen> {
                                   color: AppTheme.success,
                                 ),
                                 const SizedBox(width: 6),
-                                Text(
-                                  'Connected',
-                                  style: TextStyle(
-                                    color: secondaryText,
-                                    fontSize: 12,
+                                // 0.2.17: same as the Reconnecting
+                                // branch above — the bare Text
+                                // overflowed the row on narrow
+                                // screens (wide test font).
+                                Flexible(
+                                  child: Text(
+                                    'Connected',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: secondaryText,
+                                      fontSize: 12,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -945,23 +960,25 @@ class _DetailScreenState extends State<DetailScreen> {
                     ],
                   ),
                 ),
-              EpisodeSection(
-                // A new season is a new anime: reset the episode
-                // section's state (grid mode, range, highlight).
-                key: ValueKey<String>(_anime.id),
-                anime: _anime,
-                episodes: _episodes,
-                store: _store,
-                audioFilter: _subDub,
-                onAudioFilterChanged: (String v) {
-                  if (v == 'Sub' || v == 'Dub') {
-                    setState(() => _subDub = v);
-                  }
-                },
-                onPlay: (Episode ep) {
-                  _openFullPlayer(episode: ep);
-                },
-                onToggleDownload: _toggleDownload,
+              Expanded(
+                child: EpisodeSection(
+                  // A new season is a new anime: reset the episode
+                  // section's state (grid mode, range, highlight).
+                  key: ValueKey<String>(_anime.id),
+                  anime: _anime,
+                  episodes: _episodes,
+                  store: _store,
+                  audioFilter: _subDub,
+                  onAudioFilterChanged: (String v) {
+                    if (v == 'Sub' || v == 'Dub') {
+                      setState(() => _subDub = v);
+                    }
+                  },
+                  onPlay: (Episode ep) {
+                    _openFullPlayer(episode: ep);
+                  },
+                  onToggleDownload: _toggleDownload,
+                ),
               ),
             ],
           );

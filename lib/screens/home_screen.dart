@@ -284,7 +284,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _showListSheet(Anime anime) async {
+  /// Value of the "Remove from Continue Watching" picker row (0.2.17).
+  static const String _removeFromContinueWatching = 'remove-cw';
+
+  Future<void> _showListSheet(WatchEntry entry) async {
+    final Anime anime = entry.toAnime();
     final String? current = widget.store.statusOf(anime);
     final String? picked = await showPremiumPicker<String>(
       context: context,
@@ -299,9 +303,24 @@ class _HomeScreenState extends State<HomeScreen> {
           label: 'Remove from list',
           destructive: true,
         ),
+        // 0.2.17: per-item removal from Continue Watching. Until
+        // now the only way out was "Clear All" — "Remove from list"
+        // only clears the list status, NOT the watch-history entry,
+        // so the card stayed in the row (user report 2026-11-24).
+        // This row removes the history entry, so the card leaves
+        // the row immediately and stays gone after a restart.
+        PremiumPickerOption(
+          value: _removeFromContinueWatching,
+          label: 'Remove from Continue Watching',
+          destructive: true,
+        ),
       ],
     );
     if (picked == null) return;
+    if (picked == _removeFromContinueWatching) {
+      await widget.store.removeWatchEntry(entry.key);
+      return;
+    }
     if (picked.isEmpty) {
       await widget.store.setListStatus(anime.id, null);
     } else {
@@ -541,8 +560,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               entry: entry,
                               accent: accent,
                               onTap: () => widget.onWatchNow(entry.toAnime()),
-                              onLongPress: () =>
-                                  _showListSheet(entry.toAnime()),
+                              onLongPress: () => _showListSheet(entry),
                             );
                           },
                         ),

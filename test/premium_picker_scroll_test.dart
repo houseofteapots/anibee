@@ -31,7 +31,8 @@ void main() {
       for (int s = 1; s <= 1180; s += 100)
         PremiumPickerOption<int>(
           value: s,
-          label: '${s.toString().padLeft(3, '0')}'
+          label:
+              '${s.toString().padLeft(3, '0')}'
               '-${(s + 99).clamp(1, 1180).toString().padLeft(3, '0')}',
         ),
     ];
@@ -162,10 +163,7 @@ void main() {
       expect(find.text('AllAnime'), findsOneWidget);
       // Shrink-wrapped: the sheet is far shorter than the 70% cap
       // (420pt) — no empty space below the options.
-      expect(
-        tester.getSize(find.byType(BottomSheet)).height,
-        lessThan(300),
-      );
+      expect(tester.getSize(find.byType(BottomSheet)).height, lessThan(300));
       await tester.tap(find.text('AniKoto'));
       await tester.pumpAndSettle();
       expect(picked, 'AniKoto');
@@ -185,14 +183,16 @@ void main() {
       gradient: <Color>[Color(0xFF3B2A6B), Color(0xFF120E24)],
     );
 
-    testWidgets('range picker scrolls to 1101-1180 and the grid follows',
-        (WidgetTester tester) async {
+    testWidgets('range picker scrolls to 1101-1180 and the grid follows', (
+      WidgetTester tester,
+    ) async {
       final SettingsStore store = await SettingsStore.load();
       final List<Episode> episodes = mockEpisodes(onePiece);
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: SingleChildScrollView(
+            body: SizedBox(
+              height: 800,
               child: EpisodeSection(
                 anime: onePiece,
                 episodes: episodes,

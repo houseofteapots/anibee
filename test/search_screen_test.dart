@@ -222,4 +222,39 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('0.2.17: clear (X) button empties the field + results',
+      (WidgetTester tester) async {
+    final AniListService anilist = AniListService(
+      client: clientFor(<String, List<Map<String, dynamic>>>{
+        'monster': <Map<String, dynamic>>[
+          media(id: 1, english: 'Monster', episodes: 74),
+        ],
+      }),
+    );
+    await pumpSearch(tester, anilist, (_) {});
+
+    // No X on an empty field.
+    expect(find.byTooltip('Clear search'), findsNothing);
+
+    await search(tester, 'monster');
+    expect(find.text('MONSTER'), findsWidgets);
+
+    // X appears once the field is non-empty.
+    expect(find.byTooltip('Clear search'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Clear search'));
+    await tester.pump();
+    await tester.pump();
+
+    // Field empty, X gone, remote results cleared back to the
+    // empty/search-home state (no results-count line).
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      isEmpty,
+    );
+    expect(find.byTooltip('Clear search'), findsNothing);
+    expect(find.text('MONSTER'), findsNothing);
+    expect(find.textContaining('results'), findsNothing);
+  });
 }

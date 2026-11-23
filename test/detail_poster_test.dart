@@ -77,6 +77,13 @@ void main() {
   testWidgets('detail banner shows only the poster, no trailer', (
     WidgetTester tester,
   ) async {
+    // 0.2.17: Detail is a fixed header + scrolling list — the
+    // header alone is ~610pt, taller than the default 800x600
+    // test surface, so pump on a phone-size surface.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final SettingsStore store = await SettingsStore.load();
     final AppServices services = AppServices.create();
     late TrailerPlayer trailer;

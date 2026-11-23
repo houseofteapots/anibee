@@ -112,7 +112,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: SingleChildScrollView(
+          body: SizedBox(
+            height: 800,
             child: EpisodeSection(
               anime: cardAnime,
               episodes: eps,
@@ -146,7 +147,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: SingleChildScrollView(
+          body: SizedBox(
+            height: 800,
             child: EpisodeSection(
               anime: longAnime,
               episodes: eps,
@@ -188,7 +190,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: SingleChildScrollView(
+          body: SizedBox(
+            height: 800,
             child: EpisodeSection(
               anime: longAnime,
               episodes: eps,

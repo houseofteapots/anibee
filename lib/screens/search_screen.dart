@@ -141,6 +141,20 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  /// 0.2.17: clear (X) button — one tap clears the whole query
+  /// and resets results to the empty/search-home state. Cancels
+  /// any pending debounce + remote search first.
+  void _clearQuery() {
+    _debounce?.cancel();
+    _controller.clear();
+    setState(() {
+      _query = '';
+      _remote = <Anime>[];
+      _searching = false;
+      _remoteFailed = false;
+    });
+  }
+
   void _onFilterChanged() {
     if (_controller.text.trim().length >= 2) {
       setState(() => _searching = true);
@@ -278,7 +292,19 @@ class _SearchScreenState extends State<SearchScreen> {
                         ),
                       ),
                     )
-                  : null,
+                  // 0.2.17: clear (X) button, only while the field
+                  // is non-empty (the spinner owns the slot while
+                  // a search is in flight).
+                  : _query.isNotEmpty
+                      ? IconButton(
+                          tooltip: 'Clear search',
+                          onPressed: _clearQuery,
+                          icon: Icon(
+                            Icons.clear_rounded,
+                            color: secondaryText,
+                          ),
+                        )
+                      : null,
               filled: true,
               fillColor: isDark ? AppTheme.cardDark : AppTheme.cardLight,
               border: OutlineInputBorder(
