@@ -200,23 +200,33 @@ class _AppShellState extends State<AppShell> {
               ),
             ],
           ),
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 20,
-            // ListenableBuilder so the pill restyles the moment the
-            // Navigation Style is tapped in Settings.
-            child: ListenableBuilder(
-              listenable: widget.store,
-              builder: (BuildContext context, Widget? _) => GlassNavBar(
-                currentIndex: _tab,
-                onTap: (int i) => setState(() => _tab = i),
-                accent: accent,
-                isDark: isDark,
-                navStyle: widget.store.navStyle,
+          // 0.2.16: hide the nav pill entirely while the keyboard is
+          // open. The Scaffold resizes for the keyboard, so the
+          // bottom-Positioned pill used to ride up and sit ON TOP of
+          // the Search results, overlapping the poster grid and
+          // hiding titles (user 2026-11-24 01:51, Search screenshot
+          // with the keyboard open). `viewInsets.bottom > 0` is the
+          // keyboard signal; the pill returns the moment it closes.
+          // Covers both nav styles and all 5 tabs — the pill is the
+          // only thing hidden, tab state is untouched.
+          if (MediaQuery.of(context).viewInsets.bottom <= 0)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 20,
+              // ListenableBuilder so the pill restyles the moment the
+              // Navigation Style is tapped in Settings.
+              child: ListenableBuilder(
+                listenable: widget.store,
+                builder: (BuildContext context, Widget? _) => GlassNavBar(
+                  currentIndex: _tab,
+                  onTap: (int i) => setState(() => _tab = i),
+                  accent: accent,
+                  isDark: isDark,
+                  navStyle: widget.store.navStyle,
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
