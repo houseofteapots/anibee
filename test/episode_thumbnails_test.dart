@@ -126,9 +126,8 @@ void main() {
   });
 
   group('EpisodeSection cards', () {
-    testWidgets('card with thumbnailUrl shows it, without shows poster', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('card with thumbnailUrl shows it, without shows poster',
+        (WidgetTester tester) async {
       // Unroutable localhost URLs: the connection is REFUSED
       // instantly, so Image.network fails fast into its
       // errorBuilder (poster fallback) instead of hanging on a
@@ -153,16 +152,16 @@ void main() {
       final SettingsStore store = await SettingsStore.load();
       final List<Episode> eps = mockEpisodes(anime)
           .map(
-            (Episode e) =>
-                e.number == 1 ? e.copyWith(thumbnailUrl: thumbUrl) : e,
+            (Episode e) => e.number == 1
+                ? e.copyWith(thumbnailUrl: thumbUrl)
+                : e,
           )
           .toList();
 
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: SizedBox(
-              height: 800,
+            body: SingleChildScrollView(
               child: EpisodeSection(
                 anime: anime,
                 episodes: eps,

@@ -20,18 +20,17 @@ import 'package:http/testing.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 0.2.17: pinned Detail header (user report 2026-11-24 03:26,
-/// screen-recording video): scrolling the episodes scrolled the
-/// WHOLE page — banner, title, synopsis and server picker all flew
-/// away. Now only the episode list scrolls; the header (banner,
-/// title, PLAY, My List, synopsis, server picker, EPISODES header
-/// + sort/eye/grid controls) stays FIXED, in BOTH layouts (cards
+/// 0.2.18: the 0.2.17 pinned Detail header is REVERTED (user:
+/// "episode scroll pehle jesa banado"). The whole page scrolls
+/// again (0.2.16 behavior) — banner, title, PLAY, My List,
+/// synopsis, server picker and EPISODES header scroll AWAY with
+/// the episode list; nothing stays fixed. In BOTH layouts (cards
 /// and the 5-column number grid). The "Episode 9 in ..." airing
-/// banner rides at the bottom of the scrolling list.
+/// banner rides at the bottom of the page, below the episodes.
 ///
-/// Harness copied from detail_airing_test.dart, but on a PHONE
-/// surface (390x844) — the list must actually need scrolling, or
-/// the test proves nothing (the airing harness uses 800x3000).
+/// Harness copied from the deleted detail_pinned_header_test.dart
+/// (0.2.17), on a PHONE surface (390x844) — the page must actually
+/// need scrolling, or the test proves nothing.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -176,7 +175,7 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('cards: scrolling episodes keeps the header fixed', (
+  testWidgets('cards: scrolling the page scrolls the header away', (
     WidgetTester tester,
   ) async {
     await pumpDetail(tester, airingNow);
@@ -186,35 +185,45 @@ void main() {
     expect(find.text('PLAY'), findsOneWidget);
     expect(find.text('EPISODES'), findsOneWidget);
     expect(find.text('EP 1'), findsOneWidget);
-    // The airing banner is at the bottom of the list — not built
-    // yet on a phone-size viewport (ListView is lazy).
-    expect(find.text('Episode 9 in 6d 20h · Nov 29 at 22:05'), findsNothing);
 
-    // Scroll the episode list to the bottom — scrollUntilVisible
-    // steps the list until the banner (at the very bottom, lazily
-    // built) comes into view. The scrollable is the Scrollable the
-    // ListView builds (a ListView is NOT itself a Scrollable —
-    // passing find.byType(ListView) throws a TypeError).
-    await tester.scrollUntilVisible(
-      find.text('Episode 9 in 6d 20h · Nov 29 at 22:05'),
-      300,
-      scrollable: find.descendant(
-        of: find.byType(ListView),
-        matching: find.byType(Scrollable),
-      ),
-    );
+    // One drag up: the WHOLE page moves — title, PLAY and EP 1
+    // all move up together (nothing is pinned).
+    final double titleBefore =
+        tester.getTopLeft(find.text('Black Clover Season 2')).dy;
+    final double ep1Before = tester.getTopLeft(find.text('EP 1')).dy;
+    final double bannerBefore = tester
+        .getTopLeft(find.text('Episode 9 in 6d 20h · Nov 29 at 22:05'))
+        .dy;
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
     await tester.pump();
+    await tester.pump();
+    final double titleAfter =
+        tester.getTopLeft(find.text('Black Clover Season 2')).dy;
+    final double ep1After = tester.getTopLeft(find.text('EP 1')).dy;
+    final double bannerAfter = tester
+        .getTopLeft(find.text('Episode 9 in 6d 20h · Nov 29 at 22:05'))
+        .dy;
+    expect(titleAfter, lessThan(titleBefore));
+    expect(ep1After, lessThan(ep1Before));
+    expect(bannerAfter, lessThan(bannerBefore));
 
-    // Header is STILL on screen; EP 1 scrolled away; the airing
-    // banner rode to the bottom of the list and is now visible.
-    expect(find.text('Black Clover Season 2'), findsOneWidget);
-    expect(find.text('PLAY'), findsOneWidget);
-    expect(find.text('EPISODES'), findsOneWidget);
-    expect(find.text('EP 1'), findsNothing);
-    expect(find.text('Episode 9 in 6d 20h · Nov 29 at 22:05'), findsOneWidget);
+    // Keep scrolling to the bottom: the header scrolls fully off
+    // the top (the ListView destroys it — findsNothing), and the
+    // airing banner (bottom of the page) comes into view.
+    for (int i = 0; i < 6; i++) {
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pump();
+    }
+    await tester.pump();
+    expect(find.text('Black Clover Season 2'), findsNothing);
+    final double bannerDy = tester
+        .getTopLeft(find.text('Episode 9 in 6d 20h · Nov 29 at 22:05'))
+        .dy;
+    expect(bannerDy, greaterThanOrEqualTo(0));
+    expect(bannerDy, lessThan(844));
   });
 
-  testWidgets('grid: scrolling the number grid keeps the header fixed', (
+  testWidgets('grid: scrolling the page scrolls the header away', (
     WidgetTester tester,
   ) async {
     await pumpDetail(tester, longAnime);
@@ -226,9 +235,8 @@ void main() {
     expect(find.text('001-100'), findsOneWidget);
     expect(find.text('1'), findsOneWidget);
 
-    // Scroll the grid down. (A shrink-wrapped grid builds ALL its
-    // cells, so "cell gone" can't prove scrolling — compare rects
-    // instead: the cell must move up while the title stays put.)
+    // One drag up: title and the grid move up together — the
+    // header is NOT pinned.
     final Offset titleBefore = tester.getTopLeft(find.text('One Piece'));
     final double cellBefore = tester.getTopLeft(find.text('1')).dy;
     await tester.drag(find.text('1'), const Offset(0, -300));
@@ -236,13 +244,16 @@ void main() {
     await tester.pump();
     final Offset titleAfter = tester.getTopLeft(find.text('One Piece'));
     final double cellAfter = tester.getTopLeft(find.text('1')).dy;
+    expect(titleAfter.dy, lessThan(titleBefore.dy));
+    expect(cellAfter, lessThan(cellBefore));
 
-    // Header still on screen, unmoved; the grid scrolled up.
-    expect(find.text('One Piece'), findsOneWidget);
-    expect(find.text('PLAY'), findsOneWidget);
-    expect(find.text('EPISODES'), findsOneWidget);
-    expect(find.text('001-100'), findsOneWidget);
-    expect(titleAfter, titleBefore);
-    expect(cellBefore - cellAfter, greaterThan(200));
+    // Scroll further: the title leaves the screen entirely (the
+    // ListView destroys it once it is far off-screen).
+    for (int i = 0; i < 4; i++) {
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pump();
+    }
+    await tester.pump();
+    expect(find.text('One Piece'), findsNothing);
   });
 }

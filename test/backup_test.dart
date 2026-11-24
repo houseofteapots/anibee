@@ -38,7 +38,7 @@ void main() {
   test('export -> wipe -> import restores lists + progress + settings',
       () async {
     final SettingsStore store = await SettingsStore.load();
-    await store.setListStatus(jjk.id, 'watching');
+    await store.setListStatus(jjk, 'watching');
     await store.markProgress(jjk, 5);
     await store.setAutoplayCountdownSeconds(10);
     await store.setPreferredServer('AniKoto');
@@ -46,7 +46,8 @@ void main() {
     final Map<String, dynamic> doc = BackupService.exportBackup(store);
     expect(doc['format'], 'anibee-backup');
     expect(doc['version'], BackupService.currentVersion);
-    expect(doc['lists'], <String, String>{jjk.id: 'watching'});
+    // 0.2.18: list keys are canonical ('al:<anilistId>').
+    expect(doc['lists'], <String, String>{'al:113415': 'watching'});
     expect(doc['settings']['autoplayCountdownSeconds'], 10);
     expect(doc['settings']['preferredServer'], 'AniKoto');
     // No secrets anywhere in the document.
@@ -57,7 +58,15 @@ void main() {
     expect(json, isNot(contains('anilistToken')));
 
     // Wipe the state, then restore from the exported doc.
-    await store.setListStatus(jjk.id, null);
+    await store.setListStatus(jjk, null);
+    // 0.2.18: "Remove from list" keeps the progress but the
+    // title is in NO tab — and the removal marker travels in the
+    // backup.
+    expect(store.statusOf(jjk), isNull);
+    expect(store.progressEpisodeFor(jjk), 5);
+    final Map<String, dynamic> removedDoc =
+        BackupService.exportBackup(store);
+    expect(removedDoc['removedLists'], contains('al:113415'));
     await store.setAutoplayCountdownSeconds(5);
     await store.setPreferredServer('Miruro');
     final ({bool ok, String message, int lists}) result =
@@ -65,7 +74,7 @@ void main() {
     expect(result.ok, isTrue);
     expect(result.lists, 1);
     expect(result.message, isNotEmpty);
-    expect(store.listStatus[jjk.id], 'watching');
+    expect(store.listStatus['al:113415'], 'watching');
     expect(store.progressEpisodes['al:113415'], 5);
     expect(store.autoplayCountdownSeconds, 10);
     expect(store.preferredServer, 'AniKoto');

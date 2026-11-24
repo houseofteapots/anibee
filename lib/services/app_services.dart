@@ -234,15 +234,17 @@ class AppServices {
         'PLANNING' => 'plan',
         _ => 'watching',
       };
-      // listStatus is keyed by anime.id (see SettingsStore.statusOf);
-      // synced titles carry id 'anilist-<id>' from animeFromMedia.
-      final String? existing = store.listStatus[entry.anime.id];
+      // 0.2.18: list status is keyed by the CANONICAL key
+      // (SettingsStore.keyFor) — a synced title carries id
+      // 'anilist-<id>' from animeFromMedia while the catalogue
+      // uses its own id, and both must share one list entry.
+      final String? existing = store.explicitStatusOf(entry.anime);
       // First sync after login: AniList wins outright. Later pulls:
       // AniList still wins for entries it has (the user's AniList is
       // the source of truth for those titles), but a local-only
       // title is never touched — it is not in this list at all.
       if (firstSync || existing == null || existing != localStatus) {
-        await store.setListStatus(entry.anime.id, localStatus);
+        await store.setListStatus(entry.anime, localStatus);
       }
       if (entry.progress > 0) {
         await store.markProgress(entry.anime, entry.progress);

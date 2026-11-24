@@ -356,4 +356,69 @@ void main() {
     );
     await flushTimers(tester);
   });
+
+  testWidgets('unlock works after a HUD has shown and faded',
+      (WidgetTester tester) async {
+    // 0.2.18 regression (user report on 0.2.17): the unlock button
+    // was visible but tapping it did nothing. Root cause was NOT
+    // the gesture arena — the button's opaque InkWell already
+    // shields it from the double-tap detector below. The real
+    // blocker was _GestureHud: it keeps the last shown HUD in an
+    // invisible (opacity 0) decorated Container centred on the
+    // screen, and BoxDecoration hit-tests true inside its rounded
+    // bounds — so once ANY HUD had shown (volume / brightness /
+    // drag-seek), that invisible box swallowed every later centre
+    // tap, including on the unlock button. The HUD is now
+    // IgnorePointer; this test proves the unlock survives a shown
+    // and faded HUD.
+    await pumpPlayer(tester);
+    // Show the volume HUD with a right-side drag down (unlocked).
+    await tester.dragFrom(const Offset(600, 300), const Offset(0, 150));
+    await tester.pump();
+    expect(find.textContaining('Volume'), findsOneWidget);
+    // Let the HUD fade out (700 ms hide) — invisible now, but the
+    // last state stays in the tree (opacity 0, Text still found
+    // by the finder — that persistence IS the bug's mechanism).
+    await tester.pump(const Duration(seconds: 2));
+    final AnimatedOpacity hudOpacity = tester.widget<AnimatedOpacity>(
+      find.ancestor(
+        of: find.textContaining('Volume'),
+        matching: find.byType(AnimatedOpacity),
+      ),
+    );
+    expect(hudOpacity.opacity, 0.0);
+
+    playerState(tester).lockControlsForTest();
+    await tester.pump();
+    expect(playerState(tester).controlsLockedForTest, isTrue);
+    expect(find.byTooltip('Unlock controls'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Unlock controls'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(playerState(tester).controlsLockedForTest, isFalse);
+    await flushTimers(tester);
+  });
+
+  testWidgets('two rapid taps on the unlock button unlock',
+      (WidgetTester tester) async {
+    // 0.2.18: a frustrated user taps the unlock button repeatedly
+    // and fast. The unlock fires on pointer-DOWN, so the first
+    // touch unlocks even if the pair would have formed a
+    // double-tap. tapAt (not tap on the finder): after the first
+    // tap unlocks, the button is gone.
+    await pumpPlayer(tester);
+    playerState(tester).lockControlsForTest();
+    await tester.pump();
+    expect(playerState(tester).controlsLockedForTest, isTrue);
+    expect(find.byTooltip('Unlock controls'), findsOneWidget);
+
+    await tester.tapAt(const Offset(400, 300));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tapAt(const Offset(400, 300));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(playerState(tester).controlsLockedForTest, isFalse);
+    await flushTimers(tester);
+  });
 }

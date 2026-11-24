@@ -27,6 +27,8 @@ class BackupService {
       'appVersion': '0.2.11',
       'exportedAt': DateTime.now().toIso8601String(),
       'lists': Map<String, String>.of(store.listStatus),
+      // 0.2.18: explicit "Remove from list" markers travel too.
+      'removedLists': store.removedFromLists.toList(),
       'progressEpisodes': Map<String, int>.of(store.progressEpisodes),
       'watchHistory': store.watchHistory
           .map((WatchEntry e) => e.toJson())

@@ -2748,7 +2748,19 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               ValueListenableBuilder<_HudState?>(
                 valueListenable: _hud,
                 builder: (BuildContext context, _HudState? state, Widget? _) {
-                  return _GestureHud(state: state, accent: accent);
+                  // 0.2.18: IgnorePointer — the HUD is display-only
+                  // and must NEVER absorb a touch. Before this it
+                  // kept the last shown state in an invisible
+                  // (opacity 0) decorated Container centred on the
+                  // screen; once ANY HUD had shown (volume /
+                  // brightness / drag-seek), that invisible box
+                  // swallowed every later centre tap — including on
+                  // the unlock button — so the player looked locked
+                  // forever. The seek flash is already IgnorePointer;
+                  // this is the same rule for the HUD.
+                  return IgnorePointer(
+                    child: _GestureHud(state: state, accent: accent),
+                  );
                 },
               ),
               // 0.2.8: the "2x" indicator while hold-to-2x is engaged.
@@ -3067,8 +3079,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   /// The unlock button (0.2.17): rendered by the Stack on its own
   /// layer while [_controlsLocked], never inside [_buildControls] —
-  /// see the note at the call site. One tap unlocks and brings the
-  /// full controls back (via [_pokeControls]).
+  /// see the note at the call site. It unlocks on pointer-DOWN
+  /// (0.2.18), not on tap-up: any touch on the button unlocks
+  /// instantly and brings the full controls back (via
+  /// [_pokeControls]), even if the touch becomes a double-tap or
+  /// a drag.
   Widget _buildUnlockButton(Color accent) {
     return Center(
       child: _RoundButton(
@@ -3078,7 +3093,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         accentIcon: true,
         accent: accent,
         tooltip: 'Unlock controls',
-        onTap: () {
+        onTapDown: (_) {
           setState(() => _controlsLocked = false);
           _pokeControls();
         },
@@ -3612,6 +3627,7 @@ class _RoundButton extends StatelessWidget {
     this.enabled = true,
     this.tooltip,
     this.onTap,
+    this.onTapDown,
   });
 
   final IconData? icon;
@@ -3624,6 +3640,12 @@ class _RoundButton extends StatelessWidget {
   final bool enabled;
   final String? tooltip;
   final VoidCallback? onTap;
+
+  /// 0.2.18: fire on pointer-DOWN instead of tap-up. Only the
+  /// unlock button uses this — it must unlock the instant it is
+  /// touched, with no tap-up / gesture-arena wait, even if the
+  /// touch becomes a double-tap or a drag.
+  final GestureTapDownCallback? onTapDown;
 
   @override
   Widget build(BuildContext context) {
@@ -3658,6 +3680,7 @@ class _RoundButton extends StatelessWidget {
     );
     final Widget button = InkWell(
       onTap: enabled ? onTap : null,
+      onTapDown: enabled ? onTapDown : null,
       borderRadius: BorderRadius.circular(10),
       child: content,
     );

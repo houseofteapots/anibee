@@ -159,7 +159,59 @@ class SettingsStore extends ChangeNotifier {
     await store._migrateSecrets();
     store._readAll();
     await store._readSecrets();
+    await store._migrateListKeys();
     return store;
+  }
+
+  /// 0.2.18 one-time migration: list keys written before 0.2.18
+  /// used the RAW anime.id ('gintama', 'anilist-918'). Re-key
+  /// them to the canonical key so every entry point reads the
+  /// same entry: `anilist-<n>` parses straight to `al:<n>`; any
+  /// other raw id resolves through the bundled catalogue (which
+  /// carries the anilistId). Unmappable keys are left as-is —
+  /// statusOf's raw-id fallback still covers reads via the same
+  /// raw id. Canonical wins on conflict; the migrated maps are
+  /// persisted immediately, so this runs once.
+  Future<void> _migrateListKeys() async {
+    final Map<String, Anime> catalogueById = <String, Anime>{
+      for (final Anime a in mockCatalogue()) a.id: a,
+    };
+    String? canonicalForLegacyKey(String raw) {
+      if (raw.startsWith('al:') || raw.startsWith('id:')) return null;
+      final RegExpMatch? m = RegExp(r'^anilist-(\d+)$').firstMatch(raw);
+      if (m != null) return 'al:${m.group(1)}';
+      final Anime? entry = catalogueById[raw];
+      if (entry == null) return null;
+      return keyFor(entry);
+    }
+
+    bool changed = false;
+    final Map<String, String> migratedStatus = <String, String>{};
+    for (final MapEntry<String, String> e in listStatus.entries) {
+      final String? canonical = canonicalForLegacyKey(e.key);
+      if (canonical == null) {
+        migratedStatus[e.key] = e.value;
+      } else {
+        migratedStatus.putIfAbsent(canonical, () => e.value);
+        changed = true;
+      }
+    }
+    final Set<String> migratedSaved = <String>{};
+    for (final String raw in savedIds) {
+      final String? canonical = canonicalForLegacyKey(raw);
+      if (canonical == null) {
+        migratedSaved.add(raw);
+      } else {
+        migratedSaved.add(canonical);
+        changed = true;
+      }
+    }
+    if (changed) {
+      listStatus = migratedStatus;
+      savedIds = migratedSaved;
+      await _saveListStatus();
+      await _prefs.setStringList('saved_ids', savedIds.toList());
+    }
   }
 
   /// M2: move Debrid keys out of SharedPreferences plaintext into
@@ -341,7 +393,20 @@ class SettingsStore extends ChangeNotifier {
   // Derived when unset: progress or a started episode -> watching;
   // saved with no progress -> plan. A newly saved title defaults to
   // 'plan' (To Be Watched). Downloads live in Settings only.
+  // 0.2.18: keys are CANONICAL (see keyFor) — the same title
+  // opened from Home ('gintama') and from Search/AniList
+  // ('anilist-918') must share one list key, or a move written
+  // under one id is invisible to a tab reading the other.
   Map<String, String> listStatus = <String, String>{};
+
+  // 0.2.18: titles the user explicitly removed from ALL lists
+  // ("Remove from list" / unsave), keyed canonically. Without this
+  // the derived branch puts a started title straight back into
+  // Watching (progress / currentEpisode != null), so the removal
+  // looked like it did nothing at all. Watch progress and the
+  // Continue Watching entry are NOT touched by a removal — only
+  // list membership goes.
+  Set<String> removedFromLists = <String>{};
 
   // --- Collection (M1: local only) ---
   Set<String> savedIds = <String>{};
@@ -486,6 +551,8 @@ class SettingsStore extends ChangeNotifier {
     faceIdEnabled = _prefs.getBool('face_id') ?? false;
     pinHash = _prefs.getString('pin_hash');
     savedIds = _prefs.getStringList('saved_ids')?.toSet() ?? <String>{};
+    removedFromLists =
+        _prefs.getStringList('removed_lists')?.toSet() ?? <String>{};
     final String? progressJson = _prefs.getString('progress_eps');
     if (progressJson != null) {
       final Map<String, dynamic> decoded =
@@ -1239,16 +1306,39 @@ class SettingsStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> toggleSaved(String animeId) async {
-    if (savedIds.contains(animeId)) {
-      savedIds.remove(animeId);
-      listStatus.remove(animeId);
+  /// Whether the title is saved (My List): canonical key first,
+  /// legacy raw-id key second (entries saved before 0.2.18 used
+  /// the raw anime.id).
+  bool isSaved(Anime anime) {
+    return savedIds.contains(keyFor(anime)) ||
+        savedIds.contains(anime.id);
+  }
+
+  Future<void> toggleSaved(Anime anime) async {
+    final String key = keyFor(anime);
+    if (isSaved(anime)) {
+      savedIds.remove(key);
+      savedIds.remove(anime.id);
+      listStatus.remove(key);
+      listStatus.remove(anime.id);
+      // Unsave = out of every list, even with progress — the
+      // derived branch must not resurrect it (same rule as
+      // "Remove from list" in setListStatus below).
+      removedFromLists.add(key);
       await _saveListStatus();
+      await _saveRemovedLists();
     } else {
-      savedIds.add(animeId);
-      // A newly saved title defaults to To Be Watched.
-      listStatus.putIfAbsent(animeId, () => 'plan');
+      savedIds.add(key);
+      savedIds.remove(anime.id);
+      removedFromLists.remove(key);
+      removedFromLists.remove(anime.id);
+      // A newly saved title defaults to To Be Watched; an existing
+      // status (under either key shape) migrates forward, unchanged.
+      final String? existing = listStatus[key] ?? listStatus[anime.id];
+      listStatus.remove(anime.id);
+      listStatus[key] = existing ?? 'plan';
       await _saveListStatus();
+      await _saveRemovedLists();
     }
     await _prefs.setStringList('saved_ids', savedIds.toList());
     notifyListeners();
@@ -1258,30 +1348,78 @@ class SettingsStore extends ChangeNotifier {
   /// else derived — started (progress / Continue Watching) is Watching,
   /// saved-but-unstarted is To Be Watched, otherwise not listed.
   /// Returns 'watching' | 'finished' | 'plan' | null.
+  ///
+  /// 0.2.18: every lookup is by the CANONICAL key (keyFor), with
+  /// the legacy raw-id key as a fallback, so a status written from
+  /// one entry point (Home 'gintama', Search 'anilist-918')
+  /// reads the same from every other. An explicit removal beats
+  /// the derived branch: a started title stays out of every tab
+  /// until it is listed again.
   String? statusOf(Anime anime) {
-    final String? explicit = listStatus[anime.id];
+    final String key = keyFor(anime);
+    if (removedFromLists.contains(key) ||
+        removedFromLists.contains(anime.id)) {
+      return null;
+    }
+    final String? explicit = listStatus[key] ?? listStatus[anime.id];
     if (explicit != null) return explicit;
-    final int? ep = progressEpisodes[anime.id];
+    final int? ep = progressEpisodes[key] ?? progressEpisodes[anime.id];
     if (ep != null || anime.currentEpisode != null) return 'watching';
-    if (savedIds.contains(anime.id)) return 'plan';
+    if (savedIds.contains(key) || savedIds.contains(anime.id)) {
+      return 'plan';
+    }
     return null;
+  }
+
+  /// The EXPLICIT status only (no derived branch, no removal
+  /// marker) — for the AniList sync pull, which compares the local
+  /// explicit entry against the AniList one.
+  String? explicitStatusOf(Anime anime) {
+    return listStatus[keyFor(anime)] ?? listStatus[anime.id];
   }
 
   Future<void> _saveListStatus() async {
     await _prefs.setString('list_status', jsonEncode(listStatus));
   }
 
+  Future<void> _saveRemovedLists() async {
+    await _prefs.setStringList(
+      'removed_lists',
+      removedFromLists.toList(),
+    );
+  }
+
   /// Move an anime to a Collection list ('watching' | 'finished' |
   /// 'plan'); null removes it from all lists. Listing implies saved.
-  Future<void> setListStatus(String animeId, String? status) async {
+  /// 0.2.18: keyed by the CANONICAL key (keyFor), so the move is
+  /// visible from every entry point; a stale entry under the legacy
+  /// raw-id key is removed (migrating forward).
+  Future<void> setListStatus(Anime anime, String? status) async {
+    final String key = keyFor(anime);
     if (status == null) {
-      listStatus.remove(animeId);
+      // "Remove from list": clear the explicit status under BOTH
+      // key shapes, drop the saved flag, and record an explicit
+      // removal so the derived progress branch cannot put the
+      // title back into Watching. Watch progress and the Continue
+      // Watching entry are untouched — only list membership goes.
+      listStatus.remove(key);
+      listStatus.remove(anime.id);
+      savedIds.remove(key);
+      savedIds.remove(anime.id);
+      removedFromLists.add(key);
+      await _prefs.setStringList('saved_ids', savedIds.toList());
+      await _saveRemovedLists();
     } else {
-      listStatus[animeId] = status;
-      if (!savedIds.contains(animeId)) {
-        savedIds.add(animeId);
+      listStatus[key] = status;
+      listStatus.remove(anime.id);
+      removedFromLists.remove(key);
+      removedFromLists.remove(anime.id);
+      if (!savedIds.contains(key)) {
+        savedIds.add(key);
+        savedIds.remove(anime.id);
         await _prefs.setStringList('saved_ids', savedIds.toList());
       }
+      await _saveRemovedLists();
     }
     await _saveListStatus();
     notifyListeners();
@@ -1314,6 +1452,12 @@ class SettingsStore extends ChangeNotifier {
       (String k, dynamic v) => MapEntry(k, v as String),
     );
     await _saveListStatus();
+    // 0.2.18: explicit removals travel with the backup, so a
+    // restored title stays out of every list until re-listed.
+    final List<dynamic> removed =
+        data['removedLists'] as List<dynamic>? ?? <List<dynamic>>[];
+    removedFromLists = removed.map((dynamic e) => e.toString()).toSet();
+    await _saveRemovedLists();
     final Map<String, dynamic> progress =
         data['progressEpisodes'] as Map<String, dynamic>? ??
         <String, dynamic>{};

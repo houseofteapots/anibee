@@ -440,7 +440,7 @@ class _DetailScreenState extends State<DetailScreen> {
     final String status = episode.number >= _anime.episodeCount
         ? 'finished'
         : 'watching';
-    _store.setListStatus(_anime.id, status);
+    _store.setListStatus(_anime, status);
     unawaited(
       _services.pushListStatus(store: _store, anime: _anime, status: status),
     );
@@ -478,9 +478,9 @@ class _DetailScreenState extends State<DetailScreen> {
     );
     if (picked == null) return;
     if (picked.isEmpty) {
-      _store.setListStatus(_anime.id, null);
+      _store.setListStatus(_anime, null);
     } else {
-      _store.setListStatus(_anime.id, picked);
+      _store.setListStatus(_anime, picked);
       unawaited(
         _services.pushListStatus(store: _store, anime: _anime, status: picked),
       );
@@ -534,18 +534,17 @@ class _DetailScreenState extends State<DetailScreen> {
       body: ListenableBuilder(
         listenable: _store,
         builder: (BuildContext context, Widget? _) {
-          final bool saved = _store.savedIds.contains(_anime.id);
-          // 0.2.17: pinned header — the page is a Column, NOT a
-          // ListView: banner/title/PLAY/My List/synopsis/server
-          // picker/season selector stay FIXED; only the episode
-          // list inside EpisodeSection scrolls (Expanded ListView).
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          final bool saved = _store.isSaved(_anime);
+          // 0.2.18: pinned header REVERTED — the whole page scrolls
+          // again (0.2.16 behavior): banner/title/PLAY/synopsis/
+          // server picker scroll away with the episode list.
+          return ListView(
+            padding: const EdgeInsets.only(bottom: 110),
             children: <Widget>[
               _PosterHero(
                 anime: _anime,
                 onBack: () => Navigator.of(context).pop(),
-                onToggleSaved: () => _store.toggleSaved(_anime.id),
+                onToggleSaved: () => _store.toggleSaved(_anime),
                 saved: saved,
               ),
               Padding(
@@ -960,25 +959,23 @@ class _DetailScreenState extends State<DetailScreen> {
                     ],
                   ),
                 ),
-              Expanded(
-                child: EpisodeSection(
-                  // A new season is a new anime: reset the episode
-                  // section's state (grid mode, range, highlight).
-                  key: ValueKey<String>(_anime.id),
-                  anime: _anime,
-                  episodes: _episodes,
-                  store: _store,
-                  audioFilter: _subDub,
-                  onAudioFilterChanged: (String v) {
-                    if (v == 'Sub' || v == 'Dub') {
-                      setState(() => _subDub = v);
-                    }
-                  },
-                  onPlay: (Episode ep) {
-                    _openFullPlayer(episode: ep);
-                  },
-                  onToggleDownload: _toggleDownload,
-                ),
+              EpisodeSection(
+                // A new season is a new anime: reset the episode
+                // section's state (grid mode, range, highlight).
+                key: ValueKey<String>(_anime.id),
+                anime: _anime,
+                episodes: _episodes,
+                store: _store,
+                audioFilter: _subDub,
+                onAudioFilterChanged: (String v) {
+                  if (v == 'Sub' || v == 'Dub') {
+                    setState(() => _subDub = v);
+                  }
+                },
+                onPlay: (Episode ep) {
+                  _openFullPlayer(episode: ep);
+                },
+                onToggleDownload: _toggleDownload,
               ),
             ],
           );

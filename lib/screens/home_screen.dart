@@ -322,9 +322,9 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     if (picked.isEmpty) {
-      await widget.store.setListStatus(anime.id, null);
+      await widget.store.setListStatus(anime, null);
     } else {
-      await widget.store.setListStatus(anime.id, picked);
+      await widget.store.setListStatus(anime, picked);
     }
   }
 
