@@ -10,6 +10,13 @@
 	<string>AniBee</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Unlock AniBee with Face ID when App Lock is on.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>AniBee uses the local network to find Cast-enabled TVs on your Wi-Fi.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_CC1AD845._googlecast._tcp</string>
+		<string>_googlecast._tcp</string>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

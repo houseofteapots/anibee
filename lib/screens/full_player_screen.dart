@@ -14,6 +14,7 @@ import '../player/subtitle_style.dart';
 import '../player/trailer_player.dart';
 import '../services/anilist_service.dart';
 import '../services/aniskip_service.dart';
+import '../services/cast_service.dart';
 import '../services/download_service.dart';
 import '../services/miruro_resolver.dart';
 import '../settings_store.dart';
@@ -123,6 +124,7 @@ class FullPlayerScreen extends StatefulWidget {
     this.anilist,
     this.aniSkip,
     this.downloads,
+    this.castService,
   });
 
   final TrailerPlayer trailer;
@@ -172,6 +174,12 @@ class FullPlayerScreen extends StatefulWidget {
   /// Detail) — shown in the in-player server sheet.
   final String subDub;
   final String? currentDebrid;
+
+  /// Cast backend (0.2.19). Injected for tests; null in the app
+  /// means "create the real GoogleCastService lazily on first Cast
+  /// tap" — never at construction, so a missing plugin can never
+  /// break player startup.
+  final CastService? castService;
 
   @override
   State<FullPlayerScreen> createState() => _FullPlayerScreenState();
@@ -259,6 +267,33 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   bool _pipBusy = false;
   DateTime _lastPipUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
+  // Chromecast (0.2.19): while casting the TV plays and the phone
+  // is the remote — the local mpv player is paused, and play/pause,
+  // seek and volume route to the TV. [_castService] is the real
+  // backend, created lazily on the first Cast tap — the injected
+  // widget service wins in tests (mock).
+  CastService? _castService;
+  bool _casting = false;
+  bool _castConnecting = false;
+  String? _castDeviceName;
+  CastMediaState _castState = const CastMediaState(
+    playing: false,
+    position: Duration.zero,
+    duration: Duration.zero,
+    volume: 1,
+    ended: false,
+  );
+  StreamSubscription<bool>? _castConnectionSub;
+  StreamSubscription<CastMediaState>? _castMediaSub;
+
+  /// True once the disconnect-resume has started — guards it
+  /// against running twice (the connection listener and the Cast
+  /// button both fire it when a session ends).
+  bool _castEndHandled = false;
+
+  CastService get _cast =>
+      widget.castService ?? (_castService ??= GoogleCastService());
+
   // Gesture state.
   Duration? _dragStartPosition;
   Duration? _dragHintTarget;
@@ -343,6 +378,27 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   void hideControlsForTest() {
     if (mounted) setState(() => _controlsVisible = false);
   }
+
+  /// Test seam (0.2.19): show the controls overlay — the 3 s
+  /// auto-hide may have hidden it while a test waited on real time
+  /// (Cast connect / disconnect round-trips).
+  @visibleForTesting
+  void showControlsForTest() {
+    if (mounted) setState(() => _controlsVisible = true);
+  }
+
+  /// Test seams (0.2.19): casting state for the Cast widget tests.
+  @visibleForTesting
+  bool get castingForTest => _casting;
+
+  @visibleForTesting
+  String? get castDeviceForTest => _castDeviceName;
+
+  @visibleForTesting
+  CastMediaState get castStateForTest => _castState;
+
+  @visibleForTesting
+  bool get castConnectingForTest => _castConnecting;
 
   /// Test seam: whether the controls overlay is currently visible.
   @visibleForTesting
@@ -480,6 +536,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _positionSub?.cancel();
     _durationSub?.cancel();
     _completedSub?.cancel();
+    _castConnectionSub?.cancel();
+    _castMediaSub?.cancel();
     _hideTimer?.cancel();
     _holdTimer?.cancel();
     _autoplayTimer?.cancel();
@@ -489,7 +547,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _videoScale.dispose();
     _brightnessLevel.dispose();
     _hud.dispose();
-    _saveProgress();
+    // 0.2.19: leaving the player while casting — record the TV's
+    // last position (Continue Watching + resume) and end the
+    // session. No local resume: the player is closing.
+    if (_casting) {
+      _saveCastProgress(_castState.position);
+      final CastService? cast = widget.castService ?? _castService;
+      if (cast != null) unawaited(cast.disconnect());
+    } else {
+      _saveProgress();
+    }
     _teardownPip();
     unawaited(widget.trailer.backToInline());
     SystemChrome.setPreferredOrientations(<DeviceOrientation>[
@@ -564,8 +631,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   ///   episode completed, CW entry at 100%.
   /// - barely started: clear the resume, mark nothing.
   void _saveProgress() {
-    final Duration pos = _player.state.position;
-    final Duration dur = _player.state.duration;
+    _saveProgressAt(_player.state.position, _player.state.duration);
+  }
+
+  /// The three cases of [_saveProgress], for an explicit
+  /// position/duration — used for the TV position on cast
+  /// disconnect, where the local player's position is the stale
+  /// pause point from when casting started.
+  void _saveProgressAt(Duration pos, Duration dur) {
     if (dur.inSeconds <= 30) {
       // Too short to judge: only a mid position counts, never
       // completed.
@@ -595,6 +668,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     } else {
       unawaited(_store.clearResumeSeconds(_resumeKey));
     }
+  }
+
+  /// Record the TV's last position (Continue Watching + resume)
+  /// when a cast ends. The duration comes from the local player
+  /// when known, else the TV-reported one.
+  void _saveCastProgress(Duration pos) {
+    final Duration dur = _player.state.duration > Duration.zero
+        ? _player.state.duration
+        : _castState.duration;
+    _saveProgressAt(pos, dur);
   }
 
   /// Episode watched to completion (0.2.11): push the episode
@@ -1021,6 +1104,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   Future<void> _togglePlay({bool showControls = true}) async {
     _pokeControls(showControls: showControls);
+    // 0.2.19: while casting, the toggle goes to the TV — the local
+    // player stays paused until the cast ends.
+    if (_casting) {
+      if (_castState.playing) {
+        await _cast.pause();
+      } else {
+        await _cast.play();
+      }
+      return;
+    }
     if (_player.state.playing) {
       await _player.pause();
       // Pausing saves progress right away (Continue Watching + resume).
@@ -1035,6 +1128,18 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     bool showFlash = false,
     bool showControls = true,
   }) async {
+    // 0.2.19: while casting, the seek goes to the TV — the local
+    // player position is frozen at the cast-start pause point.
+    if (_casting) {
+      Duration target = _castState.position + Duration(seconds: seconds);
+      if (target < Duration.zero) target = Duration.zero;
+      final Duration dur = _castState.duration;
+      if (dur > Duration.zero && target > dur) target = dur;
+      if (showFlash) _flashSeek(seconds < 0, seconds.abs());
+      _pokeControls(showControls: showControls);
+      await _cast.seek(target);
+      return;
+    }
     final Duration pos = _player.state.position;
     final Duration dur = _player.state.duration;
     Duration target = pos + Duration(seconds: seconds);
@@ -1084,7 +1189,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     final int i = rates.indexOf(_rate);
     final double next = rates[(i + 1) % rates.length];
     setState(() => _rate = next);
-    unawaited(_player.setRate(next));
+    // 0.2.19: while casting, the rate goes to the TV.
+    if (_casting) {
+      unawaited(_cast.setRate(next));
+    } else {
+      unawaited(_player.setRate(next));
+    }
     _pokeControls();
   }
 
@@ -1191,6 +1301,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       return;
     }
     _currentStream = stream;
+    // 0.2.19: while casting, the new episode loads on the TV —
+    // the local player stays paused. A cast-only stream (TV-side
+    // play state) has no local resume to seek to.
+    if (_casting) {
+      await _castLoadCurrent();
+      if (!mounted) return;
+      setState(() => _resolving = false);
+      _pokeControls();
+      return;
+    }
     await _loadStream(stream);
     if (!mounted) return;
     setState(() => _resolving = false);
@@ -1284,6 +1404,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   Future<void> _enterPip() async {
     if (_pipBusy || _pipPlayer != null) return;
+    // 0.2.19: PiP and Cast both take the video away from this
+    // screen — one at a time. Casting already owns the stream.
+    if (_casting) {
+      _snack('Cast chalu hai — pehle Cast band karo.');
+      return;
+    }
     final String? url = widget.trailer.url;
     if (url == null) {
       _snack('No video loaded yet');
@@ -1445,6 +1571,332 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _inPip = false;
     if (bridge != null) unawaited(bridge.exitPiP());
     if (pipPlayer != null) unawaited(pipPlayer.dispose());
+  }
+
+  // ------------------------------------------------------------ Chromecast
+  // 0.2.19: Google Cast (default receiver CC1AD845) — the TV plays
+  // while the phone is the remote. The player talks to the Cast SDK
+  // only through [CastService] (injected for tests, real
+  // GoogleCastService lazily otherwise). One short plain Hinglish
+  // line is all the user ever sees for a Cast failure; the raw
+  // diagnostic goes to the log only (see cast_service.dart).
+  //
+  // Honest limits (user was told): subtitles do NOT show on the TV
+  // (Flutter overlay); the TV fetches the URL directly, so expiring
+  // signed links / referer-gated sources may fail on the TV while
+  // playing fine on the phone; local downloads (file://) cannot be
+  // cast. A failed TV load stays local and shows one short line.
+
+  /// One short line the user sees when a Cast device cannot be
+  /// reached (connection timeout, device gone).
+  static const String _castConnectFailedMessage =
+      'TV se connect nahi hua — dobara try karo.';
+
+  /// One short line when the TV rejects the stream (expired signed
+  /// link, referer-gated source).
+  static const String _castLoadFailedMessage =
+      'TV pe nahi chala — ye link TV pe nahi khul raha.';
+
+  /// One short line when the current video cannot be cast at all
+  /// (local download).
+  static const String _castNotCastableMessage =
+      'Ye video TV pe nahi chalega.';
+
+  /// One short line when the Cast button is tapped with no video.
+  static const String _castNoVideoMessage = 'Abhi koi video nahi chal raha.';
+
+  /// Cast button tap: already casting → stop and resume local;
+  /// connecting → ignore; otherwise check the stream can be cast
+  /// and open the device picker.
+  Future<void> _onCastButton() async {
+    if (_casting) {
+      await _endCastAndResumeLocal();
+      return;
+    }
+    if (_castConnecting) return;
+    final ResolvedStream? stream = _currentStream;
+    final String? url = stream?.url ?? widget.trailer.url;
+    if (url == null || url.isEmpty) {
+      _snack(_castNoVideoMessage);
+      return;
+    }
+    if (!isCastableUrl(url)) {
+      _snack(_castNotCastableMessage);
+      return;
+    }
+    _showCastPicker();
+  }
+
+  /// Device picker: dark bottom sheet (same style as the volume
+  /// sheet). Discovery runs while it is open and stops when it
+  /// closes. The empty state is the expected sight on a Wi-Fi with
+  /// no Cast device — the user owns none (confirmed 2026-11-24).
+  Future<void> _showCastPicker() async {
+    final CastService cast = _cast;
+    await cast.ensureInitialized();
+    if (!mounted) return;
+    unawaited(cast.startDiscovery());
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF17171F),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  'Cast to TV',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'TV aur phone same Wi-Fi pe hone chahiye.',
+                  style: TextStyle(color: Colors.white54, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 240,
+                  child: StreamBuilder<List<CastDevice>>(
+                    stream: cast.devices,
+                    initialData: cast.currentDevices,
+                    builder: (
+                      BuildContext context,
+                      AsyncSnapshot<List<CastDevice>> snapshot,
+                    ) {
+                      final List<CastDevice> devices =
+                          snapshot.data ?? const <CastDevice>[];
+                      if (devices.isEmpty) {
+                        return const Center(
+                          child: Text(
+                            'Koi Cast device nahi mila',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 15,
+                            ),
+                          ),
+                        );
+                      }
+                      return ListView.builder(
+                        itemCount: devices.length,
+                        itemBuilder: (BuildContext context, int index) {
+                          final CastDevice device = devices[index];
+                          return ListTile(
+                            leading: const Icon(
+                              Icons.cast_rounded,
+                              color: Colors.white70,
+                            ),
+                            title: Text(
+                              device.name,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            subtitle: device.model == null
+                                ? null
+                                : Text(
+                                    device.model!,
+                                    style: const TextStyle(
+                                      color: Colors.white54,
+                                    ),
+                                  ),
+                            onTap: () {
+                              Navigator.of(context).pop();
+                              unawaited(_connectAndCast(device));
+                            },
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    unawaited(cast.stopDiscovery());
+  }
+
+  /// Connect to [device], then load the current stream on the TV at
+  /// the current position. A connect failure or a TV load failure
+  /// shows one short line and stays local.
+  Future<void> _connectAndCast(CastDevice device) async {
+    if (_castConnecting || _casting) return;
+    setState(() => _castConnecting = true);
+    bool connected = false;
+    try {
+      connected = await _cast.connect(device);
+    } on CastException catch (e) {
+      debugPrint('Anibee Cast connect failed: $e');
+    }
+    if (!mounted) return;
+    if (!connected) {
+      setState(() => _castConnecting = false);
+      _snack(_castConnectFailedMessage);
+      return;
+    }
+    final bool loaded = await _startCasting();
+    if (!mounted) return;
+    setState(() => _castConnecting = false);
+    if (!loaded) {
+      unawaited(_cast.disconnect());
+      _snack(_castLoadFailedMessage);
+    }
+  }
+
+  /// Load the current episode's stream on the TV at the current
+  /// local position, pause the local player and flip the screen
+  /// into remote mode. Returns false when the TV load fails (the
+  /// caller disconnects and stays local).
+  Future<bool> _startCasting() async {
+    final ResolvedStream? stream = _currentStream;
+    final String? url = stream?.url ?? widget.trailer.url;
+    if (url == null || !isCastableUrl(url)) return false;
+    final Duration position = _player.state.position;
+    _castEndHandled = false;
+    try {
+      await _cast.loadMedia(
+        url: url,
+        position: position,
+        title: widget.anime.title,
+        subtitle: 'Episode ${_currentEpisode.number}',
+        posterUrl: widget.anime.posterUrl,
+      );
+    } on CastException catch (e) {
+      debugPrint('Anibee Cast load failed: $e');
+      return false;
+    }
+    _subscribeCastStreams();
+    // Fire-and-forget, best-effort: the local player may be wedged
+    // (no media loaded yet, expired stream) — a slow local pause
+    // must never delay the cast start. In the normal case it lands
+    // in milliseconds and the phone goes quiet as the TV starts.
+    unawaited(
+      _player.pause().catchError((Object e) {
+        debugPrint('Anibee Cast local pause failed: $e');
+      }),
+    );
+    if (!mounted) return false;
+    setState(() {
+      _casting = true;
+      _castDeviceName = _cast.connectedDeviceName;
+      _castState = _cast.currentMediaState;
+    });
+    _snack('TV pe chal raha hai');
+    return true;
+  }
+
+  /// Load the CURRENT stream on the TV at the TV's current
+  /// position (episode switch / quality change while casting).
+  /// On failure the cast ends and local playback resumes at the
+  /// last known TV position.
+  Future<void> _castLoadCurrent() async {
+    final ResolvedStream? stream = _currentStream;
+    final String? url = stream?.url ?? widget.trailer.url;
+    if (url == null || !isCastableUrl(url)) {
+      await _endCastAndResumeLocal();
+      return;
+    }
+    try {
+      await _cast.loadMedia(
+        url: url,
+        position: _castState.position,
+        title: widget.anime.title,
+        subtitle: 'Episode ${_currentEpisode.number}',
+        posterUrl: widget.anime.posterUrl,
+      );
+    } on CastException catch (e) {
+      debugPrint('Anibee Cast reload failed: $e');
+      _snack(_castLoadFailedMessage);
+      await _endCastAndResumeLocal();
+    }
+  }
+
+  /// Subscribe to the TV's connection + media state. A remote
+  /// disconnect (TV app closed, network drop) ends the cast and
+  /// resumes local playback at the TV's last position, same as
+  /// tapping the Cast button.
+  void _subscribeCastStreams() {
+    _castConnectionSub?.cancel();
+    _castMediaSub?.cancel();
+    _castConnectionSub = _cast.connectionStream.listen((bool connected) {
+      if (!connected && _casting && !_castEndHandled) {
+        unawaited(_endCastAndResumeLocal());
+      }
+    });
+    _castMediaSub = _cast.mediaStateStream.listen((CastMediaState state) {
+      if (!mounted) return;
+      setState(() => _castState = state);
+      if (state.ended && _casting && !_castEndHandled) {
+        unawaited(_endCastAndResumeLocal(fromTvEnd: true));
+      }
+    });
+  }
+
+  /// End the cast and resume LOCAL playback at the TV's last
+  /// reported position. The TV position is recorded first
+  /// (Continue Watching + resume) — the local player's position is
+  /// the stale pause point from when casting started.
+  /// [fromTvEnd]: the TV finished the episode — seek to
+  /// duration−3s and play, so the local EOF card / autoplay fires
+  /// instead of the episode silently restarting.
+  Future<void> _endCastAndResumeLocal({bool fromTvEnd = false}) async {
+    if (_castEndHandled) return;
+    _castEndHandled = true;
+    final Duration tvPosition = _castState.position;
+    _castConnectionSub?.cancel();
+    _castMediaSub?.cancel();
+    _castConnectionSub = null;
+    _castMediaSub = null;
+    if (!mounted) return;
+    _saveCastProgress(tvPosition);
+    await _cast.disconnect();
+    if (!mounted) return;
+    setState(() {
+      _casting = false;
+      _castDeviceName = null;
+      _castState = const CastMediaState(
+        playing: false,
+        position: Duration.zero,
+        duration: Duration.zero,
+        volume: 1,
+        ended: false,
+      );
+    });
+    if (fromTvEnd) {
+      final Duration dur = _player.state.duration;
+      final Duration target = dur > const Duration(seconds: 3)
+          ? dur - const Duration(seconds: 3)
+          : Duration.zero;
+      // Fire-and-forget (same reason as the pause in
+      // _startCasting): a wedged local player must never freeze the
+      // cast end. Seek-then-play order is preserved inside the
+      // block; in the normal case both land in milliseconds.
+      unawaited(_resumeLocal(target));
+    } else {
+      unawaited(_resumeLocal(tvPosition));
+    }
+  }
+
+  /// Seek the local player to [target] and play — the local resume
+  /// after a cast ends. Best-effort: the local stream may have
+  /// expired while the TV was playing.
+  Future<void> _resumeLocal(Duration target) async {
+    try {
+      await _player.seek(target);
+      await _player.play();
+    } catch (e) {
+      debugPrint('Anibee Cast local resume failed: $e');
+    }
   }
 
   void _snack(String message) {
@@ -2235,6 +2687,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       variants: stream.variants,
       subtitles: stream.subtitles,
     );
+    // 0.2.19: while casting, the new quality loads on the TV at the
+    // TV's position — the local player stays paused.
+    if (_casting) {
+      await _castLoadCurrent();
+      setState(() {});
+      return;
+    }
     await _loadStream(_currentStream!);
     if (!mounted) return;
     unawaited(_player.seek(pos));
@@ -2404,10 +2863,23 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     );
   }
 
+  /// Set the volume on the TV while casting, else on the local
+  /// player. Volume is 0..100 everywhere in this screen; the Cast
+  /// service takes 0..1.
+  void _setVolumeBoth(double v) {
+    if (_casting) {
+      unawaited(_cast.setVolume(v / 100));
+    } else {
+      unawaited(_player.setVolume(v));
+    }
+  }
+
   /// Volume sheet: slider + mute toggle, opened from the volume icon.
   Future<void> _showVolumeSheet() async {
     final Color accent = Theme.of(context).colorScheme.primary;
-    double volume = _player.state.volume;
+    double volume = _casting
+        ? _castState.volume * 100
+        : _player.state.volume;
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF17171F),
@@ -2444,7 +2916,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                           ),
                           onPressed: () {
                             setSheet(() => volume = 0);
-                            unawaited(_player.setVolume(0));
+                            _setVolumeBoth(0);
                           },
                         ),
                         Expanded(
@@ -2455,7 +2927,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                             activeColor: accent,
                             onChanged: (double v) {
                               setSheet(() => volume = v);
-                              unawaited(_player.setVolume(v));
+                              _setVolumeBoth(v);
                             },
                           ),
                         ),
@@ -2466,7 +2938,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                           ),
                           onPressed: () {
                             setSheet(() => volume = 100);
-                            unawaited(_player.setVolume(100));
+                            _setVolumeBoth(100);
                           },
                         ),
                       ],
@@ -3031,7 +3503,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         final double w = MediaQuery.of(context).size.width;
         _dragVerticalRight = details.globalPosition.dx > w / 2;
         _dragAccumDy = 0;
-        _dragStartVolume = _player.state.volume;
+        // 0.2.19: while casting, the drag starts from the TV volume.
+        _dragStartVolume = _casting
+            ? _castState.volume * 100
+            : _player.state.volume;
         _dragStartBrightnessLevel = _brightnessLevel.value;
       },
       onVerticalDragUpdate: (DragUpdateDetails details) {
@@ -3050,7 +3525,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             0,
             100,
           );
-          unawaited(_player.setVolume(v));
+          // 0.2.19: while casting, the swipe sets the TV volume.
+          _setVolumeBoth(v);
           _showHud(
             _HudState.volume(value: v / 100, label: 'Volume ${v.round()}%'),
           );
@@ -3231,9 +3707,15 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             onTap: () => unawaited(_seekBy(-10, showFlash: true)),
           ),
           const SizedBox(width: 28),
+          // 0.2.19: while casting, the center button mirrors the TV
+          // state — the local player's stream is frozen.
           StreamBuilder<bool>(
-            stream: _player.stream.playing,
-            initialData: _player.state.playing,
+            stream: _casting
+                ? _cast.mediaStateStream.map((CastMediaState s) => s.playing)
+                : _player.stream.playing,
+            initialData: _casting
+                ? _castState.playing
+                : _player.state.playing,
             builder: (BuildContext context, AsyncSnapshot<bool> snap) {
               final bool playing = snap.data ?? false;
               return _RoundButton(
@@ -3271,7 +3753,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         : const Alignment(0.55, 0);
     final Widget child = left == null
         ? Icon(
-            _player.state.playing
+            // 0.2.19: while casting, the flash mirrors the TV.
+            (_casting ? _castState.playing : _player.state.playing)
                 ? Icons.pause_rounded
                 : Icons.play_arrow_rounded,
             color: Colors.white,
@@ -3399,6 +3882,24 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   : _enterPip,
             ),
             const SizedBox(width: 8),
+            // 0.2.19: Chromecast — same 40pt round button, accent
+            // when connected. While connecting the button is
+            // disabled (the spinner lives in the button itself).
+            _RoundButton(
+              icon: _casting
+                  ? Icons.cast_connected_rounded
+                  : Icons.cast_rounded,
+              size: 40,
+              iconSize: 22,
+              accent: accent,
+              active: _casting,
+              enabled: !_castConnecting,
+              tooltip: _casting
+                  ? 'Stop casting${_castDeviceName == null ? '' : ' — ${_castDeviceName!}'}'
+                  : 'Cast to TV',
+              onTap: _onCastButton,
+            ),
+            const SizedBox(width: 8),
           ],
         ),
       ),
@@ -3422,11 +3923,23 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             StreamBuilder<Duration>(
-              stream: _player.stream.position,
-              initialData: _player.state.position,
+              // 0.2.19: while casting, the bar tracks the TV position
+              // (the local player is frozen at the cast-start pause
+              // point). The media-state stream also feeds the center
+              // play/pause button, so one subscription covers both.
+              stream: _casting
+                  ? _cast.mediaStateStream.map(
+                      (CastMediaState s) => s.position,
+                    )
+                  : _player.stream.position,
+              initialData: _casting
+                  ? _castState.position
+                  : _player.state.position,
               builder: (BuildContext context, AsyncSnapshot<Duration> snap) {
                 final Duration pos = snap.data ?? Duration.zero;
-                final Duration dur = _player.state.duration;
+                final Duration dur = _casting
+                    ? _castState.duration
+                    : _player.state.duration;
                 final double max = dur.inMilliseconds.toDouble().clamp(
                   1,
                   double.infinity,
@@ -3465,9 +3978,21 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                           value: pos.inMilliseconds.toDouble().clamp(0, max),
                           max: max,
                           onChanged: (double v) {
-                            unawaited(
-                              _player.seek(Duration(milliseconds: v.round())),
-                            );
+                            // 0.2.19: while casting, the slider seeks
+                            // the TV.
+                            if (_casting) {
+                              unawaited(
+                                _cast.seek(
+                                  Duration(milliseconds: v.round()),
+                                ),
+                              );
+                            } else {
+                              unawaited(
+                                _player.seek(
+                                  Duration(milliseconds: v.round()),
+                                ),
+                              );
+                            }
                           },
                         ),
                       ),

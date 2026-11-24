@@ -1,7 +1,7 @@
 name: anibee
 description: "aniBee — personal iOS anime app. Miruro-linked, AniList-powered."
 publish_to: 'none'
-version: 0.2.18+22
+version: 0.2.19+23
 
 environment:
   sdk: ^3.13.5
@@ -69,6 +69,12 @@ dependencies:
 
   # 0.2.13: airing date formatting ("Nov 29 at 22:05").
   intl: ^0.20.2
+
+  # 0.2.19: Chromecast in the player (default receiver CC1AD845,
+  # no custom receiver). flutter_chrome_cast v2 — Google Cast SDK
+  # for iOS + Android, actively maintained. The player talks to it
+  # only through lib/services/cast_service.dart (mockable).
+  flutter_chrome_cast: ^2.0.0
 
 dev_dependencies:
   flutter_test:
